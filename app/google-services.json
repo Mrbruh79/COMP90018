@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "354368020263",
+    "project_id": "comp90018-4a590",
+    "storage_bucket": "comp90018-4a590.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:354368020263:android:8ebdaed02e6515442f5302",
+        "android_client_info": {
+          "package_name": "com.example.blap"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAm9x_x-Ul1OOltKWYvDGbPRJlt8cZY00Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -15,10 +15,6 @@
         android:name="android.permission.ACCESS_COARSE_LOCATION"
         android:maxSdkVersion="31" />
     <uses-permission
-        android:name="android.permission.ACCESS_FINE_LOCATION"
-        android:minSdkVersion="29"
-        android:maxSdkVersion="31" />
-    <uses-permission
         android:name="android.permission.BLUETOOTH_ADVERTISE"
         android:minSdkVersion="31" />
     <uses-permission
@@ -38,6 +34,7 @@
         android:name="android.permission.ACCESS_LOCAL_NETWORK"
         android:minSdkVersion="37"
         tools:targetApi="37" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
 
     <application
         android:allowBackup="true"
