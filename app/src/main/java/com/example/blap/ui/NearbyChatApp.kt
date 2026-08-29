@@ -1,11 +1,10 @@
 package com.example.blap.ui
 
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.Canvas
+import android.graphics.Bitmap
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,11 +12,11 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -31,12 +30,14 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -46,660 +47,1378 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.blap.chat.ChatConnectionState
 import com.example.blap.chat.ChatMessage
 import com.example.blap.chat.ChatUiState
+import com.example.blap.chat.ContactCardCodec
+import com.example.blap.chat.ContactProfile
+import com.example.blap.chat.ContactSource
+import com.example.blap.chat.ConversationSummary
+import com.example.blap.chat.ConversationType
+import com.example.blap.chat.GroupContact
 import com.example.blap.chat.MessageAuthor
+import com.example.blap.chat.MessageStatus
 import com.example.blap.chat.NearbyDevice
-import kotlinx.coroutines.delay
+import com.example.blap.chat.SavedContact
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.qrcode.QRCodeWriter
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlinx.coroutines.launch
 
 @Composable
 fun NearbyChatApp(
     uiState: ChatUiState,
     deniedPermissions: List<String>,
     onNameChanged: (String) -> Unit,
+    onPhoneChanged: (String) -> Unit,
     onStartChat: () -> Unit,
     onConnect: (String) -> Unit,
+    onOpenConversation: (String) -> Unit,
+    onBackToChats: () -> Unit,
     onSendMessage: (String) -> Unit,
-    onDisconnect: () -> Unit,
+    onDisconnect: (String) -> Unit,
+    onBeginCreateGroup: () -> Unit,
+    onGroupNameChanged: (String) -> Unit,
+    onToggleGroupMember: (String) -> Unit,
+    onCreateGroup: () -> Unit,
+    onManageContacts: () -> Unit,
+    onBeginAddContact: () -> Unit,
+    onOpenContact: (String) -> Unit,
+    onContactDraftChanged: (ContactProfile) -> Unit,
+    onDeleteContact: () -> Unit,
+    onScanContact: () -> Unit,
+    onSaveContact: () -> Unit,
+    onImportContacts: () -> Unit,
+    onShowMyCard: () -> Unit,
+    onEditProfile: () -> Unit,
+    onProfileChanged: (ContactProfile) -> Unit,
+    onSaveProfile: () -> Unit,
+    onShowSettingsScreen: () -> Unit,
+    onConversationSearchChanged: (String) -> Unit,
+    onContactSearchChanged: (String) -> Unit,
+    onBeginGroupSettings: () -> Unit,
+    onSaveGroupSettings: () -> Unit,
+    onSystemBack: () -> Unit,
     onDismissError: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    val snackbarHostState = remember { SnackbarHostState() }
-
+    BackHandler(
+        enabled = uiState.connectionState != ChatConnectionState.IDLE,
+        onBack = onSystemBack,
+    )
+    val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(uiState.error) {
-        val error = uiState.error ?: return@LaunchedEffect
-        snackbarHostState.showSnackbar(error)
+        val message = uiState.error ?: return@LaunchedEffect
+        snackbar.showSnackbar(message)
         onDismissError()
     }
 
     Box(
-        modifier = Modifier
+        Modifier
             .fillMaxSize()
             .background(
-                Brush.radialGradient(
-                    colors = listOf(Color(0xFFFFD8C8), Cream, Color(0xFFDDEBE5)),
-                    center = Offset(120f, 80f),
-                    radius = 1_400f,
+                Brush.verticalGradient(
+                    listOf(Color(0xFFFFE3D6), Cream, Color(0xFFDDEBE5)),
                 ),
             ),
     ) {
         Scaffold(
             containerColor = Color.Transparent,
             contentWindowInsets = WindowInsets.safeDrawing,
-            snackbarHost = { SnackbarHost(snackbarHostState) },
+            snackbarHost = { SnackbarHost(snackbar) },
+            bottomBar = {
+                if (uiState.connectionState in TOP_LEVEL_SCREENS) {
+                    AppNavigationBar(
+                        state = uiState.connectionState,
+                        onChats = onBackToChats,
+                        onContacts = onManageContacts,
+                        onMyCard = onShowMyCard,
+                        onSettings = onShowSettingsScreen,
+                    )
+                }
+            },
         ) { padding ->
             Column(
-                modifier = Modifier
+                Modifier
                     .fillMaxSize()
                     .padding(padding)
                     .imePadding()
-                    .padding(horizontal = 20.dp)
-                    .widthIn(max = 720.dp)
-                    .align(Alignment.TopCenter),
+                    .padding(horizontal = 18.dp),
             ) {
-                AppHeader(uiState.connectionState)
-                AnimatedContent(
-                    targetState = uiState.connectionState,
-                    transitionSpec = { fadeIn() togetherWith fadeOut() },
-                    label = "chat-screen",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                ) { connectionState ->
-                    when (connectionState) {
-                        ChatConnectionState.IDLE -> WelcomeScreen(
-                            name = uiState.displayName,
-                            deniedPermissions = deniedPermissions,
-                            onNameChanged = onNameChanged,
-                            onStartChat = onStartChat,
-                            onOpenSettings = onOpenSettings,
-                        )
+                if (uiState.connectionState in TOP_LEVEL_SCREENS ||
+                    uiState.connectionState == ChatConnectionState.IDLE
+                ) Header(uiState)
+                when (uiState.connectionState) {
+                    ChatConnectionState.IDLE -> WelcomeScreen(
+                        name = uiState.displayName,
+                        phoneNumber = uiState.phoneNumber,
+                        deniedPermissions = deniedPermissions,
+                        onNameChanged = onNameChanged,
+                        onPhoneChanged = onPhoneChanged,
+                        onStart = onStartChat,
+                        onOpenSettings = onOpenSettings,
+                    )
 
-                        ChatConnectionState.DISCOVERING -> DiscoveryScreen(
-                            devices = uiState.discoveredDevices,
-                            onConnect = onConnect,
-                        )
+                    ChatConnectionState.DISCOVERING -> ConversationList(
+                        conversations = uiState.conversations,
+                        devices = uiState.discoveredDevices,
+                        onOpenConversation = onOpenConversation,
+                        onConnect = onConnect,
+                        onBeginCreateGroup = onBeginCreateGroup,
+                        onManageContacts = onManageContacts,
+                        search = uiState.conversationSearch,
+                        onSearchChanged = onConversationSearchChanged,
+                    )
 
-                        ChatConnectionState.CONNECTING -> ConnectingScreen(
-                            device = uiState.connectedDevice,
-                            authenticationDigits = uiState.authenticationDigits,
-                            onDisconnect = onDisconnect,
-                        )
+                    ChatConnectionState.CONNECTING -> ConnectingScreen(
+                        authenticationDigits = uiState.authenticationDigits,
+                        onBack = onBackToChats,
+                    )
 
-                        ChatConnectionState.CONNECTED -> ChatScreen(
-                            peer = requireNotNull(uiState.connectedDevice),
-                            messages = uiState.messages,
-                            onSendMessage = onSendMessage,
-                            onDisconnect = onDisconnect,
-                        )
-
-                        ChatConnectionState.DISCONNECTED -> RecoveryScreen(
-                            title = "Connection closed",
-                            description = "You can start scanning again whenever you are ready.",
-                            buttonLabel = "Find nearby devices",
-                            onAction = onStartChat,
-                        )
-
-                        ChatConnectionState.ERROR -> RecoveryScreen(
-                            title = "Nearby chat paused",
-                            description = uiState.error
-                                ?: "Check that Bluetooth and Wi-Fi are switched on, then try again.",
-                            buttonLabel = "Try again",
-                            onAction = onStartChat,
-                        )
+                    ChatConnectionState.CONNECTED -> {
+                        val conversation = uiState.conversations.firstOrNull {
+                            it.peerId == uiState.selectedPeerId
+                        }
+                        if (conversation == null) {
+                            EmptyChat(onBackToChats)
+                        } else {
+                            ChatScreen(
+                                conversation = conversation,
+                                messages = uiState.messages,
+                                directConnectionCount = uiState.directConnectionCount,
+                                onSend = onSendMessage,
+                                onBack = onBackToChats,
+                                onDisconnect = { onDisconnect(conversation.peerId) },
+                                onOpenGroupSettings = onBeginGroupSettings,
+                            )
+                        }
                     }
+
+                    ChatConnectionState.CREATING_GROUP -> CreateGroupScreen(
+                        name = uiState.groupNameDraft,
+                        contacts = uiState.groupContacts,
+                        selectedIds = uiState.selectedGroupMemberIds,
+                        onNameChanged = onGroupNameChanged,
+                        onToggleMember = onToggleGroupMember,
+                        onCreate = onCreateGroup,
+                        onBack = onBackToChats,
+                    )
+
+                    ChatConnectionState.MANAGING_CONTACTS -> ContactsScreen(
+                        contacts = uiState.savedContacts,
+                        search = uiState.contactSearch,
+                        onSearchChanged = onContactSearchChanged,
+                        onAdd = onBeginAddContact,
+                        onOpen = onOpenContact,
+                        onScan = onScanContact,
+                        onImport = onImportContacts,
+                    )
+
+                    ChatConnectionState.EDITING_CONTACT -> ContactEditorScreen(
+                        profile = uiState.contactDraftProfile(),
+                        source = uiState.contactSourceDraft,
+                        isExisting = uiState.selectedContactId != null,
+                        onChanged = onContactDraftChanged,
+                        onSave = onSaveContact,
+                        onDelete = onDeleteContact,
+                        onBack = onManageContacts,
+                    )
+
+                    ChatConnectionState.SHOWING_MY_CARD -> MyCardScreen(
+                        profile = uiState.profile(),
+                        onEdit = onEditProfile,
+                    )
+
+                    ChatConnectionState.EDITING_PROFILE -> ProfileEditorScreen(
+                        profile = uiState.profile(),
+                        onChanged = onProfileChanged,
+                        onSave = onSaveProfile,
+                        onBack = onShowMyCard,
+                    )
+
+                    ChatConnectionState.SETTINGS -> SettingsScreen(
+                        contactCount = uiState.savedContacts.size,
+                        connectionCount = uiState.directConnectionCount,
+                        onEditProfile = onEditProfile,
+                        onOpenAppSettings = onOpenSettings,
+                    )
+
+                    ChatConnectionState.GROUP_SETTINGS -> CreateGroupScreen(
+                        name = uiState.groupNameDraft,
+                        contacts = uiState.groupContacts,
+                        selectedIds = uiState.selectedGroupMemberIds,
+                        onNameChanged = onGroupNameChanged,
+                        onToggleMember = onToggleGroupMember,
+                        onCreate = onSaveGroupSettings,
+                        onBack = { uiState.selectedPeerId?.let(onOpenConversation) ?: onBackToChats() },
+                        title = "Group settings",
+                        actionLabel = "Save changes",
+                    )
+
+                    ChatConnectionState.ERROR -> ErrorScreen(onStartChat)
                 }
             }
         }
     }
 }
 
+private val TOP_LEVEL_SCREENS = setOf(
+    ChatConnectionState.DISCOVERING,
+    ChatConnectionState.MANAGING_CONTACTS,
+    ChatConnectionState.SHOWING_MY_CARD,
+    ChatConnectionState.SETTINGS,
+)
+
+private fun ChatUiState.profile() = ContactProfile(
+    displayName = displayName,
+    phoneNumber = phoneNumber,
+    email = profileEmail,
+    bio = profileBio,
+    websiteUrl = profileWebsite,
+    instagramUrl = profileInstagram,
+    xUrl = profileX,
+    linkedinUrl = profileLinkedin,
+    githubUrl = profileGithub,
+)
+
+private fun ChatUiState.contactDraftProfile() = ContactProfile(
+    displayName = contactNameDraft,
+    phoneNumber = contactPhoneDraft,
+    email = contactEmailDraft,
+    bio = contactBioDraft,
+    websiteUrl = contactWebsiteDraft,
+    instagramUrl = contactInstagramDraft,
+    xUrl = contactXDraft,
+    linkedinUrl = contactLinkedinDraft,
+    githubUrl = contactGithubDraft,
+)
+
 @Composable
-private fun AppHeader(state: ChatConnectionState) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 18.dp, bottom = 16.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Column {
-            Text(
-                text = "NEARBY / OFFLINE",
-                style = MaterialTheme.typography.labelLarge,
-                color = Signal,
-            )
-            Text(
-                text = "Common Ground",
-                style = MaterialTheme.typography.titleLarge,
-                color = ForestDark,
-            )
-        }
-        StatusPill(state)
+private fun AppNavigationBar(
+    state: ChatConnectionState,
+    onChats: () -> Unit,
+    onContacts: () -> Unit,
+    onMyCard: () -> Unit,
+    onSettings: () -> Unit,
+) {
+    NavigationBar(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f)) {
+        NavigationBarItem(
+            selected = state == ChatConnectionState.DISCOVERING,
+            onClick = onChats,
+            icon = { Text("Chats") },
+            label = { Text("Messages") },
+        )
+        NavigationBarItem(
+            selected = state == ChatConnectionState.MANAGING_CONTACTS,
+            onClick = onContacts,
+            icon = { Text("People") },
+            label = { Text("Contacts") },
+        )
+        NavigationBarItem(
+            selected = state == ChatConnectionState.SHOWING_MY_CARD,
+            onClick = onMyCard,
+            icon = { Text("QR") },
+            label = { Text("My card") },
+        )
+        NavigationBarItem(
+            selected = state == ChatConnectionState.SETTINGS,
+            onClick = onSettings,
+            icon = { Text("More") },
+            label = { Text("Settings") },
+        )
     }
 }
 
 @Composable
-private fun StatusPill(state: ChatConnectionState) {
-    val (label, color) = when (state) {
-        ChatConnectionState.IDLE -> "READY" to MutedInk
-        ChatConnectionState.DISCOVERING -> "SEARCHING" to Signal
-        ChatConnectionState.CONNECTING -> "LINKING" to Signal
-        ChatConnectionState.CONNECTED -> "CONNECTED" to Forest
-        ChatConnectionState.DISCONNECTED -> "OFFLINE" to MutedInk
-        ChatConnectionState.ERROR -> "CHECK SETUP" to MaterialTheme.colorScheme.error
-    }
+private fun Header(state: ChatUiState) {
+    val connectedCount = state.directConnectionCount
     Row(
-        modifier = Modifier
-            .clip(CircleShape)
-            .background(color.copy(alpha = 0.12f))
-            .padding(horizontal = 11.dp, vertical = 7.dp),
+        Modifier
+            .fillMaxWidth()
+            .padding(top = 16.dp, bottom = 14.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
+        Column {
+            Text("OFFLINE CHAT", style = MaterialTheme.typography.labelLarge, color = Signal)
+            Text("Common Ground", style = MaterialTheme.typography.titleLarge, color = ForestDark)
+        }
+        val text = when {
+            state.connectionState == ChatConnectionState.IDLE -> "READY"
+            connectedCount == 0 -> "SEARCHING"
+            else -> "$connectedCount CONNECTED"
+        }
+        Text(
+            text,
             modifier = Modifier
-                .size(7.dp)
                 .clip(CircleShape)
-                .background(color),
+                .background(Forest.copy(alpha = 0.12f))
+                .padding(horizontal = 11.dp, vertical = 7.dp),
+            style = MaterialTheme.typography.labelLarge,
+            color = Forest,
         )
-        Spacer(Modifier.width(7.dp))
-        Text(text = label, style = MaterialTheme.typography.labelLarge, color = color)
     }
 }
 
 @Composable
 private fun WelcomeScreen(
     name: String,
+    phoneNumber: String,
     deniedPermissions: List<String>,
     onNameChanged: (String) -> Unit,
-    onStartChat: () -> Unit,
+    onPhoneChanged: (String) -> Unit,
+    onStart: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    val focusManager = LocalFocusManager.current
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(bottom = 28.dp),
         verticalArrangement = Arrangement.Center,
+        contentPadding = PaddingValues(bottom = 28.dp),
     ) {
         item {
+            Text("Chat nearby without a network", style = MaterialTheme.typography.displaySmall)
             Text(
-                text = "Talk when the\nnetwork cannot.",
-                style = MaterialTheme.typography.displaySmall,
-                color = Ink,
-            )
-            Spacer(Modifier.height(14.dp))
-            Text(
-                text = "Connect directly to one nearby Android phone. No mobile data, Wi-Fi network, account, or server required.",
+                "Your conversations stay on this phone. The mesh group relays messages through connected phones and syncs when links return.",
+                modifier = Modifier.padding(top = 12.dp, bottom = 24.dp),
                 style = MaterialTheme.typography.bodyLarge,
                 color = MutedInk,
             )
-            Spacer(Modifier.height(26.dp))
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(26.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                shape = RoundedCornerShape(22.dp),
             ) {
-                Column(Modifier.padding(20.dp)) {
-                    Text("Your temporary name", style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(10.dp))
+                Column(Modifier.padding(18.dp)) {
+                    Text("Your name", style = MaterialTheme.typography.titleMedium)
                     OutlinedTextField(
                         value = name,
                         onValueChange = onNameChanged,
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        placeholder = { Text("e.g. Pranjal") },
-                        shape = RoundedCornerShape(16.dp),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                focusManager.clearFocus()
-                                onStartChat()
-                            },
-                        ),
-                    )
-                    Spacer(Modifier.height(14.dp))
-                    Button(
-                        onClick = {
-                            focusManager.clearFocus()
-                            onStartChat()
-                        },
-                        enabled = name.isNotBlank(),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(54.dp),
-                        shape = RoundedCornerShape(16.dp),
+                            .padding(top = 8.dp),
+                        singleLine = true,
+                        placeholder = { Text("Name shown to nearby people") },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(onDone = { onStart() }),
+                        shape = RoundedCornerShape(15.dp),
+                    )
+                    OutlinedTextField(
+                        value = phoneNumber,
+                        onValueChange = onPhoneChanged,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        singleLine = true,
+                        label = { Text("Your phone number") },
+                        supportingText = { Text("Include country code so contacts can recognize you") },
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Phone,
+                            imeAction = ImeAction.Done,
+                        ),
+                        keyboardActions = KeyboardActions(onDone = { onStart() }),
+                        shape = RoundedCornerShape(15.dp),
+                    )
+                    Button(
+                        onClick = onStart,
+                        enabled = name.isNotBlank() && phoneNumber.isNotBlank(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 14.dp)
+                            .height(52.dp),
+                        shape = RoundedCornerShape(15.dp),
                     ) {
-                        Text("Start nearby chat  →")
+                        Text("Start offline chat")
                     }
+                }
+            }
+
+            if (deniedPermissions.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.padding(top = 15.dp),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFE4DB)),
+                    shape = RoundedCornerShape(18.dp),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Permissions needed", style = MaterialTheme.typography.titleMedium)
+                        deniedPermissions.forEach { permission ->
+                            Text("• $permission", modifier = Modifier.padding(top = 4.dp))
+                        }
+                        TextButton(onClick = onOpenSettings, modifier = Modifier.align(Alignment.End)) {
+                            Text("Open settings")
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ConversationList(
+    conversations: List<ConversationSummary>,
+    devices: List<NearbyDevice>,
+    onOpenConversation: (String) -> Unit,
+    onConnect: (String) -> Unit,
+    onBeginCreateGroup: () -> Unit,
+    onManageContacts: () -> Unit,
+    search: String,
+    onSearchChanged: (String) -> Unit,
+) {
+    val filteredConversations = conversations.filter {
+        search.isBlank() || it.name.contains(search, ignoreCase = true) ||
+            it.lastMessage.contains(search, ignoreCase = true)
+    }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+        contentPadding = PaddingValues(bottom = 28.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Messages", style = MaterialTheme.typography.headlineMedium)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(onClick = onManageContacts) { Text("Contacts") }
+                    Button(onClick = onBeginCreateGroup) { Text("New group") }
+                }
+            }
+            Text(
+                if (conversations.isEmpty()) "No saved conversations yet" else "Group and direct messages saved on this phone",
+                color = MutedInk,
+                modifier = Modifier.padding(top = 3.dp, bottom = 10.dp),
+            )
+            OutlinedTextField(
+                value = search,
+                onValueChange = onSearchChanged,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 10.dp),
+                singleLine = true,
+                placeholder = { Text("Search chats") },
+                shape = RoundedCornerShape(15.dp),
+            )
+        }
+        items(filteredConversations, key = ConversationSummary::peerId) { conversation ->
+            ConversationCard(conversation) { onOpenConversation(conversation.peerId) }
+        }
+        item {
+            Text(
+                "Nearby phones",
+                modifier = Modifier.padding(top = 22.dp),
+                style = MaterialTheme.typography.headlineMedium,
+            )
+            Text(
+                "Each connection extends the group mesh",
+                color = MutedInk,
+                modifier = Modifier.padding(top = 3.dp, bottom = 10.dp),
+            )
+        }
+        if (devices.isEmpty()) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    shape = RoundedCornerShape(18.dp),
+                ) {
                     Text(
-                        text = "Both phones will advertise and discover at the same time.",
-                        modifier = Modifier.padding(top = 12.dp),
-                        style = MaterialTheme.typography.bodyMedium,
+                        "Searching for phones nearby...",
+                        modifier = Modifier.padding(18.dp),
                         color = MutedInk,
                     )
                 }
             }
-            if (deniedPermissions.isNotEmpty()) {
-                PermissionCard(deniedPermissions, onOpenSettings)
-            }
-        }
-    }
-}
-
-@Composable
-private fun PermissionCard(
-    deniedPermissions: List<String>,
-    onOpenSettings: () -> Unit,
-) {
-    Card(
-        modifier = Modifier.padding(top = 16.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFFFE4DB)),
-        shape = RoundedCornerShape(20.dp),
-    ) {
-        Column(Modifier.padding(18.dp)) {
-            Text("Permission needed", style = MaterialTheme.typography.titleMedium)
-            Text(
-                text = "Nearby Connections cannot start until these are allowed:",
-                modifier = Modifier.padding(top = 5.dp, bottom = 6.dp),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            deniedPermissions.forEach { permission ->
-                Text("• $permission", style = MaterialTheme.typography.bodyMedium)
-            }
-            TextButton(
-                onClick = onOpenSettings,
-                modifier = Modifier.align(Alignment.End),
-                colors = ButtonDefaults.textButtonColors(contentColor = ForestDark),
-            ) {
-                Text("Open app settings")
-            }
-        }
-    }
-}
-
-@Composable
-private fun DiscoveryScreen(
-    devices: List<NearbyDevice>,
-    onConnect: (String) -> Unit,
-) {
-    Column(Modifier.fillMaxSize()) {
-        RadarBanner()
-        Spacer(Modifier.height(22.dp))
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            Text("Nearby devices", style = MaterialTheme.typography.headlineMedium)
-            Text("${devices.size} found", style = MaterialTheme.typography.bodyMedium, color = MutedInk)
-        }
-        Spacer(Modifier.height(12.dp))
-        if (devices.isEmpty()) {
-            EmptyDevicesCard()
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 24.dp),
-            ) {
-                items(devices, key = NearbyDevice::endpointId) { device ->
-                    DeviceCard(device = device, onConnect = onConnect)
-                }
+            items(devices, key = NearbyDevice::endpointId) { device ->
+                DeviceCard(device) { onConnect(device.endpointId) }
             }
         }
     }
 }
 
 @Composable
-private fun RadarBanner() {
-    var ring by remember { mutableFloatStateOf(0f) }
-    LaunchedEffect(Unit) {
-        while (true) {
-            repeat(60) { frame ->
-                ring = frame / 59f
-                delay(25)
-            }
-        }
-    }
+private fun ConversationCard(conversation: ConversationSummary, onClick: () -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .height(154.dp),
-        colors = CardDefaults.cardColors(containerColor = ForestDark),
-        shape = RoundedCornerShape(28.dp),
-    ) {
-        Box(Modifier.fillMaxSize()) {
-            Canvas(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .width(180.dp)
-                    .align(Alignment.CenterEnd),
-            ) {
-                val center = Offset(size.width * 0.52f, size.height * 0.5f)
-                drawCircle(
-                    color = Color.White.copy(alpha = 0.10f * (1f - ring)),
-                    radius = 28.dp.toPx() + ring * 60.dp.toPx(),
-                    center = center,
-                    style = Stroke(width = 2.dp.toPx()),
-                )
-                drawCircle(Color.White.copy(alpha = 0.18f), 48.dp.toPx(), center, style = Stroke(2.dp.toPx()))
-                drawCircle(Color.White, 8.dp.toPx(), center)
-                drawLine(
-                    color = Signal,
-                    start = center,
-                    end = center + Offset(45.dp.toPx(), -36.dp.toPx()),
-                    strokeWidth = 4.dp.toPx(),
-                    cap = StrokeCap.Round,
-                )
-            }
-            Column(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .padding(22.dp)
-                    .widthIn(max = 210.dp),
-            ) {
-                Text("Scanning the crowd", style = MaterialTheme.typography.titleLarge, color = Color.White)
-                Text(
-                    "Keep this screen open on both phones.",
-                    modifier = Modifier.padding(top = 7.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color.White.copy(alpha = 0.75f),
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun EmptyDevicesCard() {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f)),
-        shape = RoundedCornerShape(20.dp),
-    ) {
-        Column(Modifier.padding(20.dp)) {
-            Text("Still looking…", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "On the second phone, open this app, enter a name, and tap Start nearby chat.",
-                modifier = Modifier.padding(top = 5.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MutedInk,
-            )
-        }
-    }
-}
-
-@Composable
-private fun DeviceCard(device: NearbyDevice, onConnect: (String) -> Unit) {
-    Card(
+            .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(20.dp),
+        shape = RoundedCornerShape(18.dp),
     ) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
+            Modifier.padding(15.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(Mist),
-                contentAlignment = Alignment.Center,
+            Avatar(conversation.name, conversation.connected)
+            Column(
+                Modifier
+                    .padding(start = 12.dp)
+                    .weight(1f),
             ) {
-                Text(device.name.take(1).uppercase(), fontWeight = FontWeight.Bold, color = ForestDark)
+                Text(conversation.name, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    conversation.lastMessage.ifBlank { "Conversation ready" },
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    color = MutedInk,
+                )
             }
             Text(
-                text = device.name,
-                modifier = Modifier
-                    .padding(horizontal = 12.dp)
-                    .weight(1f),
-                style = MaterialTheme.typography.titleMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+                when {
+                    conversation.type == ConversationType.OPEN_MESH && conversation.connected -> "OPEN MESH"
+                    conversation.type == ConversationType.OPEN_MESH -> "NO LINKS"
+                    conversation.type == ConversationType.PRIVATE_GROUP ->
+                        "${conversation.memberCount} MEMBERS"
+                    conversation.connected -> "ONLINE"
+                    else -> "OFFLINE"
+                },
+                style = MaterialTheme.typography.labelLarge,
+                color = if (conversation.connected) Forest else MutedInk,
             )
-            Button(
-                onClick = { onConnect(device.endpointId) },
-                shape = RoundedCornerShape(13.dp),
-                contentPadding = PaddingValues(horizontal = 15.dp, vertical = 10.dp),
-            ) {
-                Text("Connect")
-            }
         }
     }
 }
 
 @Composable
-private fun ConnectingScreen(
-    device: NearbyDevice?,
-    authenticationDigits: String?,
-    onDisconnect: () -> Unit,
-) {
+private fun DeviceCard(device: NearbyDevice, onClick: () -> Unit) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Row(
+            Modifier.padding(15.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(device.name, true)
+            Column(
+                Modifier
+                    .padding(start = 12.dp)
+                    .weight(1f),
+            ) {
+                Text(device.name, style = MaterialTheme.typography.titleMedium)
+                Text("Tap to connect", color = MutedInk)
+            }
+            Text("CONNECT", style = MaterialTheme.typography.labelLarge, color = Signal)
+        }
+    }
+}
+
+@Composable
+private fun Avatar(name: String, connected: Boolean) {
+    Box(
+        modifier = Modifier
+            .size(44.dp)
+            .clip(CircleShape)
+            .background(if (connected) Forest else MutedInk),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
+    }
+}
+
+@Composable
+private fun ConnectingScreen(authenticationDigits: String?, onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Box(
-            modifier = Modifier
-                .size(94.dp)
-                .clip(CircleShape)
-                .background(Mist),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text("↔", style = MaterialTheme.typography.displaySmall, color = Forest)
-        }
-        Spacer(Modifier.height(22.dp))
-        Text("Connecting to ${device?.name ?: "nearby device"}", style = MaterialTheme.typography.headlineMedium)
-        Text(
-            "Both phones must accept the connection.",
-            modifier = Modifier.padding(top = 8.dp),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MutedInk,
-        )
+        Text("Connecting phones", style = MaterialTheme.typography.headlineMedium)
+        Text("Keep both phones nearby", modifier = Modifier.padding(top = 8.dp), color = MutedInk)
         if (authenticationDigits != null) {
             Card(
                 modifier = Modifier.padding(top = 22.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(20.dp),
             ) {
                 Column(
-                    modifier = Modifier.padding(horizontal = 28.dp, vertical = 18.dp),
+                    Modifier.padding(horizontal = 28.dp, vertical = 18.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text("VERIFY ON BOTH PHONES", style = MaterialTheme.typography.labelLarge, color = Signal)
-                    Text(
-                        authenticationDigits,
-                        modifier = Modifier.padding(top = 5.dp),
-                        style = MaterialTheme.typography.headlineMedium,
-                        color = ForestDark,
-                    )
+                    Text("CHECK BOTH PHONES", style = MaterialTheme.typography.labelLarge, color = Signal)
+                    Text(authenticationDigits, style = MaterialTheme.typography.headlineMedium)
                 }
             }
         }
-        TextButton(onClick = onDisconnect, modifier = Modifier.padding(top = 14.dp)) {
-            Text("Cancel")
+        TextButton(onClick = onBack, modifier = Modifier.padding(top = 12.dp)) { Text("Back") }
+    }
+}
+
+@Composable
+private fun CreateGroupScreen(
+    name: String,
+    contacts: List<GroupContact>,
+    selectedIds: Set<String>,
+    onNameChanged: (String) -> Unit,
+    onToggleMember: (String) -> Unit,
+    onCreate: () -> Unit,
+    onBack: () -> Unit,
+    title: String = "Create private group",
+    actionLabel: String = "Create group",
+    onDelete: (() -> Unit)? = null,
+) {
+    var confirmingDelete by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = onBack) { Text("Back") }
+            Text(title, style = MaterialTheme.typography.headlineMedium)
+        }
+        Text(
+            "Choose saved contacts. Invitations and messages can travel through other mesh phones.",
+            color = MutedInk,
+            modifier = Modifier.padding(bottom = 12.dp),
+        )
+        OutlinedTextField(
+            value = name,
+            onValueChange = onNameChanged,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            label = { Text("Group name") },
+            shape = RoundedCornerShape(15.dp),
+        )
+        Text(
+            "Members",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 18.dp, bottom = 8.dp),
+        )
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            if (contacts.isEmpty()) {
+                item {
+                    Card(
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(18.dp),
+                    ) {
+                        Text(
+                            "No saved contacts yet. Connect to a phone once, then return here to add it.",
+                            modifier = Modifier.padding(18.dp),
+                            color = MutedInk,
+                        )
+                    }
+                }
+            } else {
+                items(contacts, key = GroupContact::peerId) { contact ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onToggleMember(contact.peerId) },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(18.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(
+                                checked = contact.peerId in selectedIds,
+                                onCheckedChange = { onToggleMember(contact.peerId) },
+                            )
+                            Column(Modifier.weight(1f)) {
+                                Text(contact.name, style = MaterialTheme.typography.titleMedium)
+                                Text(
+                                    when {
+                                        contact.connected -> "Connected now"
+                                        contact.availableOnMesh -> "Recognized on the mesh"
+                                        else -> "Will match by phone number when they join"
+                                    },
+                                    color = if (contact.connected) Forest else MutedInk,
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Button(
+            onClick = onCreate,
+            enabled = name.isNotBlank() && selectedIds.isNotEmpty(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 10.dp)
+                .height(52.dp),
+            shape = RoundedCornerShape(15.dp),
+        ) {
+            Text("$actionLabel (${selectedIds.size + 1})")
+        }
+        if (onDelete != null) {
+            TextButton(
+                onClick = { confirmingDelete = true },
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) { Text("Delete group", color = MaterialTheme.colorScheme.error) }
+        }
+    }
+    if (confirmingDelete && onDelete != null) {
+        DeleteConfirmationDialog(
+            title = "Delete this group?",
+            message = "The group and its messages will be removed from this phone.",
+            onConfirm = onDelete,
+            onDismiss = { confirmingDelete = false },
+        )
+    }
+}
+
+@Composable
+private fun ContactsScreen(
+    contacts: List<SavedContact>,
+    search: String,
+    onSearchChanged: (String) -> Unit,
+    onAdd: () -> Unit,
+    onOpen: (String) -> Unit,
+    onScan: () -> Unit,
+    onImport: () -> Unit,
+) {
+    val filtered = contacts.filter { contact ->
+        search.isBlank() || listOf(
+            contact.name,
+            contact.phoneNumber,
+            contact.email,
+            contact.instagramUrl,
+            contact.linkedinUrl,
+        ).any { it.contains(search, ignoreCase = true) }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Text("Contacts", style = MaterialTheme.typography.headlineMedium)
+            Button(onClick = onAdd) { Text("Add") }
+        }
+        Text(
+            "Saved and scanned cards stay in BLAP. Phone numbers securely match people when they appear on the mesh.",
+            color = MutedInk,
+            modifier = Modifier.padding(bottom = 12.dp),
+        )
+        OutlinedTextField(
+            value = search,
+            onValueChange = onSearchChanged,
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
+            placeholder = { Text("Search contacts") },
+            shape = RoundedCornerShape(15.dp),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 8.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            TextButton(onClick = onImport) { Text("Import from phone") }
+            TextButton(onClick = onScan) { Text("Scan contact QR") }
+        }
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+            contentPadding = PaddingValues(bottom = 12.dp),
+        ) {
+            if (filtered.isEmpty()) {
+                item {
+                    Text(
+                        if (contacts.isEmpty()) "No contact cards saved yet" else "No contacts match your search",
+                        color = MutedInk,
+                        modifier = Modifier.padding(vertical = 18.dp),
+                    )
+                }
+            } else {
+                items(filtered, key = SavedContact::id) { contact ->
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpen(contact.id) },
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        shape = RoundedCornerShape(16.dp),
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Avatar(contact.name, contact.linkedPeerId != null)
+                            Column(
+                                Modifier
+                                    .padding(start = 12.dp)
+                                    .weight(1f),
+                            ) {
+                                Text(contact.name, style = MaterialTheme.typography.titleMedium)
+                                Text(contact.email.ifBlank { contact.phoneNumber }, color = MutedInk)
+                                Text(
+                                    if (contact.linkedPeerId != null) "Recognized on mesh" else "Waiting to match",
+                                    color = if (contact.linkedPeerId != null) Forest else MutedInk,
+                                )
+                            }
+                            Text(
+                                when (contact.source) {
+                                    ContactSource.QR -> "SCANNED"
+                                    ContactSource.DEVICE -> "PHONE"
+                                    ContactSource.MANUAL -> "SAVED"
+                                },
+                                style = MaterialTheme.typography.labelLarge,
+                                color = Signal,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ContactEditorScreen(
+    profile: ContactProfile,
+    source: ContactSource,
+    isExisting: Boolean,
+    onChanged: (ContactProfile) -> Unit,
+    onSave: () -> Unit,
+    onDelete: () -> Unit,
+    onBack: () -> Unit,
+) {
+    ProfileForm(
+        title = if (isExisting) "Edit contact" else if (source == ContactSource.QR) "Review scanned card" else "New contact",
+        subtitle = if (source == ContactSource.QR) {
+            "Check these details before saving the card to BLAP."
+        } else {
+            "Add contact details and any social profiles you want to keep together."
+        },
+        profile = profile,
+        onChanged = onChanged,
+        onSave = onSave,
+        onBack = onBack,
+        saveLabel = if (isExisting) "Save changes" else "Save contact",
+        onDelete = if (isExisting) onDelete else null,
+    )
+}
+
+@Composable
+private fun ProfileEditorScreen(
+    profile: ContactProfile,
+    onChanged: (ContactProfile) -> Unit,
+    onSave: () -> Unit,
+    onBack: () -> Unit,
+) {
+    ProfileForm(
+        title = "Edit my card",
+        subtitle = "Only details you put here are included when someone scans your QR code.",
+        profile = profile,
+        onChanged = onChanged,
+        onSave = onSave,
+        onBack = onBack,
+        saveLabel = "Save my card",
+    )
+}
+
+@Composable
+private fun ProfileForm(
+    title: String,
+    subtitle: String,
+    profile: ContactProfile,
+    onChanged: (ContactProfile) -> Unit,
+    onSave: () -> Unit,
+    onBack: () -> Unit,
+    saveLabel: String,
+    onDelete: (() -> Unit)? = null,
+) {
+    var confirmingDelete by rememberSaveable { mutableStateOf(false) }
+    Column(Modifier.fillMaxSize()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBack) { Text("Back") }
+            Text(title, style = MaterialTheme.typography.headlineMedium)
+        }
+        Text(subtitle, color = MutedInk, modifier = Modifier.padding(bottom = 10.dp))
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(9.dp),
+            contentPadding = PaddingValues(bottom = 12.dp),
+        ) {
+            item {
+                ProfileTextField("Name", profile.displayName) {
+                    onChanged(profile.copy(displayName = it))
+                }
+            }
+            item {
+                ProfileTextField("Phone number", profile.phoneNumber, KeyboardType.Phone) {
+                    onChanged(profile.copy(phoneNumber = it))
+                }
+            }
+            item {
+                ProfileTextField("Email", profile.email, KeyboardType.Email) {
+                    onChanged(profile.copy(email = it))
+                }
+            }
+            item {
+                OutlinedTextField(
+                    value = profile.bio,
+                    onValueChange = { onChanged(profile.copy(bio = it)) },
+                    modifier = Modifier.fillMaxWidth(),
+                    label = { Text("About") },
+                    placeholder = { Text("A short intro") },
+                    minLines = 2,
+                    maxLines = 4,
+                    shape = RoundedCornerShape(15.dp),
+                )
+            }
+            item { Text("Links", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp)) }
+            item {
+                ProfileTextField("Website", profile.websiteUrl, KeyboardType.Uri) {
+                    onChanged(profile.copy(websiteUrl = it))
+                }
+            }
+            item {
+                ProfileTextField("Instagram URL", profile.instagramUrl, KeyboardType.Uri) {
+                    onChanged(profile.copy(instagramUrl = it))
+                }
+            }
+            item {
+                ProfileTextField("X / Twitter URL", profile.xUrl, KeyboardType.Uri) {
+                    onChanged(profile.copy(xUrl = it))
+                }
+            }
+            item {
+                ProfileTextField("LinkedIn URL", profile.linkedinUrl, KeyboardType.Uri) {
+                    onChanged(profile.copy(linkedinUrl = it))
+                }
+            }
+            item {
+                ProfileTextField("GitHub URL", profile.githubUrl, KeyboardType.Uri) {
+                    onChanged(profile.copy(githubUrl = it))
+                }
+            }
+        }
+        Button(
+            onClick = onSave,
+            enabled = profile.displayName.isNotBlank() && profile.phoneNumber.isNotBlank(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(52.dp),
+            shape = RoundedCornerShape(15.dp),
+        ) { Text(saveLabel) }
+        if (onDelete != null) {
+            TextButton(
+                onClick = { confirmingDelete = true },
+                modifier = Modifier.align(Alignment.CenterHorizontally),
+            ) {
+                Text("Delete contact", color = MaterialTheme.colorScheme.error)
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+    }
+    if (confirmingDelete && onDelete != null) {
+        DeleteConfirmationDialog(
+            title = "Delete this contact?",
+            message = "Their saved contact card will be removed from BLAP.",
+            onConfirm = onDelete,
+            onDismiss = { confirmingDelete = false },
+        )
+    }
+}
+
+@Composable
+private fun DeleteConfirmationDialog(
+    title: String,
+    message: String,
+    onConfirm: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = { Text(message) },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Delete", color = MaterialTheme.colorScheme.error)
+            }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun ProfileTextField(
+    label: String,
+    value: String,
+    keyboardType: KeyboardType = KeyboardType.Text,
+    onValueChanged: (String) -> Unit,
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChanged,
+        modifier = Modifier.fillMaxWidth(),
+        singleLine = true,
+        label = { Text(label) },
+        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+        shape = RoundedCornerShape(15.dp),
+    )
+}
+
+@Composable
+private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
+    val payload = remember(profile) { ContactCardCodec.encode(profile) }
+    val bitmap = remember(payload) { createQrBitmap(payload) }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        contentPadding = PaddingValues(bottom = 18.dp),
+    ) {
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column {
+                    Text("My contact card", style = MaterialTheme.typography.headlineMedium)
+                    Text("Show this QR to share your details", color = MutedInk)
+                }
+                Button(onClick = onEdit) { Text("Edit") }
+            }
+        }
+        item {
+            Card(
+                modifier = Modifier.padding(top = 18.dp),
+                colors = CardDefaults.cardColors(containerColor = Color.White),
+                shape = RoundedCornerShape(24.dp),
+            ) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = "QR code for ${profile.displayName}'s BLAP contact card",
+                    modifier = Modifier
+                        .size(280.dp)
+                        .padding(16.dp),
+                )
+            }
+        }
+        item {
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(20.dp),
+            ) {
+                Column(Modifier.padding(18.dp)) {
+                    Text(profile.displayName.ifBlank { "Your name" }, style = MaterialTheme.typography.headlineMedium)
+                    Text(profile.phoneNumber, color = MutedInk, modifier = Modifier.padding(top = 4.dp))
+                    if (profile.email.isNotBlank()) Text(profile.email, color = MutedInk)
+                    if (profile.bio.isNotBlank()) Text(profile.bio, modifier = Modifier.padding(top = 12.dp))
+                    val links = listOf(
+                        "Website" to profile.websiteUrl,
+                        "Instagram" to profile.instagramUrl,
+                        "X / Twitter" to profile.xUrl,
+                        "LinkedIn" to profile.linkedinUrl,
+                        "GitHub" to profile.githubUrl,
+                    ).filter { it.second.isNotBlank() }
+                    links.forEach { (label, value) ->
+                        Text("$label · $value", color = Forest, modifier = Modifier.padding(top = 7.dp))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun createQrBitmap(payload: String, size: Int = 900): Bitmap {
+    val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size)
+    val pixels = IntArray(size * size)
+    val dark = android.graphics.Color.rgb(20, 52, 44)
+    val light = android.graphics.Color.WHITE
+    for (y in 0 until size) {
+        for (x in 0 until size) pixels[y * size + x] = if (matrix[x, y]) dark else light
+    }
+    return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
+}
+
+@Composable
+private fun SettingsScreen(
+    contactCount: Int,
+    connectionCount: Int,
+    onEditProfile: () -> Unit,
+    onOpenAppSettings: () -> Unit,
+) {
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        contentPadding = PaddingValues(bottom = 18.dp),
+    ) {
+        item {
+            Text("Settings", style = MaterialTheme.typography.headlineMedium)
+            Text("Identity, privacy, and device access", color = MutedInk)
+        }
+        item {
+            SettingsCard(
+                title = "My profile and QR",
+                detail = "Choose what you share on your contact card",
+                action = "Edit",
+                onClick = onEditProfile,
+            )
+        }
+        item {
+            SettingsCard(
+                title = "Android permissions",
+                detail = "Nearby devices, contacts, and location access",
+                action = "Open",
+                onClick = onOpenAppSettings,
+            )
+        }
+        item {
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(18.dp),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("On this phone", style = MaterialTheme.typography.titleMedium)
+                    Text("$contactCount saved contact card${if (contactCount == 1) "" else "s"}", color = MutedInk)
+                    Text("$connectionCount active mesh link${if (connectionCount == 1) "" else "s"}", color = MutedInk)
+                }
+            }
+        }
+        item {
+            Text(
+                "BLAP exchanges chat data over nearby mesh links. Contact cards are shared only when you display or scan their QR code.",
+                color = MutedInk,
+                modifier = Modifier.padding(top = 8.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun SettingsCard(
+    title: String,
+    detail: String,
+    action: String,
+    onClick: () -> Unit,
+) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(detail, color = MutedInk)
+            }
+            Text(action, color = Signal, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
 
 @Composable
 private fun ChatScreen(
-    peer: NearbyDevice,
+    conversation: ConversationSummary,
     messages: List<ChatMessage>,
-    onSendMessage: (String) -> Unit,
+    directConnectionCount: Int,
+    onSend: (String) -> Unit,
+    onBack: () -> Unit,
     onDisconnect: () -> Unit,
+    onOpenGroupSettings: () -> Unit,
 ) {
     val listState = rememberLazyListState()
-    LaunchedEffect(messages.size) {
-        if (messages.isNotEmpty()) listState.animateScrollToItem(messages.lastIndex)
+    val scope = rememberCoroutineScope()
+    val density = LocalDensity.current
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    val scrollToBottom = {
+        if (messages.isNotEmpty()) {
+            scope.launch { listState.scrollToItem(0) }
+        }
+    }
+    LaunchedEffect(messages.lastOrNull()?.id, imeBottom) {
+        if (messages.isNotEmpty()) listState.scrollToItem(0)
     }
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier
+            Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .padding(bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(46.dp)
-                    .clip(CircleShape)
-                    .background(Forest),
-                contentAlignment = Alignment.Center,
-            ) {
-                Text(peer.name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
-            }
+            TextButton(onClick = onBack) { Text("Back") }
+            Avatar(conversation.name, conversation.connected)
             Column(
-                modifier = Modifier
-                    .padding(start = 12.dp)
+                Modifier
+                    .padding(start = 10.dp)
                     .weight(1f),
             ) {
-                Text(peer.name, style = MaterialTheme.typography.titleLarge)
-                Text("Direct device-to-device link", style = MaterialTheme.typography.bodyMedium, color = Forest)
+                Text(conversation.name, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    when {
+                        conversation.type == ConversationType.OPEN_MESH && directConnectionCount > 0 ->
+                            "$directConnectionCount direct link${if (directConnectionCount == 1) "" else "s"} · relaying through mesh"
+                        conversation.type == ConversationType.OPEN_MESH -> "Public room · no direct links"
+                        conversation.type == ConversationType.PRIVATE_GROUP && directConnectionCount > 0 ->
+                            "${conversation.memberCount} members · relaying through mesh"
+                        conversation.type == ConversationType.PRIVATE_GROUP ->
+                            "${conversation.memberCount} members · messages will wait"
+                        conversation.connected -> "Connected nearby"
+                        else -> "Offline, messages will wait"
+                    },
+                    color = if (conversation.connected) Forest else MutedInk,
+                )
             }
-            TextButton(onClick = onDisconnect) { Text("Disconnect") }
+            if (conversation.connected && conversation.type == ConversationType.DIRECT) {
+                TextButton(onClick = onDisconnect) { Text("Disconnect") }
+            } else if (conversation.type == ConversationType.PRIVATE_GROUP) {
+                TextButton(onClick = onOpenGroupSettings) { Text("Group info") }
+            }
         }
-        HorizontalDivider(color = Ink.copy(alpha = 0.10f))
+        HorizontalDivider(color = Ink.copy(alpha = 0.1f))
         LazyColumn(
             state = listState,
+            reverseLayout = true,
             modifier = Modifier.weight(1f),
-            contentPadding = PaddingValues(vertical = 16.dp),
-            verticalArrangement = if (messages.isEmpty()) Arrangement.Center else Arrangement.spacedBy(10.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(vertical = 14.dp),
         ) {
             if (messages.isEmpty()) {
-                item {
-                    Text(
-                        "The link is live. Send the first message.",
-                        modifier = Modifier.fillMaxWidth(),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MutedInk,
-                    )
-                }
+                item { Text("No messages yet", color = MutedInk) }
             } else {
-                items(messages, key = ChatMessage::id) { message -> MessageBubble(message, peer.name) }
+                items(messages.asReversed(), key = ChatMessage::id) { message ->
+                    MessageBubble(message, showSender = conversation.type != ConversationType.DIRECT)
+                }
             }
         }
-        MessageComposer(onSendMessage)
+        MessageComposer(onSend = onSend, onTyping = scrollToBottom)
         Spacer(Modifier.height(8.dp))
     }
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, peerName: String) {
-    val isMine = message.author == MessageAuthor.ME
+private fun MessageBubble(message: ChatMessage, showSender: Boolean) {
+    val mine = message.author == MessageAuthor.ME
     Column(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalAlignment = if (isMine) Alignment.End else Alignment.Start,
+        Modifier.fillMaxWidth(),
+        horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
     ) {
+        if (!mine && showSender) {
+            Text(
+                message.senderName.ifBlank { "Mesh member" },
+                modifier = Modifier.padding(start = 4.dp, bottom = 3.dp),
+                style = MaterialTheme.typography.labelLarge,
+                color = Forest,
+            )
+        }
         Text(
-            text = if (isMine) "You" else peerName,
-            modifier = Modifier.padding(start = 5.dp, end = 5.dp, bottom = 3.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = if (isMine) Forest else MutedInk,
-        )
-        Text(
-            text = message.text,
+            message.text,
             modifier = Modifier
-                .widthIn(max = 300.dp)
-                .clip(
-                    RoundedCornerShape(
-                        topStart = 18.dp,
-                        topEnd = 18.dp,
-                        bottomStart = if (isMine) 18.dp else 4.dp,
-                        bottomEnd = if (isMine) 4.dp else 18.dp,
-                    ),
-                )
-                .background(if (isMine) Forest else MaterialTheme.colorScheme.surface)
-                .padding(horizontal = 15.dp, vertical = 11.dp),
-            style = MaterialTheme.typography.bodyLarge,
-            color = if (isMine) Color.White else Ink,
+                .widthIn(max = 310.dp)
+                .clip(RoundedCornerShape(17.dp))
+                .background(if (mine) Forest else MaterialTheme.colorScheme.surface)
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            color = if (mine) Color.White else Ink,
         )
+        val timestamp = formatTimestamp(message.sentAt)
+        if (mine) {
+            val status = when (message.status) {
+                MessageStatus.PENDING -> "Waiting"
+                MessageStatus.SENT -> "Sent"
+                MessageStatus.DELIVERED -> "Delivered"
+            }
+            Text(
+                "$timestamp · $status",
+                modifier = Modifier.padding(top = 3.dp, end = 4.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MutedInk,
+            )
+        } else {
+            Text(
+                timestamp,
+                modifier = Modifier.padding(top = 3.dp, start = 4.dp),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MutedInk,
+            )
+        }
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+private fun formatTimestamp(sentAt: Long): String =
+    SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(sentAt))
+
 @Composable
-private fun MessageComposer(onSendMessage: (String) -> Unit) {
-    var message by rememberSaveable { mutableStateOf("") }
+private fun MessageComposer(onSend: (String) -> Unit, onTyping: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf("") }
     val send = {
-        if (message.isNotBlank()) {
-            onSendMessage(message)
-            message = ""
+        if (text.isNotBlank()) {
+            onSend(text)
+            text = ""
         }
     }
+
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        Modifier
+            .fillMaxWidth()
+            .onSizeChanged { onTyping() },
         verticalAlignment = Alignment.CenterVertically,
     ) {
         OutlinedTextField(
-            value = message,
-            onValueChange = { message = it.take(1_000) },
+            value = text,
+            onValueChange = {
+                text = it.take(1_000)
+                onTyping()
+            },
             modifier = Modifier.weight(1f),
-            placeholder = { Text("Type a message…") },
+            placeholder = { Text("Message") },
             maxLines = 4,
-            shape = RoundedCornerShape(18.dp),
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
             keyboardActions = KeyboardActions(onSend = { send() }),
+            shape = RoundedCornerShape(17.dp),
         )
-        Spacer(Modifier.width(10.dp))
-        Button(
-            onClick = send,
-            enabled = message.isNotBlank(),
-            modifier = Modifier.height(54.dp),
-            shape = RoundedCornerShape(16.dp),
-            contentPadding = PaddingValues(horizontal = 18.dp),
-        ) {
+        Spacer(Modifier.width(9.dp))
+        Button(onClick = send, enabled = text.isNotBlank(), modifier = Modifier.height(52.dp)) {
             Text("Send")
         }
     }
 }
 
 @Composable
-private fun RecoveryScreen(
-    title: String,
-    description: String,
-    buttonLabel: String,
-    onAction: () -> Unit,
-) {
+private fun EmptyChat(onBack: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize(),
+        Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
-        Text(title, style = MaterialTheme.typography.headlineMedium)
-        Text(
-            description,
-            modifier = Modifier.padding(top = 9.dp),
-            style = MaterialTheme.typography.bodyLarge,
-            color = MutedInk,
-        )
-        Button(
-            onClick = onAction,
-            modifier = Modifier.padding(top = 22.dp),
-            shape = RoundedCornerShape(15.dp),
-        ) {
-            Text(buttonLabel)
-        }
+        Text("Conversation not found")
+        TextButton(onClick = onBack) { Text("Back to messages") }
+    }
+}
+
+@Composable
+private fun ErrorScreen(onRetry: () -> Unit) {
+    Column(
+        Modifier.fillMaxSize(),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Text("Offline chat could not start", style = MaterialTheme.typography.headlineMedium)
+        Button(onClick = onRetry, modifier = Modifier.padding(top = 16.dp)) { Text("Try again") }
     }
 }
