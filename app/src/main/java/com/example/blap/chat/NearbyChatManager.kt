@@ -17,86 +17,92 @@ import com.google.android.gms.nearby.connection.Payload
 import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
-import java.nio.charset.StandardCharsets
 
 class NearbyChatManager(context: Context) : NearbyChatController {
     private val connectionsClient: ConnectionsClient = Nearby.getConnectionsClient(context)
     private val knownDevices = mutableMapOf<String, NearbyDevice>()
+    private val pendingDevices = mutableMapOf<String, NearbyDevice>()
+    private val establishedEndpoints = mutableSetOf<String>()
+    private val peerByEndpoint = mutableMapOf<String, ConnectedPeer>()
+    private val endpointByPeer = mutableMapOf<String, String>()
+    private val seenMessageIds = boundedIdSet()
+    private val seenAcknowledgements = boundedIdSet()
+    private val seenGroupDefinitions = boundedIdSet()
+    private val knownMeshPeers = mutableMapOf<String, GroupMember>()
+    private val cachedGroupDefinitions = linkedMapOf<String, NearbyPacket.GroupDefinition>()
+    private val cachedGroupMessages = linkedMapOf<String, NearbyPacket.Message>()
 
     private var localDisplayName = ""
-    private var pendingEndpointId: String? = null
-    private var pendingDevice: NearbyDevice? = null
-    private var connectedEndpointId: String? = null
+    private var localPeerId = ""
+    private var localPhoneHash = ""
 
     override var listener: NearbyChatController.Listener? = null
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            if (endpointId != connectedEndpointId || payload.type != Payload.Type.BYTES) return
+            if (endpointId !in establishedEndpoints || payload.type != Payload.Type.BYTES) return
+            val packet = payload.asBytes()?.let(NearbyProtocol::decode) ?: return
 
-            payload.asBytes()?.let { bytes ->
-                listener?.onMessageReceived(String(bytes, StandardCharsets.UTF_8))
+            when (packet) {
+                is NearbyPacket.Hello -> handleHello(endpointId, packet)
+                is NearbyPacket.Message -> handleMessage(endpointId, packet)
+                is NearbyPacket.Acknowledgement -> handleAcknowledgement(endpointId, packet)
+                is NearbyPacket.GroupDefinition -> handleGroupDefinition(endpointId, packet)
+                is NearbyPacket.PeerAnnouncement -> handlePeerAnnouncement(endpointId, packet)
             }
         }
 
-        override fun onPayloadTransferUpdate(
-            endpointId: String,
-            update: PayloadTransferUpdate,
-        ) = Unit
+        override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = Unit
     }
 
     private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
-            val device = NearbyDevice(endpointId, info.endpointName)
-            val otherPendingEndpoint = pendingEndpointId?.takeIf { it != endpointId }
-            if (connectedEndpointId != null || otherPendingEndpoint != null) {
+            if (endpointId in establishedEndpoints) {
                 connectionsClient.rejectConnection(endpointId)
                 return
             }
 
-            pendingEndpointId = endpointId
-            pendingDevice = device
-            // Discovery competes for the same radios used to negotiate the direct link.
-            stopScanning()
+            val device = NearbyDevice(endpointId, info.endpointName)
+            pendingDevices[endpointId] = device
             listener?.onConnectionInitiated(device, info.authenticationDigits)
             acceptConnection(endpointId)
         }
 
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
-            if (endpointId != pendingEndpointId) return
-
             when (result.status.statusCode) {
                 ConnectionsStatusCodes.STATUS_OK -> {
-                    connectedEndpointId = endpointId
-                    val device = pendingDevice ?: knownDevices[endpointId]
-                        ?: NearbyDevice(endpointId, "Nearby device")
-                    pendingEndpointId = null
-                    pendingDevice = null
-                    stopScanning()
-                    listener?.onConnected(device)
+                    establishedEndpoints += endpointId
+                    pendingDevices.remove(endpointId)
+                    knownDevices.remove(endpointId)
+                    sendPacket(endpointId, NearbyPacket.Hello(localPeerId, localDisplayName, localPhoneHash))
                 }
 
                 ConnectionsStatusCodes.STATUS_CONNECTION_REJECTED -> {
-                    clearPendingConnection()
-                    listener?.onError("The other device declined the connection.")
+                    pendingDevices.remove(endpointId)
+                    listener?.onError("The other phone declined the connection.")
                 }
 
                 else -> {
-                    clearPendingConnection()
+                    pendingDevices.remove(endpointId)
                     listener?.onError(connectionFailureMessage(result.status.statusCode))
                 }
             }
         }
 
         override fun onDisconnected(endpointId: String) {
-            if (endpointId != connectedEndpointId) return
-            connectedEndpointId = null
-            listener?.onDisconnected()
+            establishedEndpoints.remove(endpointId)
+            pendingDevices.remove(endpointId)
+            val peer = peerByEndpoint.remove(endpointId) ?: return
+            if (endpointByPeer[peer.peerId] == endpointId) {
+                endpointByPeer.remove(peer.peerId)
+                listener?.onDisconnected(peer.peerId)
+            }
         }
     }
 
     private val endpointDiscoveryCallback = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
+            if (endpointId in establishedEndpoints || endpointId in pendingDevices) return
             val device = NearbyDevice(endpointId, info.endpointName)
             knownDevices[endpointId] = device
             listener?.onDeviceFound(device)
@@ -109,25 +115,24 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     }
 
     @SuppressLint("MissingPermission")
-    override fun startAdvertising(displayName: String) {
+    override fun startAdvertising(displayName: String, peerId: String, phoneHash: String) {
         localDisplayName = displayName
-        knownDevices.clear()
-        clearPendingConnection()
+        localPeerId = peerId
+        localPhoneHash = phoneHash
+        knownMeshPeers[peerId] = GroupMember(peerId, displayName, phoneHash)
         connectionsClient.stopAdvertising()
 
         val options = AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
         try {
-            connectionsClient
-                .startAdvertising(
-                    displayName,
-                    SERVICE_ID,
-                    connectionLifecycleCallback,
-                    options,
-                )
-                .addOnFailureListener { exception ->
-                    listener?.onError("Advertising failed: ${exception.readableMessage()}")
-                }
-        } catch (exception: SecurityException) {
+            connectionsClient.startAdvertising(
+                displayName,
+                SERVICE_ID,
+                connectionLifecycleCallback,
+                options,
+            ).addOnFailureListener { exception ->
+                listener?.onError("Advertising failed: ${exception.readableMessage()}")
+            }
+        } catch (_: SecurityException) {
             listener?.onError("Nearby permissions are required to advertise this phone.")
         }
     }
