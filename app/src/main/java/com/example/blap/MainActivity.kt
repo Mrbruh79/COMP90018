@@ -10,8 +10,10 @@
     import androidx.activity.enableEdgeToEdge
     import androidx.activity.result.contract.ActivityResultContracts
     import androidx.activity.viewModels
+    import androidx.compose.runtime.LaunchedEffect
     import androidx.compose.runtime.getValue
     import androidx.compose.runtime.mutableStateOf
+    import androidx.compose.runtime.remember
     import androidx.compose.runtime.setValue
     import androidx.lifecycle.compose.collectAsStateWithLifecycle
     import androidx.lifecycle.lifecycleScope
@@ -19,7 +21,10 @@
     import com.example.blap.chat.ChatViewModel
     import com.example.blap.ui.NearbyChatApp
     import com.example.blap.ui.NearbyChatTheme
+    import com.example.blap.ui.screens.onboarding.SplashScreen
+    import com.example.blap.ui.theme.CommonGroundTheme
     import com.example.blap.venue.VenueManager
+    import kotlinx.coroutines.delay
     import kotlinx.coroutines.launch
 
     class MainActivity : ComponentActivity() {
@@ -53,19 +58,33 @@
             enableEdgeToEdge()
 
             setContent {
-                NearbyChatTheme {
-                    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-                    NearbyChatApp(
-                        uiState = uiState,
-                        deniedPermissions = deniedPermissions.map(NearbyPermissions::displayName),
-                        onNameChanged = viewModel::updateDisplayName,
-                        onStartChat = ::requestPermissionsAndStart,
-                        onConnect = viewModel::connectToDevice,
-                        onSendMessage = viewModel::sendMessage,
-                        onDisconnect = viewModel::disconnect,
-                        onDismissError = viewModel::dismissError,
-                        onOpenSettings = ::openAppSettings,
-                    )
+                // Temporary: shows the brand moment, then falls through to the existing
+                // flow unchanged. Replace with real navigation once Sign-in/Home exist.
+                var showSplash by remember { mutableStateOf(true) }
+                LaunchedEffect(Unit) {
+                    delay(1200)
+                    showSplash = false
+                }
+
+                if (showSplash) {
+                    CommonGroundTheme {
+                        SplashScreen()
+                    }
+                } else {
+                    NearbyChatTheme {
+                        val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+                        NearbyChatApp(
+                            uiState = uiState,
+                            deniedPermissions = deniedPermissions.map(NearbyPermissions::displayName),
+                            onNameChanged = viewModel::updateDisplayName,
+                            onStartChat = ::requestPermissionsAndStart,
+                            onConnect = viewModel::connectToDevice,
+                            onSendMessage = viewModel::sendMessage,
+                            onDisconnect = viewModel::disconnect,
+                            onDismissError = viewModel::dismissError,
+                            onOpenSettings = ::openAppSettings,
+                        )
+                    }
                 }
             }
         }
