@@ -130,10 +130,10 @@ class NearbyChatManager(context: Context) : NearbyChatController {
                 connectionLifecycleCallback,
                 options,
             ).addOnFailureListener { exception ->
-                listener?.onError("Advertising failed: ${exception.readableMessage()}")
+                listener?.onNearbyUnavailable("Could not turn on nearby messaging: ${exception.readableMessage()}")
             }
         } catch (_: SecurityException) {
-            listener?.onError("Nearby permissions are required to advertise this phone.")
+            listener?.onNearbyUnavailable("Allow nearby permissions to make this phone discoverable.")
         }
     }
 
@@ -144,10 +144,10 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         try {
             connectionsClient.startDiscovery(SERVICE_ID, endpointDiscoveryCallback, options)
                 .addOnFailureListener { exception ->
-                    listener?.onError("Discovery failed: ${exception.readableMessage()}")
+                    listener?.onNearbyUnavailable("Could not find nearby phones: ${exception.readableMessage()}")
                 }
         } catch (_: SecurityException) {
-            listener?.onError("Nearby permissions are required to find other phones.")
+            listener?.onNearbyUnavailable("Allow nearby permissions to find other phones.")
         }
     }
 

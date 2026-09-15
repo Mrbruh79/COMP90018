@@ -30,5 +30,6 @@ interface NearbyChatController {
         fun onMessageDelivered(peerId: String, messageId: String)
         fun onDisconnected(peerId: String)
         fun onError(message: String)
+        fun onNearbyUnavailable(message: String) = onError(message)
     }
 }

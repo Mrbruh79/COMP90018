@@ -1,10 +1,10 @@
 package com.example.blap.chat
 
-enum class ChatConnectionState {
-    IDLE,
-    DISCOVERING,
+enum class ChatScreen {
+    WELCOME,
+    CHATS,
     CONNECTING,
-    CONNECTED,
+    CONVERSATION,
     CREATING_GROUP,
     MANAGING_CONTACTS,
     EDITING_CONTACT,
@@ -160,7 +160,14 @@ data class StoredGroupMessage(
 data class ChatUiState(
     val displayName: String = "",
     val phoneNumber: String = "",
-    val connectionState: ChatConnectionState = ChatConnectionState.IDLE,
+    val screen: ChatScreen = ChatScreen.WELCOME,
+    val nearbyActive: Boolean = false,
+    val profileDraft: ContactProfile? = null,
+    val canEditGroup: Boolean = false,
+    val messageDrafts: Map<String, String> = emptyMap(),
+    val notice: String? = null,
+    val venueStatus: String = "Find a nearby place using your location. Internet access is required.",
+    val checkingVenue: Boolean = false,
     val discoveredDevices: List<NearbyDevice> = emptyList(),
     val conversations: List<ConversationSummary> = emptyList(),
     val selectedPeerId: String? = null,

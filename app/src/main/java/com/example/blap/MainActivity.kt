@@ -6,7 +6,6 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.provider.Settings
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -48,6 +47,7 @@ class MainActivity : ComponentActivity() {
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
         if (VenuePermissions.missing(this).isEmpty()) checkForNearbyVenue()
+        else viewModel.updateVenueStatus("Allow location access to find nearby places.")
     }
 
     private val contactsPermissionLauncher = registerForActivityResult(
@@ -61,11 +61,6 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
-        AuthManager.ensureSignedIn { success ->
-            if (success) requestVenuePermissionAndCheck()
-            else Log.w("FirebaseAuth", "Anonymous sign in failed")
-        }
-
         setContent {
             NearbyChatTheme {
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
@@ -75,10 +70,14 @@ class MainActivity : ComponentActivity() {
                     onNameChanged = viewModel::updateDisplayName,
                     onPhoneChanged = viewModel::updatePhoneNumber,
                     onStartChat = ::requestNearbyPermissionsAndStart,
+                    onCompleteSetup = viewModel::completeSetup,
+                    onStopChat = viewModel::stopChat,
+                    onCheckVenue = ::requestVenueCheck,
                     onConnect = viewModel::connectToDevice,
                     onOpenConversation = viewModel::openConversation,
                     onBackToChats = viewModel::showConversationList,
                     onSendMessage = viewModel::sendMessage,
+                    onMessageDraftChanged = viewModel::updateMessageDraft,
                     onDisconnect = viewModel::disconnect,
                     onBeginCreateGroup = viewModel::beginCreateGroup,
                     onGroupNameChanged = viewModel::updateGroupName,
@@ -87,6 +86,7 @@ class MainActivity : ComponentActivity() {
                     onManageContacts = viewModel::beginManageContacts,
                     onBeginAddContact = viewModel::beginAddContact,
                     onOpenContact = viewModel::openContact,
+                    onMessageContact = viewModel::messageContact,
                     onContactDraftChanged = viewModel::updateContactDraft,
                     onDeleteContact = viewModel::deleteContact,
                     onScanContact = ::scanContactCard,
@@ -96,6 +96,7 @@ class MainActivity : ComponentActivity() {
                     onEditProfile = viewModel::editProfile,
                     onProfileChanged = viewModel::updateProfile,
                     onSaveProfile = viewModel::saveProfile,
+                    onCancelProfile = viewModel::cancelProfileEdit,
                     onShowSettingsScreen = viewModel::showSettings,
                     onConversationSearchChanged = viewModel::updateConversationSearch,
                     onContactSearchChanged = viewModel::updateContactSearch,
@@ -162,14 +163,23 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun checkForNearbyVenue() {
+        viewModel.updateVenueStatus("Looking for a nearby place...", checking = true)
         lifecycleScope.launch {
             val result = try {
                 val venue = VenueManager.findNearbyVenue(applicationContext)
-                if (venue == null) "No venue nearby" else "Checked in: ${venue.name}"
+                if (venue == null) "No places found nearby." else "Nearby: ${venue.name}"
             } catch (exception: Exception) {
-                "Check-in failed: ${exception.message}"
+                "Could not find nearby places. Check your internet and location settings."
             }
-            Log.d("VenueCheck", result)
+            viewModel.updateVenueStatus(result)
+        }
+    }
+
+    private fun requestVenueCheck() {
+        viewModel.updateVenueStatus("Connecting to nearby places...", checking = true)
+        AuthManager.ensureSignedIn { success ->
+            if (success) requestVenuePermissionAndCheck()
+            else viewModel.updateVenueStatus("Could not connect. Check your internet and try again.")
         }
     }
 

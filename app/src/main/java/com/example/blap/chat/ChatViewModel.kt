@@ -27,9 +27,14 @@ class ChatViewModel(
     private val localPeerId = identityStore.getPeerId()
     private var localPhoneHash = PhoneIdentity.hash(identityStore.getPhoneNumber()).orEmpty()
     private val initialProfile = identityStore.getProfile()
+    private var profileReturnScreen = ChatScreen.SHOWING_MY_CARD
+    private var requestedEndpointId: String? = null
 
     private val _uiState = MutableStateFlow(
         ChatUiState(
+            screen = if (initialProfile.displayName.isNotBlank() &&
+                PhoneIdentity.normalize(initialProfile.phoneNumber) != null
+            ) ChatScreen.CHATS else ChatScreen.WELCOME,
             displayName = initialProfile.displayName,
             phoneNumber = initialProfile.phoneNumber,
             profileEmail = initialProfile.email,
@@ -61,15 +66,29 @@ class ChatViewModel(
     }
 
     fun startChat() {
+        if (_uiState.value.nearbyActive) return
+        if (!saveIdentity()) return
+        if (_uiState.value.screen == ChatScreen.WELCOME) showConversationList()
+        val state = _uiState.value
+        _uiState.update { it.copy(nearbyActive = true, error = null) }
+        nearbyChatController.startAdvertising(state.displayName, localPeerId, localPhoneHash)
+        if (_uiState.value.nearbyActive) nearbyChatController.startDiscovery()
+    }
+
+    fun completeSetup() {
+        if (saveIdentity()) showConversationList()
+    }
+
+    private fun saveIdentity(): Boolean {
         val name = _uiState.value.displayName.trim()
         if (name.isBlank()) {
             _uiState.update { it.copy(error = "Enter a display name first.") }
-            return
+            return false
         }
         val normalizedPhone = PhoneIdentity.normalize(_uiState.value.phoneNumber)
         if (normalizedPhone == null) {
             _uiState.update { it.copy(error = "Enter a valid phone number, including country code.") }
-            return
+            return false
         }
 
         identityStore.saveProfile(currentProfile().copy(displayName = name, phoneNumber = normalizedPhone))
@@ -78,23 +97,19 @@ class ChatViewModel(
             it.copy(
                 displayName = name,
                 phoneNumber = normalizedPhone,
-                connectionState = ChatConnectionState.DISCOVERING,
-                selectedPeerId = null,
-                authenticationDigits = null,
-                messages = emptyList(),
                 error = null,
             )
         }
-        nearbyChatController.startAdvertising(name, localPeerId, localPhoneHash)
-        nearbyChatController.startDiscovery()
+        return true
     }
 
     fun connectToDevice(endpointId: String) {
         val device = _uiState.value.discoveredDevices.firstOrNull { it.endpointId == endpointId }
             ?: return
+        requestedEndpointId = endpointId
         _uiState.update {
             it.copy(
-                connectionState = ChatConnectionState.CONNECTING,
+                screen = ChatScreen.CONNECTING,
                 authenticationDigits = null,
                 error = null,
             )
@@ -106,7 +121,7 @@ class ChatViewModel(
         if (_uiState.value.conversations.none { it.peerId == peerId }) return
         _uiState.update {
             it.copy(
-                connectionState = ChatConnectionState.CONNECTED,
+                screen = ChatScreen.CONVERSATION,
                 selectedPeerId = peerId,
                 messages = emptyList(),
                 error = null,
@@ -116,9 +131,10 @@ class ChatViewModel(
     }
 
     fun showConversationList() {
+        requestedEndpointId = null
         _uiState.update {
             it.copy(
-                connectionState = ChatConnectionState.DISCOVERING,
+                screen = ChatScreen.CHATS,
                 selectedPeerId = null,
                 authenticationDigits = null,
                 messages = emptyList(),
@@ -132,7 +148,7 @@ class ChatViewModel(
     fun beginManageContacts() {
         _uiState.update {
             it.copy(
-                connectionState = ChatConnectionState.MANAGING_CONTACTS,
+                screen = ChatScreen.MANAGING_CONTACTS,
                 selectedContactId = null,
                 contactNameDraft = "",
                 contactPhoneDraft = "",
@@ -145,7 +161,7 @@ class ChatViewModel(
     fun beginAddContact() {
         _uiState.update {
             it.copy(
-                connectionState = ChatConnectionState.EDITING_CONTACT,
+                screen = ChatScreen.EDITING_CONTACT,
                 selectedContactId = null,
                 contactNameDraft = "",
                 contactPhoneDraft = "",
@@ -166,7 +182,7 @@ class ChatViewModel(
         val contact = _uiState.value.savedContacts.firstOrNull { it.id == contactId } ?: return
         _uiState.update {
             it.copy(
-                connectionState = ChatConnectionState.EDITING_CONTACT,
+                screen = ChatScreen.EDITING_CONTACT,
                 selectedContactId = contact.id,
                 contactNameDraft = contact.name,
                 contactPhoneDraft = contact.phoneNumber,
@@ -180,6 +196,20 @@ class ChatViewModel(
                 contactSourceDraft = contact.source,
                 error = null,
             )
+        }
+    }
+
+    fun messageContact(contactId: String) {
+        val contact = _uiState.value.savedContacts.firstOrNull { it.id == contactId } ?: return
+        val peerId = contact.linkedPeerId
+        if (peerId == null) {
+            showError("Connect to this person nearby once to start a direct chat.")
+            return
+        }
+        workScope.launch {
+            chatStore.savePeer(peerId, contact.name, contact.phoneHash)
+            reloadConversationsNow()
+            openConversation(peerId)
         }
     }
 
@@ -240,7 +270,9 @@ class ChatViewModel(
                     name = name,
                     phoneNumber = normalizedPhone,
                     phoneHash = phoneHash,
-                    linkedPeerId = existing?.linkedPeerId ?: linkedPeerId,
+                    linkedPeerId = if (existing?.phoneHash == phoneHash) {
+                        existing.linkedPeerId ?: linkedPeerId
+                    } else linkedPeerId,
                     email = state.contactEmailDraft.trim(),
                     bio = state.contactBioDraft.trim(),
                     websiteUrl = state.contactWebsiteDraft.trim(),
@@ -252,9 +284,10 @@ class ChatViewModel(
                 ),
             )
             reloadSavedContactsNow()
+            reloadConversationsNow()
             _uiState.update {
                 it.copy(
-                    connectionState = ChatConnectionState.MANAGING_CONTACTS,
+                    screen = ChatScreen.MANAGING_CONTACTS,
                     selectedContactId = null,
                     contactNameDraft = "",
                     contactPhoneDraft = "",
@@ -269,7 +302,7 @@ class ChatViewModel(
             chatStore.deleteContact(contactId)
             reloadSavedContactsNow()
             _uiState.update {
-                it.copy(connectionState = ChatConnectionState.MANAGING_CONTACTS, selectedContactId = null)
+                it.copy(screen = ChatScreen.MANAGING_CONTACTS, selectedContactId = null)
             }
         }
     }
@@ -280,6 +313,7 @@ class ChatViewModel(
                 .filter { it.phoneHash.isNotBlank() }
                 .associateBy(GroupMember::phoneHash)
             val existingHashes = chatStore.getSavedContacts().map(SavedContact::phoneHash).toMutableSet()
+            var imported = 0
             contacts.forEach { contact ->
                 val normalized = PhoneIdentity.normalize(contact.phoneNumber) ?: return@forEach
                 val hash = PhoneIdentity.hash(normalized) ?: return@forEach
@@ -295,15 +329,18 @@ class ChatViewModel(
                     ),
                 )
                 existingHashes += hash
+                imported++
             }
             reloadSavedContactsNow()
+            _uiState.update { it.copy(notice = if (imported == 0) "No new contacts to import." else
+                "$imported contact${if (imported == 1) "" else "s"} imported.") }
         }
     }
 
     fun beginCreateGroup() {
         _uiState.update {
             it.copy(
-                connectionState = ChatConnectionState.CREATING_GROUP,
+                screen = ChatScreen.CREATING_GROUP,
                 groupNameDraft = "",
                 selectedGroupMemberIds = emptySet(),
                 error = null,
@@ -318,8 +355,16 @@ class ChatViewModel(
             val group = chatStore.getGroups().firstOrNull { it.id == groupId } ?: return@launch
             reloadGroupContactsNow(force = true)
             _uiState.update {
+                val candidates = it.groupContacts.toMutableList()
+                group.members.filterNot { member -> member.peerId == localPeerId }.forEach { member ->
+                    if (candidates.none { contact -> contact.peerId == member.peerId }) {
+                        candidates += GroupContact(member.peerId, member.name, false, phoneHash = member.phoneHash)
+                    }
+                }
                 it.copy(
-                    connectionState = ChatConnectionState.GROUP_SETTINGS,
+                    screen = ChatScreen.GROUP_SETTINGS,
+                    canEditGroup = group.ownerId == localPeerId,
+                    groupContacts = candidates,
                     groupNameDraft = group.name,
                     selectedGroupMemberIds = group.members
                         .filterNot { member -> member.peerId == localPeerId }
@@ -355,7 +400,7 @@ class ChatViewModel(
             chatStore.saveGroup(group)
             nearbyChatController.publishGroup(group)
             reloadConversationsNow()
-            _uiState.update { it.copy(connectionState = ChatConnectionState.CONNECTED) }
+            _uiState.update { it.copy(screen = ChatScreen.CONVERSATION) }
         }
     }
 
@@ -374,14 +419,33 @@ class ChatViewModel(
     }
 
     fun showMyCard() {
-        _uiState.update { it.copy(connectionState = ChatConnectionState.SHOWING_MY_CARD, error = null) }
+        _uiState.update { it.copy(screen = ChatScreen.SHOWING_MY_CARD, error = null) }
     }
 
     fun editProfile() {
-        _uiState.update { it.copy(connectionState = ChatConnectionState.EDITING_PROFILE, error = null) }
+        profileReturnScreen = _uiState.value.screen
+        _uiState.update { it.copy(screen = ChatScreen.EDITING_PROFILE, profileDraft = currentProfile(), error = null) }
     }
 
     fun updateProfile(profile: ContactProfile) {
+        _uiState.update { it.copy(profileDraft = profile.copy(
+            displayName = profile.displayName.take(MAX_NAME_LENGTH),
+            phoneNumber = profile.phoneNumber.take(MAX_PHONE_LENGTH),
+            email = profile.email.take(MAX_EMAIL_LENGTH),
+            bio = profile.bio.take(MAX_BIO_LENGTH),
+            websiteUrl = profile.websiteUrl.take(MAX_URL_LENGTH),
+            instagramUrl = profile.instagramUrl.take(MAX_URL_LENGTH),
+            xUrl = profile.xUrl.take(MAX_URL_LENGTH),
+            linkedinUrl = profile.linkedinUrl.take(MAX_URL_LENGTH),
+            githubUrl = profile.githubUrl.take(MAX_URL_LENGTH),
+        )) }
+    }
+
+    fun cancelProfileEdit() {
+        _uiState.update { it.copy(screen = profileReturnScreen, profileDraft = null, error = null) }
+    }
+
+    private fun applyProfile(profile: ContactProfile) {
         _uiState.update {
             it.copy(
                 displayName = profile.displayName.take(MAX_NAME_LENGTH),
@@ -398,9 +462,8 @@ class ChatViewModel(
     }
 
     fun saveProfile() {
-        val wasActive = _uiState.value.connectionState != ChatConnectionState.IDLE &&
-            _uiState.value.connectionState != ChatConnectionState.ERROR
-        val profile = currentProfile()
+        val wasActive = _uiState.value.nearbyActive
+        val profile = _uiState.value.profileDraft ?: currentProfile()
         val normalizedPhone = PhoneIdentity.normalize(profile.phoneNumber)
         if (profile.displayName.trim().isBlank() || normalizedPhone == null) {
             showError("Enter your name and a valid phone number, including country code.")
@@ -414,7 +477,7 @@ class ChatViewModel(
         )
         identityStore.saveProfile(saved)
         localPhoneHash = PhoneIdentity.hash(normalizedPhone).orEmpty()
-        updateProfile(saved)
+        applyProfile(saved)
         if (wasActive) {
             nearbyChatController.stop()
             connectedPeers.clear()
@@ -428,13 +491,13 @@ class ChatViewModel(
                 )
             }
             nearbyChatController.startAdvertising(saved.displayName, localPeerId, localPhoneHash)
-            nearbyChatController.startDiscovery()
+            if (_uiState.value.nearbyActive) nearbyChatController.startDiscovery()
         }
-        showMyCard()
+        _uiState.update { it.copy(screen = profileReturnScreen, profileDraft = null, notice = "Profile saved.") }
     }
 
     fun showSettings() {
-        _uiState.update { it.copy(connectionState = ChatConnectionState.SETTINGS, error = null) }
+        _uiState.update { it.copy(screen = ChatScreen.SETTINGS, error = null) }
     }
 
     fun updateConversationSearch(query: String) {
@@ -484,7 +547,7 @@ class ChatViewModel(
             reloadConversationsNow()
             _uiState.update {
                 it.copy(
-                    connectionState = ChatConnectionState.CONNECTED,
+                    screen = ChatScreen.CONVERSATION,
                     selectedPeerId = group.id,
                     messages = emptyList(),
                     groupNameDraft = "",
@@ -496,28 +559,28 @@ class ChatViewModel(
     }
 
     fun handleBack() {
-        when (_uiState.value.connectionState) {
-            ChatConnectionState.CONNECTED,
-            ChatConnectionState.CONNECTING,
-            ChatConnectionState.CREATING_GROUP,
+        when (_uiState.value.screen) {
+            ChatScreen.CONVERSATION,
+            ChatScreen.CONNECTING,
+            ChatScreen.CREATING_GROUP,
             -> showConversationList()
 
-            ChatConnectionState.MANAGING_CONTACTS,
-            ChatConnectionState.SHOWING_MY_CARD,
-            ChatConnectionState.SETTINGS,
+            ChatScreen.MANAGING_CONTACTS,
+            ChatScreen.SHOWING_MY_CARD,
+            ChatScreen.SETTINGS,
             -> showConversationList()
 
-            ChatConnectionState.EDITING_CONTACT -> beginManageContacts()
-            ChatConnectionState.EDITING_PROFILE -> showMyCard()
-            ChatConnectionState.GROUP_SETTINGS -> {
-                _uiState.update { it.copy(connectionState = ChatConnectionState.CONNECTED) }
+            ChatScreen.EDITING_CONTACT -> beginManageContacts()
+            ChatScreen.EDITING_PROFILE -> cancelProfileEdit()
+            ChatScreen.GROUP_SETTINGS -> {
+                _uiState.update { it.copy(screen = ChatScreen.CONVERSATION) }
             }
 
-            ChatConnectionState.DISCOVERING,
-            ChatConnectionState.ERROR,
-            -> stopChat()
+            ChatScreen.CHATS,
+            ChatScreen.ERROR,
+            -> Unit
 
-            ChatConnectionState.IDLE -> Unit
+            ChatScreen.WELCOME -> Unit
         }
     }
 
@@ -540,6 +603,7 @@ class ChatViewModel(
         )
         _uiState.update { state ->
             state.copy(
+                messageDrafts = state.messageDrafts - peerId,
                 messages = state.messages + message,
                 conversations = updateConversationPreview(state.conversations, message),
             )
@@ -560,11 +624,20 @@ class ChatViewModel(
     }
 
     fun dismissError() {
-        _uiState.update { it.copy(error = null) }
+        _uiState.update { it.copy(error = null, notice = null) }
+    }
+
+    fun updateMessageDraft(text: String) {
+        val peerId = _uiState.value.selectedPeerId ?: return
+        _uiState.update { it.copy(messageDrafts = it.messageDrafts + (peerId to text.take(MAX_MESSAGE_LENGTH))) }
     }
 
     fun showError(message: String) {
         _uiState.update { it.copy(error = message) }
+    }
+
+    fun updateVenueStatus(message: String, checking: Boolean = false) {
+        _uiState.update { it.copy(venueStatus = message, checkingVenue = checking) }
     }
 
     override fun onDeviceFound(device: NearbyDevice) {
@@ -587,21 +660,19 @@ class ChatViewModel(
 
     override fun onConnectionInitiated(device: NearbyDevice, authenticationDigits: String) {
         _uiState.update { state ->
-            if (state.connectionState == ChatConnectionState.CONNECTED) {
-                state.copy(authenticationDigits = authenticationDigits)
-            } else {
+            if (requestedEndpointId == device.endpointId && state.screen == ChatScreen.CONNECTING) {
                 state.copy(
-                    connectionState = ChatConnectionState.CONNECTING,
                     authenticationDigits = authenticationDigits,
                     error = null,
                 )
-            }
+            } else state
         }
     }
 
     override fun onConnected(peer: ConnectedPeer) {
         connectedPeers[peer.peerId] = peer
-        val shouldOpen = _uiState.value.connectionState == ChatConnectionState.CONNECTING
+        val shouldOpen = _uiState.value.screen == ChatScreen.CONNECTING && requestedEndpointId == peer.endpointId
+        if (shouldOpen) requestedEndpointId = null
 
         _uiState.update { state ->
             val existing = state.conversations.firstOrNull { it.peerId == peer.peerId }
@@ -615,7 +686,7 @@ class ChatViewModel(
                 .sortedByDescending { it.lastMessageAt }
 
             state.copy(
-                connectionState = if (shouldOpen) ChatConnectionState.CONNECTED else state.connectionState,
+                screen = if (shouldOpen) ChatScreen.CONVERSATION else state.screen,
                 selectedPeerId = if (shouldOpen) peer.peerId else state.selectedPeerId,
                 discoveredDevices = state.discoveredDevices.filterNot { it.endpointId == peer.endpointId },
                 conversations = conversations,
@@ -629,6 +700,7 @@ class ChatViewModel(
             chatStore.savePeer(peer.peerId, peer.name, peer.phoneHash)
             chatStore.linkContact(peer.phoneHash, peer.peerId)
             reloadConversationsNow()
+            reloadSavedContactsNow()
             if (_uiState.value.selectedPeerId == peer.peerId) reloadMessagesNow(peer.peerId)
             chatStore.getPendingMessages(peer.peerId).forEach(::sendStoredMessage)
             synchronizeGroupsWith(peer.peerId)
@@ -648,10 +720,9 @@ class ChatViewModel(
         workScope.launch {
             chatStore.saveMeshPeer(peer.peerId, peer.name, peer.phoneHash)
             chatStore.linkContact(peer.phoneHash, peer.peerId)
-            if (_uiState.value.connectionState == ChatConnectionState.CREATING_GROUP) {
+            reloadSavedContactsNow()
+            if (_uiState.value.screen == ChatScreen.CREATING_GROUP) {
                 reloadGroupContactsNow()
-            } else if (_uiState.value.connectionState == ChatConnectionState.MANAGING_CONTACTS) {
-                reloadSavedContactsNow()
             }
         }
     }
@@ -730,13 +801,19 @@ class ChatViewModel(
 
     override fun onError(message: String) {
         _uiState.update { state ->
-            val nextState = if (state.connectionState == ChatConnectionState.IDLE) {
-                ChatConnectionState.ERROR
+            val nextState = if (state.screen == ChatScreen.CONNECTING) {
+                requestedEndpointId = null
+                ChatScreen.CHATS
             } else {
-                state.connectionState
+                state.screen
             }
-            state.copy(connectionState = nextState, authenticationDigits = null, error = message)
+            state.copy(screen = nextState, authenticationDigits = null, error = message)
         }
+    }
+
+    override fun onNearbyUnavailable(message: String) {
+        stopChat()
+        showError(message)
     }
 
     override fun onCleared() {
@@ -780,12 +857,17 @@ class ChatViewModel(
     }
 
     private fun reloadConversationsNow() {
+        val contactNames = chatStore.getSavedContacts().filter { it.linkedPeerId != null }
+            .associate { it.linkedPeerId to it.name }
         val conversations = chatStore.getConversations().map { conversation ->
             conversation.copy(
+                name = if (conversation.type == ConversationType.DIRECT) {
+                    contactNames[conversation.peerId] ?: conversation.name
+                } else conversation.name,
                 connected = if (conversation.type != ConversationType.DIRECT) connectedPeers.isNotEmpty()
                 else connectedPeers.containsKey(conversation.peerId),
             )
-        }
+        }.sortedByDescending { if (it.lastMessage.isBlank()) 0L else it.lastMessageAt }
         _uiState.update {
             it.copy(
                 conversations = conversations,
@@ -876,8 +958,8 @@ class ChatViewModel(
             )
         }.sortedBy { it.name.lowercase() }
         _uiState.update { state ->
-            if (force || state.connectionState == ChatConnectionState.CREATING_GROUP ||
-                state.connectionState == ChatConnectionState.GROUP_SETTINGS
+            if (force || state.screen == ChatScreen.CREATING_GROUP ||
+                state.screen == ChatScreen.GROUP_SETTINGS
             ) {
                 state.copy(groupContacts = contacts)
             } else {
@@ -905,16 +987,16 @@ class ChatViewModel(
         )
     }
 
-    private fun stopChat() {
+    fun stopChat() {
+        requestedEndpointId = null
         nearbyChatController.stop()
         connectedPeers.clear()
         _uiState.update {
             it.copy(
-                connectionState = ChatConnectionState.IDLE,
+                nearbyActive = false,
+                screen = if (it.screen == ChatScreen.CONNECTING) ChatScreen.CHATS else it.screen,
                 discoveredDevices = emptyList(),
-                selectedPeerId = null,
                 authenticationDigits = null,
-                messages = emptyList(),
                 directConnectionCount = 0,
                 conversations = it.conversations.map { conversation ->
                     conversation.copy(connected = false)

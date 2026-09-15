@@ -31,7 +31,7 @@ class ChatViewModelTest {
         assertEquals("Alice", controller.advertisedName)
         assertEquals(identity.expectedPeerId, controller.advertisedPeerId)
         assertTrue(controller.discoveryStarted)
-        assertEquals(ChatConnectionState.DISCOVERING, viewModel.uiState.value.connectionState)
+        assertEquals(ChatScreen.CHATS, viewModel.uiState.value.screen)
     }
 
     @Test
@@ -55,6 +55,7 @@ class ChatViewModelTest {
         val bob = ConnectedPeer("bob-id", "endpoint-bob", "Bob")
         controller.listener?.onConnectionInitiated(NearbyDevice("endpoint-bob", "Bob"), "1234")
         controller.listener?.onConnected(bob)
+        viewModel.openConversation(bob.peerId)
 
         viewModel.sendMessage("  Hello Bob  ")
         val outgoing = controller.sentMessages.lastOrNull()
@@ -200,7 +201,7 @@ class ChatViewModelTest {
         assertEquals("Trip crew", group.name)
         assertEquals(setOf("local-peer", "bob-id"), group.members.map { it.peerId }.toSet())
         assertEquals(group.id, viewModel.uiState.value.selectedPeerId)
-        assertEquals(ChatConnectionState.CONNECTED, viewModel.uiState.value.connectionState)
+        assertEquals(ChatScreen.CONVERSATION, viewModel.uiState.value.screen)
     }
 
     @Test
@@ -259,7 +260,7 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun systemBackReturnsThroughAppScreensBeforeStoppingChat() {
+    fun systemBackReturnsToChatsWithoutStoppingNearby() {
         val controller = FakeNearbyChatController()
         val viewModel = makeViewModel(controller)
         viewModel.updateDisplayName("Alice")
@@ -267,11 +268,12 @@ class ChatViewModelTest {
         viewModel.openConversation(MeshGroup.ID)
 
         viewModel.handleBack()
-        assertEquals(ChatConnectionState.DISCOVERING, viewModel.uiState.value.connectionState)
+        assertEquals(ChatScreen.CHATS, viewModel.uiState.value.screen)
 
         viewModel.handleBack()
-        assertEquals(ChatConnectionState.IDLE, viewModel.uiState.value.connectionState)
-        assertTrue(controller.stopped)
+        assertEquals(ChatScreen.CHATS, viewModel.uiState.value.screen)
+        assertFalse(controller.stopped)
+        assertTrue(viewModel.uiState.value.nearbyActive)
     }
 
     @Test
@@ -327,7 +329,7 @@ class ChatViewModelTest {
 
         viewModel.importScannedContactCard(ContactCardCodec.encode(card))
 
-        assertEquals(ChatConnectionState.EDITING_CONTACT, viewModel.uiState.value.connectionState)
+        assertEquals(ChatScreen.EDITING_CONTACT, viewModel.uiState.value.screen)
         assertEquals(ContactSource.QR, viewModel.uiState.value.contactSourceDraft)
         viewModel.saveContact()
 
@@ -336,7 +338,7 @@ class ChatViewModelTest {
         assertEquals("maya@example.com", saved.email)
         assertEquals("https://instagram.com/maya", saved.instagramUrl)
         assertEquals(ContactSource.QR, saved.source)
-        assertEquals(ChatConnectionState.MANAGING_CONTACTS, viewModel.uiState.value.connectionState)
+        assertEquals(ChatScreen.MANAGING_CONTACTS, viewModel.uiState.value.screen)
     }
 
     @Test
@@ -364,7 +366,198 @@ class ChatViewModelTest {
 
         assertTrue(controller.stopped)
         assertEquals("Alice B", controller.advertisedName)
-        assertEquals(ChatConnectionState.SHOWING_MY_CARD, viewModel.uiState.value.connectionState)
+        assertEquals(ChatScreen.SHOWING_MY_CARD, viewModel.uiState.value.screen)
+    }
+
+    @Test
+    fun setupAndRelaunchDoNotRequireNearbyPermissions() {
+        val controller = FakeNearbyChatController()
+        val identity = FakeIdentityStore()
+        val viewModel = makeViewModel(controller, identityStore = identity)
+        viewModel.updateDisplayName("Alice")
+        viewModel.completeSetup()
+        assertEquals(ChatScreen.CHATS, viewModel.uiState.value.screen)
+        assertFalse(controller.advertisingStarted)
+        val reopened = makeViewModel(FakeNearbyChatController(), identityStore = identity)
+        assertEquals(ChatScreen.CHATS, reopened.uiState.value.screen)
+        assertFalse(reopened.uiState.value.nearbyActive)
+    }
+
+    @Test
+    fun backgroundConnectionsDoNotInterruptEditing() {
+        val controller = FakeNearbyChatController()
+        val viewModel = makeViewModel(controller)
+        viewModel.beginAddContact()
+        viewModel.updateContactName("Unsaved contact")
+        controller.listener?.onConnectionInitiated(NearbyDevice("bob-endpoint", "Bob"), "1234")
+        controller.listener?.onConnected(ConnectedPeer("bob", "bob-endpoint", "Bob"))
+        assertEquals(ChatScreen.EDITING_CONTACT, viewModel.uiState.value.screen)
+        assertEquals("Unsaved contact", viewModel.uiState.value.contactNameDraft)
+        assertEquals(1, viewModel.uiState.value.directConnectionCount)
+    }
+
+    @Test
+    fun requestedConnectionOpensOnlyTheRequestedPeer() {
+        val controller = FakeNearbyChatController()
+        val viewModel = makeViewModel(controller)
+        controller.listener?.onDeviceFound(NearbyDevice("bob-endpoint", "Bob"))
+        viewModel.connectToDevice("bob-endpoint")
+        controller.listener?.onConnected(ConnectedPeer("carol", "carol-endpoint", "Carol"))
+        assertEquals(ChatScreen.CONNECTING, viewModel.uiState.value.screen)
+        controller.listener?.onConnected(ConnectedPeer("bob", "bob-endpoint", "Bob"))
+        assertEquals(ChatScreen.CONVERSATION, viewModel.uiState.value.screen)
+        assertEquals("bob", viewModel.uiState.value.selectedPeerId)
+    }
+
+    @Test
+    fun failedConnectionReturnsToChatsWithAnError() {
+        val controller = FakeNearbyChatController()
+        val viewModel = makeViewModel(controller)
+        controller.listener?.onDeviceFound(NearbyDevice("bob-endpoint", "Bob"))
+        viewModel.connectToDevice("bob-endpoint")
+        controller.listener?.onError("Connection declined")
+        assertEquals(ChatScreen.CHATS, viewModel.uiState.value.screen)
+        assertEquals("Connection declined", viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun profileCancelDiscardsEditsAndReturnsToSettings() {
+        val identity = FakeIdentityStore().apply { saveDisplayName("Alice") }
+        val viewModel = makeViewModel(FakeNearbyChatController(), identityStore = identity)
+        viewModel.showSettings()
+        viewModel.editProfile()
+        viewModel.updateProfile(ContactProfile("Changed", "+61400111222"))
+        assertEquals("Alice", viewModel.uiState.value.displayName)
+        viewModel.handleBack()
+        assertEquals(ChatScreen.SETTINGS, viewModel.uiState.value.screen)
+        assertEquals("Alice", viewModel.uiState.value.displayName)
+        assertEquals("Alice", identity.getDisplayName())
+        assertEquals(null, viewModel.uiState.value.profileDraft)
+    }
+
+    @Test
+    fun savingAnOfflineProfileDoesNotStartNearby() {
+        val controller = FakeNearbyChatController()
+        val viewModel = makeViewModel(controller)
+        viewModel.showSettings()
+        viewModel.editProfile()
+        viewModel.updateProfile(ContactProfile("Alice", "+61400111222"))
+        viewModel.saveProfile()
+        assertEquals("Alice", viewModel.uiState.value.displayName)
+        assertEquals(ChatScreen.SETTINGS, viewModel.uiState.value.screen)
+        assertFalse(controller.advertisingStarted)
+    }
+
+    @Test
+    fun draftsStayWithTheirConversationAndClearOnlyAfterSending() {
+        val store = FakeChatStore().apply { savePeer("bob", "Bob") }
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        viewModel.openConversation("bob")
+        viewModel.updateMessageDraft("For Bob")
+        viewModel.showConversationList()
+        viewModel.openConversation(MeshGroup.ID)
+        viewModel.updateMessageDraft("For everyone")
+        viewModel.sendMessage("For everyone")
+        assertEquals("For Bob", viewModel.uiState.value.messageDrafts["bob"])
+        assertFalse(viewModel.uiState.value.messageDrafts.containsKey(MeshGroup.ID))
+        viewModel.openConversation("bob")
+        assertEquals("For Bob", viewModel.uiState.value.messageDrafts["bob"])
+    }
+
+    @Test
+    fun matchedContactCanOpenAnOfflineConversation() {
+        val store = FakeChatStore()
+        val controller = FakeNearbyChatController()
+        val viewModel = makeViewModel(controller, store)
+        viewModel.importDeviceContacts(listOf(DeviceContact("Bobby", "+12025550198")))
+        val hash = requireNotNull(PhoneIdentity.hash("+12025550198"))
+        controller.listener?.onMeshPeerFound(GroupMember("bob", "Robert", hash))
+        val contact = viewModel.uiState.value.savedContacts.single()
+        assertEquals("bob", contact.linkedPeerId)
+        viewModel.messageContact(contact.id)
+        viewModel.sendMessage("Hello")
+        assertEquals("bob", viewModel.uiState.value.selectedPeerId)
+        assertEquals("Bobby", viewModel.uiState.value.conversations.single { it.peerId == "bob" }.name)
+        assertEquals(MessageStatus.PENDING, store.getMessages("bob").single().status)
+    }
+
+    @Test
+    fun changingContactPhoneRemovesTheOldPeerLink() {
+        val store = FakeChatStore()
+        val controller = FakeNearbyChatController()
+        val viewModel = makeViewModel(controller, store)
+        viewModel.importDeviceContacts(listOf(DeviceContact("Bob", "+12025550198")))
+        controller.listener?.onMeshPeerFound(GroupMember("bob", "Bob", requireNotNull(PhoneIdentity.hash("+12025550198"))))
+        viewModel.openContact(viewModel.uiState.value.savedContacts.single().id)
+        viewModel.updateContactPhone("+61400111222")
+        viewModel.saveContact()
+        assertEquals(null, store.getSavedContacts().single().linkedPeerId)
+    }
+
+    @Test
+    fun groupSettingsRetainMembersMissingFromContacts() {
+        val store = FakeChatStore()
+        store.saveGroup(PrivateGroup("group", "Friends", "local-peer", 1L,
+            listOf(GroupMember("local-peer", "Alice"), GroupMember("old-peer", "Old friend"))))
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        viewModel.openConversation("group")
+        viewModel.beginGroupSettings()
+        assertTrue(viewModel.uiState.value.canEditGroup)
+        viewModel.updateGroupName("Renamed")
+        viewModel.saveGroupSettings()
+        assertEquals(setOf("local-peer", "old-peer"), store.getGroups().single().members.map { it.peerId }.toSet())
+    }
+
+    @Test
+    fun nonOwnerSeesReadOnlyGroupSettings() {
+        val store = FakeChatStore()
+        store.saveGroup(PrivateGroup("group", "Friends", "bob", 1L,
+            listOf(GroupMember("local-peer", "Alice"), GroupMember("bob", "Bob"))))
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        viewModel.openConversation("group")
+        viewModel.beginGroupSettings()
+        assertFalse(viewModel.uiState.value.canEditGroup)
+        viewModel.updateGroupName("Renamed")
+        viewModel.saveGroupSettings()
+        assertEquals("Friends", store.getGroups().single().name)
+    }
+
+    @Test
+    fun recentMessagesAppearBeforeEmptyConversationsAfterReload() {
+        val store = FakeChatStore()
+        store.savePeer("bob", "Bob")
+        store.savePeer("carol", "Carol")
+        store.saveMessage(ChatMessage("m1", "carol", "Latest", MessageAuthor.PEER, 100L, MessageStatus.DELIVERED))
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        assertEquals("carol", viewModel.uiState.value.conversations.first().peerId)
+    }
+
+    @Test
+    fun unavailableNearbyCanBeRetriedWithoutLosingTheScreen() {
+        val controller = FakeNearbyChatController()
+        val viewModel = makeViewModel(controller)
+        viewModel.updateDisplayName("Alice")
+        viewModel.startChat()
+        viewModel.showSettings()
+        controller.listener?.onNearbyUnavailable("Bluetooth is unavailable")
+        assertFalse(viewModel.uiState.value.nearbyActive)
+        assertEquals(ChatScreen.SETTINGS, viewModel.uiState.value.screen)
+        assertEquals("Bluetooth is unavailable", viewModel.uiState.value.error)
+        viewModel.startChat()
+        assertTrue(viewModel.uiState.value.nearbyActive)
+    }
+
+    @Test
+    fun turningOffNearbyPreservesTheOpenChatAndDraft() {
+        val viewModel = makeViewModel(FakeNearbyChatController())
+        viewModel.updateDisplayName("Alice")
+        viewModel.startChat()
+        viewModel.openConversation(MeshGroup.ID)
+        viewModel.updateMessageDraft("Still writing")
+        viewModel.stopChat()
+        assertEquals(ChatScreen.CONVERSATION, viewModel.uiState.value.screen)
+        assertEquals("Still writing", viewModel.uiState.value.messageDrafts[MeshGroup.ID])
+        assertFalse(viewModel.uiState.value.nearbyActive)
     }
 
     private fun makeViewModel(
@@ -409,6 +602,7 @@ class ChatViewModelTest {
         }
 
         override fun saveContact(contact: SavedContact) {
+            contacts.entries.removeAll { it.value.id == contact.id }
             contacts[contact.phoneHash] = contact
         }
 
