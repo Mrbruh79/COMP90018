@@ -18,3 +18,8 @@ val TextPrimary = Color(0xFFFFFFFF)
 val TextMuted = Color(0xFF8B949E)
 
 val Error = Color(0xFFFF453A)
+
+// AccentCyan is too bright to sit behind white text (fails legibility as a fill color,
+// even though it works fine as text/icon color on the dark background). Use this instead
+// for anywhere text needs to render on top of a cyan-family fill — e.g. sent-message bubbles.
+val SentBubble = Color(0xFF137D83)

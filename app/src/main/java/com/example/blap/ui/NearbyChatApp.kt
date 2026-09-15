@@ -83,6 +83,7 @@ import com.example.blap.ui.theme.AccentAmber
 import com.example.blap.ui.theme.AccentCyan
 import com.example.blap.ui.theme.Error
 import com.example.blap.ui.theme.Hairline
+import com.example.blap.ui.theme.SentBubble
 import com.example.blap.ui.theme.SurfaceElevated
 import com.example.blap.ui.theme.TextMuted
 import com.example.blap.ui.theme.TextPrimary
@@ -1386,7 +1387,7 @@ private fun MessageBubble(message: ChatMessage, showSender: Boolean) {
             modifier = Modifier
                 .widthIn(max = 310.dp)
                 .clip(RoundedCornerShape(17.dp))
-                .background(if (mine) AccentCyan else MaterialTheme.colorScheme.surface)
+                .background(if (mine) SentBubble else MaterialTheme.colorScheme.surface)
                 .padding(horizontal = 14.dp, vertical = 10.dp),
             color = if (mine) Color.White else TextPrimary,
         )
