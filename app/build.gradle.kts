@@ -54,8 +54,10 @@ dependencies {
     implementation(libs.androidx.lifecycle.viewmodel.ktx)
     implementation(libs.material)
     implementation(libs.play.services.nearby)
-    implementation(libs.play.services.location)                                                     // location library dependency
+    implementation(libs.play.services.location)
     implementation(libs.kotlinx.coroutines.play.services)
+    implementation(libs.play.services.code.scanner)
+    implementation(libs.zxing.core)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     androidTestImplementation(composeBom)

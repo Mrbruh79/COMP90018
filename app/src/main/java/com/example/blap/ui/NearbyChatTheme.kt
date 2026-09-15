@@ -12,8 +12,8 @@ import androidx.compose.ui.unit.sp
 
 val Forest = Color(0xFF095D55)
 val ForestDark = Color(0xFF063E39)
-val Signal = Color(0xFFFF6B4A)
-val Cream = Color(0xFFF6F1E7)
+val Signal = Color(0xFF095D55)
+val Cream = Color(0xFFF5F7F6)
 val Ink = Color(0xFF172220)
 val Mist = Color(0xFFDDEAE5)
 val MutedInk = Color(0xFF5A6864)
@@ -25,31 +25,33 @@ private val NearbyColorScheme = lightColorScheme(
     onPrimaryContainer = ForestDark,
     secondary = Signal,
     onSecondary = Color.White,
+    secondaryContainer = Mist,
+    onSecondaryContainer = ForestDark,
     background = Cream,
     onBackground = Ink,
-    surface = Color(0xFFFFFCF6),
+    surface = Color.White,
     onSurface = Ink,
-    surfaceVariant = Color(0xFFE9E5DC),
+    surfaceVariant = Color(0xFFE8EEEB),
     onSurfaceVariant = MutedInk,
     error = Color(0xFFB3261E),
 )
 
 private val NearbyTypography = Typography(
     displaySmall = TextStyle(
-        fontFamily = FontFamily.Serif,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Bold,
-        fontSize = 38.sp,
-        lineHeight = 42.sp,
+        fontSize = 32.sp,
+        lineHeight = 38.sp,
         letterSpacing = (-0.6).sp,
     ),
     headlineMedium = TextStyle(
-        fontFamily = FontFamily.Serif,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Bold,
-        fontSize = 28.sp,
-        lineHeight = 32.sp,
+        fontSize = 24.sp,
+        lineHeight = 30.sp,
     ),
     titleLarge = TextStyle(
-        fontFamily = FontFamily.Serif,
+        fontFamily = FontFamily.SansSerif,
         fontWeight = FontWeight.Bold,
         fontSize = 22.sp,
         lineHeight = 26.sp,
