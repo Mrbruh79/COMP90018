@@ -79,14 +79,8 @@ import com.example.blap.chat.MessageAuthor
 import com.example.blap.chat.MessageStatus
 import com.example.blap.chat.NearbyDevice
 import com.example.blap.chat.SavedContact
-import com.example.blap.ui.theme.AccentAmber
-import com.example.blap.ui.theme.AccentCyan
-import com.example.blap.ui.theme.Error
-import com.example.blap.ui.theme.Hairline
+import com.example.blap.ui.theme.OnSentBubble
 import com.example.blap.ui.theme.SentBubble
-import com.example.blap.ui.theme.SurfaceElevated
-import com.example.blap.ui.theme.TextMuted
-import com.example.blap.ui.theme.TextPrimary
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import java.text.SimpleDateFormat
@@ -390,7 +384,7 @@ private fun Header(state: ChatUiState) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Column {
-            Text("BLAP", style = MaterialTheme.typography.titleLarge, color = TextPrimary)
+            Text("BLAP", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onBackground)
         }
         val text = when {
             !state.nearbyActive -> "Nearby off"
@@ -401,10 +395,10 @@ private fun Header(state: ChatUiState) {
             text,
             modifier = Modifier
                 .clip(CircleShape)
-                .background(AccentCyan.copy(alpha = 0.12f))
+                .background(MaterialTheme.colorScheme.primaryContainer)
                 .padding(horizontal = 11.dp, vertical = 7.dp),
             style = MaterialTheme.typography.labelLarge,
-            color = AccentCyan,
+            color = MaterialTheme.colorScheme.onPrimaryContainer,
         )
     }
 }
@@ -430,7 +424,7 @@ private fun WelcomeScreen(
                 "Set up your profile to get started. You can turn on nearby messaging when you are ready.",
                 modifier = Modifier.padding(top = 12.dp, bottom = 24.dp),
                 style = MaterialTheme.typography.bodyLarge,
-                color = TextMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -483,7 +477,7 @@ private fun WelcomeScreen(
             if (deniedPermissions.isNotEmpty()) {
                 Card(
                     modifier = Modifier.padding(top = 15.dp),
-                    colors = CardDefaults.cardColors(containerColor = Error.copy(alpha = 0.12f)),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                     shape = RoundedCornerShape(18.dp),
                 ) {
                     Column(Modifier.padding(16.dp)) {
@@ -545,7 +539,7 @@ private fun ConversationList(
             item {
                 Text(
                     if (search.isBlank()) "Start a conversation from your contacts." else "No conversations match your search.",
-                    color = TextMuted,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 20.dp),
                 )
             }
@@ -557,7 +551,7 @@ private fun ConversationList(
             item {
                 Text("Nearby", style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(top = 20.dp, bottom = 4.dp))
-                Card(colors = CardDefaults.cardColors(containerColor = SurfaceElevated),
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                     modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
                     Column(Modifier.padding(16.dp)) {
                         Text(when {
@@ -567,7 +561,7 @@ private fun ConversationList(
                         }, style = MaterialTheme.typography.titleMedium)
                         Text(if (nearbyActive) "Keep BLAP open on both phones to connect."
                             else "Turn on nearby messaging to discover other phones running BLAP.",
-                            color = TextMuted, modifier = Modifier.padding(top = 4.dp))
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
                         if (!nearbyActive) {
                             Button(onClick = onStartNearby, modifier = Modifier.padding(top = 10.dp)) {
                                 Text("Turn on nearby")
@@ -605,18 +599,18 @@ private fun ConversationCard(conversation: ConversationSummary, onClick: () -> U
                         modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (conversation.lastMessageAt > 0 && conversation.lastMessage.isNotBlank()) {
                         Text(formatConversationTime(conversation.lastMessageAt),
-                            style = MaterialTheme.typography.labelSmall, color = TextMuted,
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(start = 8.dp))
                     }
                 }
                 Text(conversation.lastMessage.ifBlank { "Say hello" }, maxLines = 1,
-                    overflow = TextOverflow.Ellipsis, color = TextMuted,
+                    overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 3.dp))
                 Text(when (conversation.type) {
                     ConversationType.OPEN_MESH -> "Public nearby chat"
                     ConversationType.PRIVATE_GROUP -> "${conversation.memberCount} members"
                     ConversationType.DIRECT -> if (conversation.connected) "Connected nearby" else "Offline"
-                }, style = MaterialTheme.typography.labelSmall, color = TextMuted,
+                }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 3.dp))
             }
         }
@@ -649,9 +643,9 @@ private fun DeviceCard(device: NearbyDevice, onClick: () -> Unit) {
                     .weight(1f),
             ) {
                 Text(device.name, style = MaterialTheme.typography.titleMedium)
-                Text("Tap to connect", color = TextMuted)
+                Text("Tap to connect", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text("CONNECT", style = MaterialTheme.typography.labelLarge, color = AccentAmber)
+            Text("CONNECT", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
         }
     }
 }
@@ -662,10 +656,24 @@ private fun Avatar(name: String, connected: Boolean) {
         modifier = Modifier
             .size(44.dp)
             .clip(CircleShape)
-            .background(if (connected) AccentCyan else TextMuted),
+            .background(
+                if (connected) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.surfaceContainerHighest
+                },
+            ),
         contentAlignment = Alignment.Center,
     ) {
-        Text(name.take(1).uppercase(), color = Color.White, fontWeight = FontWeight.Bold)
+        Text(
+            name.take(1).uppercase(),
+            color = if (connected) {
+                MaterialTheme.colorScheme.onPrimary
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
+            fontWeight = FontWeight.Bold,
+        )
     }
 }
 
@@ -677,7 +685,7 @@ private fun ConnectingScreen(authenticationDigits: String?, onBack: () -> Unit) 
         verticalArrangement = Arrangement.Center,
     ) {
         Text("Connecting phones", style = MaterialTheme.typography.headlineMedium)
-        Text("Keep both phones nearby", modifier = Modifier.padding(top = 8.dp), color = TextMuted)
+        Text("Keep both phones nearby", modifier = Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (authenticationDigits != null) {
             Card(
                 modifier = Modifier.padding(top = 22.dp),
@@ -687,7 +695,7 @@ private fun ConnectingScreen(authenticationDigits: String?, onBack: () -> Unit) 
                     Modifier.padding(horizontal = 28.dp, vertical = 18.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text("CHECK BOTH PHONES", style = MaterialTheme.typography.labelLarge, color = AccentAmber)
+                    Text("CHECK BOTH PHONES", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     Text(authenticationDigits, style = MaterialTheme.typography.headlineMedium)
                 }
             }
@@ -721,7 +729,7 @@ private fun CreateGroupScreen(
         }
         Text(
             if (editable) "Choose the people you want in this group." else "Only the group owner can change the name or members.",
-            color = TextMuted,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 12.dp),
         )
         OutlinedTextField(
@@ -751,7 +759,7 @@ private fun CreateGroupScreen(
                         Text(
                             "Add or import contacts from the Contacts tab, then return here to create your group.",
                             modifier = Modifier.padding(18.dp),
-                            color = TextMuted,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -781,7 +789,7 @@ private fun CreateGroupScreen(
                                         contact.availableOnMesh -> "Recognized on the mesh"
                                         else -> "Will match by phone number when they join"
                                     },
-                                    color = if (contact.connected) AccentCyan else TextMuted,
+                                    color = if (contact.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
@@ -848,7 +856,7 @@ private fun ContactsScreen(
         }
         Text(
             "Keep your people in one place. Tap a card to edit their details.",
-            color = TextMuted,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 12.dp),
         )
         OutlinedTextField(
@@ -877,7 +885,7 @@ private fun ContactsScreen(
                 item {
                     Text(
                         if (contacts.isEmpty()) "No contact cards saved yet" else "No contacts match your search",
-                        color = TextMuted,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(vertical = 18.dp),
                     )
                 }
@@ -901,10 +909,10 @@ private fun ContactsScreen(
                                     .weight(1f),
                             ) {
                                 Text(contact.name, style = MaterialTheme.typography.titleMedium)
-                                Text(contact.email.ifBlank { contact.phoneNumber }, color = TextMuted)
+                                Text(contact.email.ifBlank { contact.phoneNumber }, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(
                                     if (contact.linkedPeerId != null) "Recognized on mesh" else "Waiting to match",
-                                    color = if (contact.linkedPeerId != null) AccentCyan else TextMuted,
+                                    color = if (contact.linkedPeerId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             TextButton(onClick = { onMessage(contact.id) }) { Text("Message") }
@@ -977,7 +985,7 @@ private fun ProfileForm(
             TextButton(onClick = onBack) { Text("Back") }
             Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
         }
-        Text(subtitle, color = TextMuted, modifier = Modifier.padding(bottom = 10.dp))
+        Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 10.dp))
         LazyColumn(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(9.dp),
@@ -1120,7 +1128,7 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
             ) {
                 Column(Modifier.weight(1f)) {
                     Text("My card", style = MaterialTheme.typography.headlineMedium)
-                    Text("Share your details with a scan", color = TextMuted)
+                    Text("Share your details with a scan", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 Button(onClick = onEdit) { Text("Edit") }
             }
@@ -1150,8 +1158,8 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
             ) {
                 Column(Modifier.padding(18.dp)) {
                     Text(profile.displayName.ifBlank { "Your name" }, style = MaterialTheme.typography.headlineMedium)
-                    Text(profile.phoneNumber, color = TextMuted, modifier = Modifier.padding(top = 4.dp))
-                    if (profile.email.isNotBlank()) Text(profile.email, color = TextMuted)
+                    Text(profile.phoneNumber, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
+                    if (profile.email.isNotBlank()) Text(profile.email, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (profile.bio.isNotBlank()) Text(profile.bio, modifier = Modifier.padding(top = 12.dp))
                     val links = listOf(
                         "Website" to profile.websiteUrl,
@@ -1161,7 +1169,7 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
                         "GitHub" to profile.githubUrl,
                     ).filter { it.second.isNotBlank() }
                     links.forEach { (label, value) ->
-                        Text("$label · $value", color = AccentCyan, modifier = Modifier.padding(top = 7.dp))
+                        Text("$label · $value", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 7.dp))
                     }
                 }
             }
@@ -1200,7 +1208,7 @@ private fun SettingsScreen(
     ) {
         item {
             Text("Settings", style = MaterialTheme.typography.headlineMedium)
-            Text("Identity, privacy, and device access", color = TextMuted)
+            Text("Identity, privacy, and device access", color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item {
             SettingsCard(
@@ -1216,7 +1224,7 @@ private fun SettingsScreen(
                 shape = RoundedCornerShape(18.dp)) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Nearby places", style = MaterialTheme.typography.titleMedium)
-                    Text(venueStatus, color = TextMuted, modifier = Modifier.padding(top = 4.dp))
+                    Text(venueStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
                     TextButton(onClick = onCheckVenue, enabled = !checkingVenue) {
                         Text(if (checkingVenue) "Checking..." else "Find a place")
                     }
@@ -1247,15 +1255,15 @@ private fun SettingsScreen(
             ) {
                 Column(Modifier.padding(16.dp)) {
                     Text("On this phone", style = MaterialTheme.typography.titleMedium)
-                    Text("$contactCount saved contact card${if (contactCount == 1) "" else "s"}", color = TextMuted)
-                    Text("$connectionCount active mesh link${if (connectionCount == 1) "" else "s"}", color = TextMuted)
+                    Text("$contactCount saved contact card${if (contactCount == 1) "" else "s"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("$connectionCount active mesh link${if (connectionCount == 1) "" else "s"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
         }
         item {
             Text(
                 "BLAP exchanges chat data over nearby mesh links. Contact cards are shared only when you display or scan their QR code.",
-                color = TextMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
@@ -1279,9 +1287,9 @@ private fun SettingsCard(
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(detail, color = TextMuted)
+                Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(action, color = AccentAmber, style = MaterialTheme.typography.labelLarge)
+            Text(action, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         }
     }
 }
@@ -1337,7 +1345,7 @@ private fun ChatScreen(
                         conversation.connected -> "Connected nearby"
                         else -> "Offline, messages will wait"
                     },
-                    color = if (conversation.connected) AccentCyan else TextMuted,
+                    color = if (conversation.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             if (conversation.connected && conversation.type == ConversationType.DIRECT) {
@@ -1346,7 +1354,7 @@ private fun ChatScreen(
                 TextButton(onClick = onOpenGroupSettings) { Text("Group info") }
             }
         }
-        HorizontalDivider(color = Hairline)
+        HorizontalDivider()
         LazyColumn(
             state = listState,
             reverseLayout = true,
@@ -1355,7 +1363,7 @@ private fun ChatScreen(
             contentPadding = PaddingValues(vertical = 14.dp),
         ) {
             if (messages.isEmpty()) {
-                item { Text("No messages yet", color = TextMuted) }
+                item { Text("No messages yet", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } else {
                 items(messages.asReversed(), key = ChatMessage::id) { message ->
                     MessageBubble(message, showSender = conversation.type != ConversationType.DIRECT)
@@ -1379,7 +1387,7 @@ private fun MessageBubble(message: ChatMessage, showSender: Boolean) {
                 message.senderName.ifBlank { "Mesh member" },
                 modifier = Modifier.padding(start = 4.dp, bottom = 3.dp),
                 style = MaterialTheme.typography.labelLarge,
-                color = AccentCyan,
+                color = MaterialTheme.colorScheme.primary,
             )
         }
         Text(
@@ -1389,7 +1397,7 @@ private fun MessageBubble(message: ChatMessage, showSender: Boolean) {
                 .clip(RoundedCornerShape(17.dp))
                 .background(if (mine) SentBubble else MaterialTheme.colorScheme.surface)
                 .padding(horizontal = 14.dp, vertical = 10.dp),
-            color = if (mine) Color.White else TextPrimary,
+            color = if (mine) OnSentBubble else MaterialTheme.colorScheme.onSurface,
         )
         val timestamp = formatTimestamp(message.sentAt)
         if (mine) {
@@ -1402,14 +1410,14 @@ private fun MessageBubble(message: ChatMessage, showSender: Boolean) {
                 "$timestamp · $status",
                 modifier = Modifier.padding(top = 3.dp, end = 4.dp),
                 style = MaterialTheme.typography.bodyMedium,
-                color = TextMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         } else {
             Text(
                 timestamp,
                 modifier = Modifier.padding(top = 3.dp, start = 4.dp),
                 style = MaterialTheme.typography.bodyMedium,
-                color = TextMuted,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
     }

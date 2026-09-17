@@ -10,6 +10,7 @@ val Background = Color(0xFF0D1117)
 val Surface = Color(0xFF161B22)
 val SurfaceElevated = Color(0xFF21262D)
 val Hairline = Color(0xFF30363D)
+val SurfaceMuted = Color(0xFF484F58)
 
 val AccentCyan = Color(0xFF00F0FF)
 val AccentAmber = Color(0xFFFFB800)
@@ -23,3 +24,4 @@ val Error = Color(0xFFFF453A)
 // even though it works fine as text/icon color on the dark background). Use this instead
 // for anywhere text needs to render on top of a cyan-family fill — e.g. sent-message bubbles.
 val SentBubble = Color(0xFF137D83)
+val OnSentBubble = Color(0xFFFFFFFF)

@@ -8,6 +8,7 @@ import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -23,7 +24,7 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.example.blap.ui.NearbyChatApp
-import com.example.blap.ui.NearbyChatTheme
+import com.example.blap.ui.theme.CommonGroundTheme
 import com.example.blap.venue.VenueManager
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -59,10 +60,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        enableEdgeToEdge(
+            statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+            navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
+        )
 
         setContent {
-            NearbyChatTheme {
+            CommonGroundTheme {
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 NearbyChatApp(
                     uiState = uiState,

@@ -1,12 +1,9 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <style name="Theme.BLAP" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:fontFamily">sans</item>
-        <item name="android:navigationBarColor">#F6F1E7</item>
+        <item name="android:navigationBarColor">#0D1117</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
-        <item name="android:windowLightStatusBar">true</item>
-        <!-- Matches the Splash screen so the pre-Compose cold-start window isn't a white flash.
-             windowBackground covers the classic pre-API31 starting window; windowSplashScreenBackground
-             is the dedicated attribute the API31+ SplashScreen system actually reads for its background. -->
+        <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowBackground">#0D1117</item>
         <item name="android:windowSplashScreenBackground" tools:targetApi="31">#0D1117</item>
     </style>
