@@ -1180,7 +1180,7 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
 private fun createQrBitmap(payload: String, size: Int = 900): Bitmap {
     val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size)
     val pixels = IntArray(size * size)
-    val dark = android.graphics.Color.rgb(20, 52, 44)
+    val dark = android.graphics.Color.BLACK
     val light = android.graphics.Color.WHITE
     for (y in 0 until size) {
         for (x in 0 until size) pixels[y * size + x] = if (matrix[x, y]) dark else light
