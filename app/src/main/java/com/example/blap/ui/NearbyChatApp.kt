@@ -33,6 +33,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -575,7 +576,14 @@ private fun ConversationList(
                                 Text("Turn on nearby")
                             }
                         } else {
-                            Button(onClick = onStopNearby, modifier = Modifier.padding(top = 10.dp)) {
+                            Button(
+                                onClick = onStopNearby,
+                                modifier = Modifier.padding(top = 10.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = Color(0xFF137D83),
+                                    contentColor = Color.White
+                                )
+                            ) {
                                 Text("Turn off nearby")
                             }
                         }
