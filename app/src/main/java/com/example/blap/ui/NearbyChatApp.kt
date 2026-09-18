@@ -695,7 +695,7 @@ private fun ConnectingScreen(authenticationDigits: String?, onBack: () -> Unit) 
                     Modifier.padding(horizontal = 28.dp, vertical = 18.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                 ) {
-                    Text("CHECK BOTH PHONES", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
+                    Text("CHECK BOTH PHONES", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.secondary)
                     Text(authenticationDigits, style = MaterialTheme.typography.headlineMedium)
                 }
             }
