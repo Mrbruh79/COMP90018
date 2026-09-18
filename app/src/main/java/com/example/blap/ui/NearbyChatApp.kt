@@ -207,6 +207,7 @@ fun NearbyChatApp(
                         connectionCount = uiState.directConnectionCount,
                         deniedPermissions = deniedPermissions,
                         onStartNearby = onStartChat,
+                        onStopNearby = onStopChat,
                         onOpenSettings = onOpenSettings,
                     )
 
@@ -515,6 +516,7 @@ private fun ConversationList(
     connectionCount: Int,
     deniedPermissions: List<String>,
     onStartNearby: () -> Unit,
+    onStopNearby: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val filteredConversations = conversations.filter {
@@ -571,6 +573,10 @@ private fun ConversationList(
                         if (!nearbyActive) {
                             Button(onClick = onStartNearby, modifier = Modifier.padding(top = 10.dp)) {
                                 Text("Turn on nearby")
+                            }
+                        } else {
+                            Button(onClick = onStopNearby, modifier = Modifier.padding(top = 10.dp)) {
+                                Text("Turn off nearby")
                             }
                         }
                         if (deniedPermissions.isNotEmpty()) {
