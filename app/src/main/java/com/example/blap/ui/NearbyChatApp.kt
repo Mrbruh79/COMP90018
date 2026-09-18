@@ -41,6 +41,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -576,12 +577,12 @@ private fun ConversationList(
                                 Text("Turn on nearby")
                             }
                         } else {
-                            Button(
+                            OutlinedButton(
                                 onClick = onStopNearby,
                                 modifier = Modifier.padding(top = 10.dp),
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF137D83),
-                                    contentColor = Color.White
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
                                 )
                             ) {
                                 Text("Turn off nearby")
