@@ -14,6 +14,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -24,6 +25,8 @@ import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
 import com.example.blap.ui.NearbyChatApp
+import com.example.blap.ui.screens.onboarding.OnboardingPreferences
+import com.example.blap.ui.screens.onboarding.OnboardingScreen
 import com.example.blap.ui.theme.CommonGroundTheme
 import com.example.blap.venue.VenueManager
 import kotlinx.coroutines.launch
@@ -65,8 +68,23 @@ class MainActivity : ComponentActivity() {
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
         )
 
+        val onboardingPreferences = OnboardingPreferences(this)
+
         setContent {
             CommonGroundTheme {
+                var showOnboarding by rememberSaveable {
+                    mutableStateOf(!onboardingPreferences.hasSeenOnboarding())
+                }
+                if (showOnboarding) {
+                    OnboardingScreen(
+                        onGetStarted = {
+                            onboardingPreferences.markSeen()
+                            showOnboarding = false
+                        },
+                    )
+                    return@CommonGroundTheme
+                }
+
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
                 NearbyChatApp(
                     uiState = uiState,
