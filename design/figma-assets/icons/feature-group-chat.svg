@@ -1,7 +1,7 @@
 <svg preserveAspectRatio="none" overflow="visible" style="display: block;" width="27.9997" height="27.9997" viewBox="0 0 27.9997 27.9997" fill="none" xmlns="http://www.w3.org/2000/svg">
 <g id="Icon">
 <path id="Vector" d="M11 8H7C5.89543 8 5 8.89543 5 10V18C5 19.1046 5.89543 20 7 20H11C12.1046 20 13 19.1046 13 18V10C13 8.89543 12.1046 8 11 8Z" stroke="#00F0FF" stroke-width="1.49998"/>
-<path id="Vector_2" opacity="0.5" d="M21 8H17C15.8954 8 15 8.89543 15 10V18C15 19.1046 15.8954 20 17 20H21C22.1046 20 23 19.1046 23 18V10C23 8.89543 22.1046 8 21 8Z" stroke="#00F0FF" stroke-width="1.49998"/>
-<path id="Vector_3" d="M13 14H15" stroke="#FFB800" stroke-width="1.49998" stroke-linecap="round" stroke-dasharray="1.5 1.5"/>
+<path id="Vector_2" d="M21 8H17C15.8954 8 15 8.89543 15 10V18C15 19.1046 15.8954 20 17 20H21C22.1046 20 23 19.1046 23 18V10C23 8.89543 22.1046 8 21 8Z" stroke="#00F0FF" stroke-width="1.49998"/>
+<path id="Vector_3" d="M13 14H15" stroke="#00F0FF" stroke-width="1.49998" stroke-linecap="round" stroke-dasharray="1.5 1.5"/>
 </g>
 </svg>
