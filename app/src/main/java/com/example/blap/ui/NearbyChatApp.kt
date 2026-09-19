@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -73,6 +75,7 @@ import com.example.blap.chat.ContactCardCodec
 import com.example.blap.chat.ContactProfile
 import com.example.blap.chat.ContactSource
 import com.example.blap.chat.ConversationSummary
+import com.example.blap.chat.PhoneIdentity
 import com.example.blap.chat.ConversationType
 import com.example.blap.chat.GroupContact
 import com.example.blap.chat.MessageAuthor
@@ -413,70 +416,83 @@ private fun WelcomeScreen(
     onStart: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        contentPadding = PaddingValues(bottom = 28.dp),
-    ) {
-        item {
-            Text("A little closer.\nEven offline.", style = MaterialTheme.typography.displaySmall)
-            Text(
-                "Set up your profile to get started. You can turn on nearby messaging when you are ready.",
-                modifier = Modifier.padding(top = 12.dp, bottom = 24.dp),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    var nameError by rememberSaveable { mutableStateOf(false) }
+    var phoneError by rememberSaveable { mutableStateOf(false) }
+    val submit = {
+        nameError = name.isBlank()
+        phoneError = PhoneIdentity.normalize(phoneNumber) == null
+        if (!nameError && !phoneError) onStart()
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        Text("Set up your profile", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "Your display name will be shown to nearby users. Phone number shown only when you connect.",
+            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            OutlinedTextField(
+                value = name,
+                onValueChange = {
+                    nameError = false
+                    onNameChanged(it)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                isError = nameError,
+                label = { Text("Display Name") },
+                supportingText = if (nameError) {
+                    { Text("Please enter a display name") }
+                } else {
+                    null
+                },
+                trailingIcon = if (nameError) {
+                    { Icon(painterResource(R.drawable.ic_error), contentDescription = null) }
+                } else {
+                    null
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             )
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(22.dp),
-            ) {
-                Column(Modifier.padding(18.dp)) {
-                    Text("Your name", style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = onNameChanged,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        singleLine = true,
-                        placeholder = { Text("Name shown to nearby people") },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { onStart() }),
-                        shape = RoundedCornerShape(15.dp),
+            OutlinedTextField(
+                value = phoneNumber,
+                onValueChange = {
+                    phoneError = false
+                    onPhoneChanged(it)
+                },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                isError = phoneError,
+                label = { Text("Phone Number") },
+                supportingText = {
+                    Text(
+                        if (phoneError) {
+                            "Enter a valid phone number with your country code"
+                        } else {
+                            "Use your country code for seamless contact sync"
+                        },
                     )
-                    OutlinedTextField(
-                        value = phoneNumber,
-                        onValueChange = onPhoneChanged,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp),
-                        singleLine = true,
-                        label = { Text("Your phone number") },
-                        supportingText = { Text("Include country code so contacts can recognize you") },
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Phone,
-                            imeAction = ImeAction.Done,
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { onStart() }),
-                        shape = RoundedCornerShape(15.dp),
-                    )
-                    Button(
-                        onClick = onStart,
-                        enabled = name.isNotBlank() && phoneNumber.isNotBlank(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 14.dp)
-                            .height(52.dp),
-                        shape = RoundedCornerShape(15.dp),
-                    ) {
-                        Text("Continue")
-                    }
-                }
-            }
+                },
+                trailingIcon = if (phoneError) {
+                    { Icon(painterResource(R.drawable.ic_error), contentDescription = null) }
+                } else {
+                    null
+                },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Phone,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(onDone = { submit() }),
+            )
 
             if (deniedPermissions.isNotEmpty()) {
                 Card(
-                    modifier = Modifier.padding(top = 15.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                     shape = RoundedCornerShape(18.dp),
                 ) {
@@ -491,6 +507,15 @@ private fun WelcomeScreen(
                     }
                 }
             }
+        }
+        Button(
+            onClick = submit,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 24.dp)
+                .height(56.dp),
+        ) {
+            Text("Continue")
         }
     }
 }

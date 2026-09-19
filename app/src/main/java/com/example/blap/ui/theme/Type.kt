@@ -18,6 +18,20 @@ val Inter = FontFamily(
     Font(R.font.inter_medium, FontWeight.Medium),
 )
 val CommonGroundTypography = Typography(
+    displayLarge = TextStyle(
+        fontFamily = Manrope,
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = 40.sp,
+        lineHeight = 60.sp,
+        letterSpacing = (-0.8).sp,
+    ),
+    displayMedium = TextStyle(
+        fontFamily = Manrope,
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = 34.sp,
+        lineHeight = 51.sp,
+        letterSpacing = (-0.68).sp,
+    ),
     displaySmall = TextStyle(
         fontFamily = Manrope,
         fontWeight = FontWeight.ExtraBold,
@@ -25,12 +39,26 @@ val CommonGroundTypography = Typography(
         lineHeight = 45.sp,
         letterSpacing = (-0.6).sp,
     ),
+    headlineLarge = TextStyle(
+        fontFamily = Manrope,
+        fontWeight = FontWeight.ExtraBold,
+        fontSize = 28.sp,
+        lineHeight = 42.sp,
+        letterSpacing = (-0.56).sp,
+    ),
     headlineMedium = TextStyle(
         fontFamily = Manrope,
         fontWeight = FontWeight.ExtraBold,
         fontSize = 26.sp,
         lineHeight = 39.sp,
         letterSpacing = (-0.52).sp,
+    ),
+    headlineSmall = TextStyle(
+        fontFamily = Manrope,
+        fontWeight = FontWeight.Bold,
+        fontSize = 24.sp,
+        lineHeight = 34.sp,
+        letterSpacing = (-0.48).sp,
     ),
     titleLarge = TextStyle(
         fontFamily = Manrope,
@@ -44,6 +72,12 @@ val CommonGroundTypography = Typography(
         fontWeight = FontWeight.Bold,
         fontSize = 15.sp,
         lineHeight = 22.5.sp,
+    ),
+    titleSmall = TextStyle(
+        fontFamily = Manrope,
+        fontWeight = FontWeight.Bold,
+        fontSize = 14.sp,
+        lineHeight = 21.sp,
     ),
     bodyLarge = TextStyle(
         fontFamily = Inter,
