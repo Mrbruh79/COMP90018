@@ -31,24 +31,38 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     private val knownMeshPeers = mutableMapOf<String, GroupMember>()
     private val cachedGroupDefinitions = linkedMapOf<String, NearbyPacket.GroupDefinition>()
     private val cachedGroupMessages = linkedMapOf<String, NearbyPacket.Message>()
+    private val meshSessions = mutableMapOf<String, MeshSession>()
 
     private var localDisplayName = ""
     private var localPeerId = ""
     private var localPhoneHash = ""
+    private var meshToken = MeshCrypto.DEFAULT_TOKEN
 
     override var listener: NearbyChatController.Listener? = null
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
-            if (endpointId !in establishedEndpoints || payload.type != Payload.Type.BYTES) return
-            val packet = payload.asBytes()?.let(NearbyProtocol::decode) ?: return
+            val session = meshSessions[endpointId] ?: return
+            if (payload.type != Payload.Type.BYTES) return
+            val bytes = payload.asBytes() ?: return
 
-            when (packet) {
-                is NearbyPacket.Hello -> handleHello(endpointId, packet)
-                is NearbyPacket.Message -> handleMessage(endpointId, packet)
-                is NearbyPacket.Acknowledgement -> handleAcknowledgement(endpointId, packet)
-                is NearbyPacket.GroupDefinition -> handleGroupDefinition(endpointId, packet)
-                is NearbyPacket.PeerAnnouncement -> handlePeerAnnouncement(endpointId, packet)
+            session.receive(bytes).forEach { event ->
+                when (event) {
+                    is MeshEvent.Send -> sendEncoded(endpointId, session.encode(event.packet))
+                    is MeshEvent.Established -> {
+                        establishedEndpoints += endpointId
+                        sendPacket(endpointId, NearbyPacket.Hello(localPeerId, localDisplayName, localPhoneHash))
+                    }
+                    is MeshEvent.Packet -> when (val packet = event.packet) {
+                        is NearbyPacket.Hello -> handleHello(endpointId, packet)
+                        is NearbyPacket.Message -> handleMessage(endpointId, packet)
+                        is NearbyPacket.Acknowledgement -> handleAcknowledgement(endpointId, packet)
+                        is NearbyPacket.GroupDefinition -> handleGroupDefinition(endpointId, packet)
+                        is NearbyPacket.PeerAnnouncement -> handlePeerAnnouncement(endpointId, packet)
+                        is NearbyPacket.HandshakeNonce, is NearbyPacket.HandshakeAuth -> Unit
+                    }
+                    is MeshEvent.Rejected -> rejectHandshake(endpointId)
+                }
             }
         }
 
@@ -57,7 +71,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
 
     private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
-            if (endpointId in establishedEndpoints) {
+            if (endpointId in establishedEndpoints || endpointId in meshSessions) {
                 connectionsClient.rejectConnection(endpointId)
                 return
             }
@@ -71,10 +85,11 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
             when (result.status.statusCode) {
                 ConnectionsStatusCodes.STATUS_OK -> {
-                    establishedEndpoints += endpointId
                     pendingDevices.remove(endpointId)
                     knownDevices.remove(endpointId)
-                    sendPacket(endpointId, NearbyPacket.Hello(localPeerId, localDisplayName, localPhoneHash))
+                    val session = MeshSession(meshToken, localPeerId)
+                    meshSessions[endpointId] = session
+                    sendEncoded(endpointId, session.encode(session.noncePacket()))
                 }
 
                 ConnectionsStatusCodes.STATUS_CONNECTION_REJECTED -> {
@@ -92,6 +107,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         override fun onDisconnected(endpointId: String) {
             establishedEndpoints.remove(endpointId)
             pendingDevices.remove(endpointId)
+            meshSessions.remove(endpointId)
             val peer = peerByEndpoint.remove(endpointId) ?: return
             if (endpointByPeer[peer.peerId] == endpointId) {
                 endpointByPeer.remove(peer.peerId)
@@ -115,10 +131,11 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     }
 
     @SuppressLint("MissingPermission")
-    override fun startAdvertising(displayName: String, peerId: String, phoneHash: String) {
+    override fun startAdvertising(displayName: String, peerId: String, phoneHash: String, meshToken: String) {
         localDisplayName = displayName
         localPeerId = peerId
         localPhoneHash = phoneHash
+        this.meshToken = meshToken.trim().ifEmpty { MeshCrypto.DEFAULT_TOKEN }
         knownMeshPeers[peerId] = GroupMember(peerId, displayName, phoneHash)
         connectionsClient.stopAdvertising()
 
@@ -271,6 +288,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         establishedEndpoints.clear()
         peerByEndpoint.clear()
         endpointByPeer.clear()
+        meshSessions.clear()
         seenMessageIds.clear()
         seenAcknowledgements.clear()
         seenGroupDefinitions.clear()
@@ -428,22 +446,50 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     }
 
     private fun sendPacket(endpointId: String, packet: NearbyPacket) {
-        try {
-            connectionsClient.sendPayload(endpointId, Payload.fromBytes(NearbyProtocol.encode(packet)))
-        } catch (_: SecurityException) {
-            listener?.onError("Nearby permissions are required to use this connection.")
-        }
+        val encoded = encodedPacket(endpointId, packet) ?: return
+        sendEncoded(endpointId, encoded)
     }
 
     private fun sendPacketWithResult(endpointId: String, packet: NearbyPacket, onSuccess: () -> Unit) {
+        val encoded = encodedPacket(endpointId, packet) ?: return
         try {
-            connectionsClient.sendPayload(endpointId, Payload.fromBytes(NearbyProtocol.encode(packet)))
+            connectionsClient.sendPayload(endpointId, Payload.fromBytes(encoded))
                 .addOnSuccessListener { onSuccess() }
                 .addOnFailureListener { exception ->
                     listener?.onError(exception.connectionFailureMessage("Message"))
                 }
         } catch (_: SecurityException) {
             listener?.onError("Nearby permissions are required to send messages.")
+        }
+    }
+
+    private fun encodedPacket(endpointId: String, packet: NearbyPacket): ByteArray? {
+        val session = meshSessions[endpointId] ?: return null
+        if (!session.isEstablished) return null
+        return try {
+            session.encode(packet)
+        } catch (_: IllegalStateException) {
+            null
+        }
+    }
+
+    private fun sendEncoded(endpointId: String, bytes: ByteArray) {
+        try {
+            connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes))
+        } catch (_: SecurityException) {
+            listener?.onError("Nearby permissions are required to use this connection.")
+        }
+    }
+
+    private fun rejectHandshake(endpointId: String) {
+        meshSessions.remove(endpointId)
+        establishedEndpoints.remove(endpointId)
+        pendingDevices.remove(endpointId)
+        listener?.onError("Mesh handshake failed. Both phones must use the same security token.")
+        try {
+            connectionsClient.disconnectFromEndpoint(endpointId)
+        } catch (_: SecurityException) {
+            listener?.onError("Nearby permissions are required to close this connection.")
         }
     }
 

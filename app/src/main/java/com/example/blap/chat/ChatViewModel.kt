@@ -44,6 +44,7 @@ class ChatViewModel(
             profileX = initialProfile.xUrl,
             profileLinkedin = initialProfile.linkedinUrl,
             profileGithub = initialProfile.githubUrl,
+            meshToken = identityStore.getMeshToken(),
         ),
     )
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
@@ -71,7 +72,7 @@ class ChatViewModel(
         if (_uiState.value.screen == ChatScreen.WELCOME) showConversationList()
         val state = _uiState.value
         _uiState.update { it.copy(nearbyActive = true, error = null) }
-        nearbyChatController.startAdvertising(state.displayName, localPeerId, localPhoneHash)
+        nearbyChatController.startAdvertising(state.displayName, localPeerId, localPhoneHash, identityStore.getMeshToken())
         if (_uiState.value.nearbyActive) nearbyChatController.startDiscovery()
     }
 
@@ -490,7 +491,7 @@ class ChatViewModel(
                     },
                 )
             }
-            nearbyChatController.startAdvertising(saved.displayName, localPeerId, localPhoneHash)
+            nearbyChatController.startAdvertising(saved.displayName, localPeerId, localPhoneHash, identityStore.getMeshToken())
             if (_uiState.value.nearbyActive) nearbyChatController.startDiscovery()
         }
         _uiState.update { it.copy(screen = profileReturnScreen, profileDraft = null, notice = "Profile saved.") }
@@ -498,6 +499,36 @@ class ChatViewModel(
 
     fun showSettings() {
         _uiState.update { it.copy(screen = ChatScreen.SETTINGS, error = null) }
+    }
+
+    fun updateMeshToken(token: String) {
+        _uiState.update { it.copy(meshToken = token.take(MAX_MESH_TOKEN_LENGTH)) }
+    }
+
+    fun saveMeshToken() {
+        val token = _uiState.value.meshToken.trim().ifEmpty { MeshCrypto.DEFAULT_TOKEN }
+        identityStore.saveMeshToken(token)
+        _uiState.update { it.copy(meshToken = token, notice = "Mesh security token saved.") }
+        if (!_uiState.value.nearbyActive) return
+
+        nearbyChatController.stop()
+        connectedPeers.clear()
+        _uiState.update {
+            it.copy(
+                discoveredDevices = emptyList(),
+                directConnectionCount = 0,
+                conversations = it.conversations.map { conversation ->
+                    conversation.copy(connected = false)
+                },
+            )
+        }
+        nearbyChatController.startAdvertising(
+            _uiState.value.displayName,
+            localPeerId,
+            localPhoneHash,
+            token,
+        )
+        nearbyChatController.startDiscovery()
     }
 
     fun updateConversationSearch(query: String) {
@@ -1013,6 +1044,7 @@ class ChatViewModel(
         const val MAX_EMAIL_LENGTH = 120
         const val MAX_BIO_LENGTH = 240
         const val MAX_URL_LENGTH = 200
+        const val MAX_MESH_TOKEN_LENGTH = 80
 
         fun factory(context: Context): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")

@@ -198,6 +198,7 @@ data class ChatUiState(
     val profileGithub: String = "",
     val conversationSearch: String = "",
     val contactSearch: String = "",
+    val meshToken: String = MeshCrypto.DEFAULT_TOKEN,
     val error: String? = null,
 )
 

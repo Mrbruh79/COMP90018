@@ -105,6 +105,8 @@ class MainActivity : ComponentActivity() {
                     onSystemBack = viewModel::handleBack,
                     onDismissError = viewModel::dismissError,
                     onOpenSettings = ::openAppSettings,
+                    onMeshTokenChanged = viewModel::updateMeshToken,
+                    onSaveMeshToken = viewModel::saveMeshToken,
                 )
             }
         }

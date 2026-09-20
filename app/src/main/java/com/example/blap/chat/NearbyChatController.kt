@@ -3,7 +3,7 @@ package com.example.blap.chat
 interface NearbyChatController {
     var listener: Listener?
 
-    fun startAdvertising(displayName: String, peerId: String, phoneHash: String)
+    fun startAdvertising(displayName: String, peerId: String, phoneHash: String, meshToken: String)
     fun startDiscovery()
     fun connectToDevice(endpointId: String)
     fun sendMessage(message: OutgoingNearbyMessage)

@@ -30,8 +30,40 @@ class ChatViewModelTest {
 
         assertEquals("Alice", controller.advertisedName)
         assertEquals(identity.expectedPeerId, controller.advertisedPeerId)
+        assertEquals(MeshCrypto.DEFAULT_TOKEN, controller.advertisedMeshToken)
         assertTrue(controller.discoveryStarted)
         assertEquals(ChatScreen.CHATS, viewModel.uiState.value.screen)
+    }
+
+    @Test
+    fun startChatAdvertisesACustomMeshToken() {
+        val controller = FakeNearbyChatController()
+        val identity = FakeIdentityStore()
+        identity.saveMeshToken("venue-pin")
+        val viewModel = makeViewModel(controller, identityStore = identity)
+        viewModel.updateDisplayName("Alice")
+
+        viewModel.startChat()
+
+        assertEquals("venue-pin", controller.advertisedMeshToken)
+    }
+
+    @Test
+    fun savingTheMeshTokenRestartsNearbyMessaging() {
+        val controller = FakeNearbyChatController()
+        val identity = FakeIdentityStore()
+        val viewModel = makeViewModel(controller, identityStore = identity)
+        viewModel.updateDisplayName("Alice")
+        viewModel.startChat()
+
+        viewModel.updateMeshToken("private-mesh")
+        viewModel.saveMeshToken()
+
+        assertEquals("private-mesh", identity.getMeshToken())
+        assertEquals("private-mesh", controller.advertisedMeshToken)
+        assertTrue(controller.stopped)
+        assertTrue(controller.discoveryStarted)
+        assertEquals("Mesh security token saved.", viewModel.uiState.value.notice)
     }
 
     @Test
@@ -570,6 +602,7 @@ class ChatViewModelTest {
         val expectedPeerId = "local-peer"
         private var name = ""
         private var phoneNumber = "+15551234567"
+        private var meshToken = MeshCrypto.DEFAULT_TOKEN
 
         override fun getPeerId() = expectedPeerId
         override fun getDisplayName() = name
@@ -581,6 +614,12 @@ class ChatViewModelTest {
 
         override fun savePhoneNumber(phoneNumber: String) {
             this.phoneNumber = phoneNumber
+        }
+
+        override fun getMeshToken() = meshToken
+
+        override fun saveMeshToken(token: String) {
+            meshToken = token.trim().ifEmpty { MeshCrypto.DEFAULT_TOKEN }
         }
     }
 
@@ -684,6 +723,7 @@ class ChatViewModelTest {
         var advertisingStarted = false
         var advertisedName: String? = null
         var advertisedPeerId: String? = null
+        var advertisedMeshToken: String? = null
         var discoveryStarted = false
         val sentMessages = mutableListOf<OutgoingNearbyMessage>()
         val acknowledgements = mutableListOf<Pair<String, String>>()
@@ -691,10 +731,11 @@ class ChatViewModelTest {
         val publishedGroups = mutableListOf<PrivateGroup>()
         var stopped = false
 
-        override fun startAdvertising(displayName: String, peerId: String, phoneHash: String) {
+        override fun startAdvertising(displayName: String, peerId: String, phoneHash: String, meshToken: String) {
             advertisingStarted = true
             advertisedName = displayName
             advertisedPeerId = peerId
+            advertisedMeshToken = meshToken
         }
 
         override fun startDiscovery() {

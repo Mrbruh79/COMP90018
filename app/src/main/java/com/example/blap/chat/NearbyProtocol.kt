@@ -44,16 +44,31 @@ sealed interface NearbyPacket {
         val phoneHash: String,
         val hopsRemaining: Int,
     ) : NearbyPacket
+
+    data class HandshakeNonce(val peerId: String, val nonceHex: String) : NearbyPacket
+
+    data class HandshakeAuth(val macHex: String) : NearbyPacket
+}
+
+sealed interface NearbyFrame {
+    data class Clear(val packet: NearbyPacket) : NearbyFrame
+    data class Sealed(val payload: ByteArray) : NearbyFrame
 }
 
 object NearbyProtocol {
     private const val MAGIC = 0x424C4150
-    private const val VERSION = 5
+    private const val VERSION = 6
     private const val HELLO = 1
     private const val MESSAGE = 2
     private const val ACKNOWLEDGEMENT = 3
     private const val GROUP_DEFINITION = 4
     private const val PEER_ANNOUNCEMENT = 5
+    private const val HANDSHAKE_NONCE = 6
+    private const val HANDSHAKE_AUTH = 7
+    private const val SEALED = 8
+    private const val MAX_GROUP_MEMBERS = 100
+    private const val MAX_SEALED_BYTES = 32 * 1024
+    private const val HEX_SIZE = MeshCrypto.NONCE_SIZE * 2
 
     fun encode(packet: NearbyPacket): ByteArray {
         val bytes = ByteArrayOutputStream()
@@ -113,35 +128,68 @@ object NearbyProtocol {
                     output.writeUTF(packet.phoneHash)
                     output.writeInt(packet.hopsRemaining)
                 }
+
+                is NearbyPacket.HandshakeNonce -> {
+                    output.writeInt(HANDSHAKE_NONCE)
+                    output.writeUTF(packet.peerId)
+                    output.writeUTF(packet.nonceHex)
+                }
+
+                is NearbyPacket.HandshakeAuth -> {
+                    output.writeInt(HANDSHAKE_AUTH)
+                    output.writeUTF(packet.macHex)
+                }
             }
         }
         return bytes.toByteArray()
     }
 
-    fun decode(bytes: ByteArray): NearbyPacket? = try {
+    fun encodeSealed(payload: ByteArray): ByteArray {
+        val bytes = ByteArrayOutputStream()
+        DataOutputStream(bytes).use { output ->
+            output.writeInt(MAGIC)
+            output.writeInt(VERSION)
+            output.writeInt(SEALED)
+            output.writeInt(payload.size)
+            output.write(payload)
+        }
+        return bytes.toByteArray()
+    }
+
+    fun decode(bytes: ByteArray): NearbyPacket? =
+        (decodeFrame(bytes) as? NearbyFrame.Clear)?.packet
+
+    fun decodeFrame(bytes: ByteArray): NearbyFrame? = try {
         DataInputStream(ByteArrayInputStream(bytes)).use { input ->
             if (input.readInt() != MAGIC || input.readInt() != VERSION) return null
             when (input.readInt()) {
-                HELLO -> NearbyPacket.Hello(input.readUTF(), input.readUTF(), input.readUTF())
-                MESSAGE -> NearbyPacket.Message(
-                    messageId = input.readUTF(),
-                    senderId = input.readUTF(),
-                    senderName = input.readUTF(),
-                    senderPhoneHash = input.readUTF(),
-                    recipientId = input.readUTF(),
-                    sentAt = input.readLong(),
-                    text = input.readUTF(),
-                    hopsRemaining = input.readInt(),
-                    isGroup = input.readBoolean(),
+                HELLO -> NearbyFrame.Clear(
+                    NearbyPacket.Hello(input.readUTF(), input.readUTF(), input.readUTF()),
                 )
 
-                ACKNOWLEDGEMENT -> NearbyPacket.Acknowledgement(
-                    messageId = input.readUTF(),
-                    senderId = input.readUTF(),
-                    recipientId = input.readUTF(),
-                    conversationId = input.readUTF(),
-                    hopsRemaining = input.readInt(),
-                    isGroup = input.readBoolean(),
+                MESSAGE -> NearbyFrame.Clear(
+                    NearbyPacket.Message(
+                        messageId = input.readUTF(),
+                        senderId = input.readUTF(),
+                        senderName = input.readUTF(),
+                        senderPhoneHash = input.readUTF(),
+                        recipientId = input.readUTF(),
+                        sentAt = input.readLong(),
+                        text = input.readUTF(),
+                        hopsRemaining = input.readInt(),
+                        isGroup = input.readBoolean(),
+                    ),
+                )
+
+                ACKNOWLEDGEMENT -> NearbyFrame.Clear(
+                    NearbyPacket.Acknowledgement(
+                        messageId = input.readUTF(),
+                        senderId = input.readUTF(),
+                        recipientId = input.readUTF(),
+                        conversationId = input.readUTF(),
+                        hopsRemaining = input.readInt(),
+                        isGroup = input.readBoolean(),
+                    ),
                 )
 
                 GROUP_DEFINITION -> {
@@ -154,22 +202,47 @@ object NearbyProtocol {
                     val members = List(memberCount) {
                         GroupMember(input.readUTF(), input.readUTF(), input.readUTF())
                     }
-                    NearbyPacket.GroupDefinition(
-                        groupId = groupId,
-                        name = name,
-                        ownerId = ownerId,
-                        createdAt = createdAt,
-                        members = members,
-                        hopsRemaining = input.readInt(),
+                    NearbyFrame.Clear(
+                        NearbyPacket.GroupDefinition(
+                            groupId = groupId,
+                            name = name,
+                            ownerId = ownerId,
+                            createdAt = createdAt,
+                            members = members,
+                            hopsRemaining = input.readInt(),
+                        ),
                     )
                 }
 
-                PEER_ANNOUNCEMENT -> NearbyPacket.PeerAnnouncement(
-                    peerId = input.readUTF(),
-                    name = input.readUTF(),
-                    phoneHash = input.readUTF(),
-                    hopsRemaining = input.readInt(),
+                PEER_ANNOUNCEMENT -> NearbyFrame.Clear(
+                    NearbyPacket.PeerAnnouncement(
+                        peerId = input.readUTF(),
+                        name = input.readUTF(),
+                        phoneHash = input.readUTF(),
+                        hopsRemaining = input.readInt(),
+                    ),
                 )
+
+                HANDSHAKE_NONCE -> {
+                    val peerId = input.readUTF()
+                    val nonceHex = input.readUTF()
+                    if (!isHandshakeHex(nonceHex)) return null
+                    NearbyFrame.Clear(NearbyPacket.HandshakeNonce(peerId, nonceHex))
+                }
+
+                HANDSHAKE_AUTH -> {
+                    val macHex = input.readUTF()
+                    if (!isHandshakeHex(macHex)) return null
+                    NearbyFrame.Clear(NearbyPacket.HandshakeAuth(macHex))
+                }
+
+                SEALED -> {
+                    val size = input.readInt()
+                    if (size !in 1..MAX_SEALED_BYTES) return null
+                    val payload = ByteArray(size)
+                    input.readFully(payload)
+                    NearbyFrame.Sealed(payload)
+                }
 
                 else -> null
             }
@@ -178,5 +251,6 @@ object NearbyProtocol {
         null
     }
 
-    private const val MAX_GROUP_MEMBERS = 100
+    private fun isHandshakeHex(value: String): Boolean =
+        value.length == HEX_SIZE && MeshCrypto.fromHex(value)?.size == MeshCrypto.NONCE_SIZE
 }

@@ -54,4 +54,14 @@ class NearbyProtocolTest {
 
         assertEquals(packet, NearbyProtocol.decode(NearbyProtocol.encode(packet)))
     }
+
+    @Test
+    fun handshakePacketsRoundTripAndSealedFramesStayOpaque() {
+        val nonce = NearbyPacket.HandshakeNonce("alice", "ab".repeat(32))
+        val auth = NearbyPacket.HandshakeAuth("cd".repeat(32))
+
+        assertEquals(nonce, NearbyProtocol.decode(NearbyProtocol.encode(nonce)))
+        assertEquals(auth, NearbyProtocol.decode(NearbyProtocol.encode(auth)))
+        assertNull(NearbyProtocol.decode(NearbyProtocol.encodeSealed(ByteArray(32) { 7 })))
+    }
 }

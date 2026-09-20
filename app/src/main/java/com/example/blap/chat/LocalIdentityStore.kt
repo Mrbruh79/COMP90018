@@ -10,6 +10,8 @@ interface IdentityStore {
     fun saveDisplayName(name: String)
     fun getPhoneNumber(): String
     fun savePhoneNumber(phoneNumber: String)
+    fun getMeshToken(): String
+    fun saveMeshToken(token: String)
     fun getProfile(): ContactProfile = ContactProfile(getDisplayName(), getPhoneNumber())
     fun saveProfile(profile: ContactProfile) {
         saveDisplayName(profile.displayName)
@@ -39,6 +41,15 @@ class LocalIdentityStore(context: Context) : IdentityStore {
 
     override fun savePhoneNumber(phoneNumber: String) {
         preferences.edit { putString("phone_number", phoneNumber) }
+    }
+
+    override fun getMeshToken(): String {
+        val saved = preferences.getString("mesh_token", null)
+        return saved?.trim()?.ifEmpty { MeshCrypto.DEFAULT_TOKEN } ?: MeshCrypto.DEFAULT_TOKEN
+    }
+
+    override fun saveMeshToken(token: String) {
+        preferences.edit { putString("mesh_token", token.trim().ifEmpty { MeshCrypto.DEFAULT_TOKEN }) }
     }
 
     override fun getProfile(): ContactProfile = ContactProfile(

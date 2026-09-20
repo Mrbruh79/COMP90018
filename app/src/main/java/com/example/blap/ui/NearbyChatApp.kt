@@ -135,6 +135,8 @@ fun NearbyChatApp(
     onSystemBack: () -> Unit,
     onDismissError: () -> Unit,
     onOpenSettings: () -> Unit,
+    onMeshTokenChanged: (String) -> Unit,
+    onSaveMeshToken: () -> Unit,
 ) {
     BackHandler(
         enabled = uiState.screen != ChatScreen.WELCOME && uiState.screen != ChatScreen.CHATS,
@@ -290,6 +292,9 @@ fun NearbyChatApp(
                         venueStatus = uiState.venueStatus,
                         checkingVenue = uiState.checkingVenue,
                         onCheckVenue = onCheckVenue,
+                        meshToken = uiState.meshToken,
+                        onMeshTokenChanged = onMeshTokenChanged,
+                        onSaveMeshToken = onSaveMeshToken,
                     )
 
                     ChatScreen.GROUP_SETTINGS -> CreateGroupScreen(
@@ -1192,6 +1197,9 @@ private fun SettingsScreen(
     venueStatus: String,
     checkingVenue: Boolean,
     onCheckVenue: () -> Unit,
+    meshToken: String,
+    onMeshTokenChanged: (String) -> Unit,
+    onSaveMeshToken: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1219,6 +1227,35 @@ private fun SettingsScreen(
                     Text(venueStatus, color = TextMuted, modifier = Modifier.padding(top = 4.dp))
                     TextButton(onClick = onCheckVenue, enabled = !checkingVenue) {
                         Text(if (checkingVenue) "Checking..." else "Find a place")
+                    }
+                }
+            }
+        }
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(18.dp),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Mesh security token", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Phones need this shared token to join the mesh. AES-GCM and HMAC-SHA256 reject anyone who does not have it.",
+                        color = TextMuted,
+                        modifier = Modifier.padding(top = 4.dp),
+                    )
+                    OutlinedTextField(
+                        value = meshToken,
+                        onValueChange = onMeshTokenChanged,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 10.dp),
+                        singleLine = true,
+                        label = { Text("Pre-shared token") },
+                        shape = RoundedCornerShape(15.dp),
+                    )
+                    TextButton(onClick = onSaveMeshToken) {
+                        Text("Save token")
                     }
                 }
             }
@@ -1254,7 +1291,7 @@ private fun SettingsScreen(
         }
         item {
             Text(
-                "BLAP exchanges chat data over nearby mesh links. Contact cards are shared only when you display or scan their QR code.",
+                "BLAP encrypts mesh payloads with AES-GCM after an HMAC-SHA256 token handshake. Contact cards are shared only when you display or scan their QR code.",
                 color = TextMuted,
                 modifier = Modifier.padding(top = 8.dp),
             )
