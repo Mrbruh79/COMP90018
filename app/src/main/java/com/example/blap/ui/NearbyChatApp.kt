@@ -75,7 +75,6 @@ import com.example.blap.chat.ContactCardCodec
 import com.example.blap.chat.ContactProfile
 import com.example.blap.chat.ContactSource
 import com.example.blap.chat.ConversationSummary
-import com.example.blap.chat.PhoneIdentity
 import com.example.blap.chat.ConversationType
 import com.example.blap.chat.GroupContact
 import com.example.blap.chat.MessageAuthor
@@ -184,6 +183,8 @@ fun NearbyChatApp(
                     ChatScreen.WELCOME -> WelcomeScreen(
                         name = uiState.displayName,
                         phoneNumber = uiState.phoneNumber,
+                        nameError = uiState.nameError,
+                        phoneError = uiState.phoneError,
                         deniedPermissions = deniedPermissions,
                         onNameChanged = onNameChanged,
                         onPhoneChanged = onPhoneChanged,
@@ -410,20 +411,14 @@ private fun Header(state: ChatUiState) {
 private fun WelcomeScreen(
     name: String,
     phoneNumber: String,
+    nameError: String?,
+    phoneError: String?,
     deniedPermissions: List<String>,
     onNameChanged: (String) -> Unit,
     onPhoneChanged: (String) -> Unit,
     onStart: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    var nameError by rememberSaveable { mutableStateOf(false) }
-    var phoneError by rememberSaveable { mutableStateOf(false) }
-    val submit = {
-        nameError = name.isBlank()
-        phoneError = PhoneIdentity.normalize(phoneNumber) == null
-        if (!nameError && !phoneError) onStart()
-    }
-
     Column(Modifier.fillMaxSize()) {
         Text("Set up your profile", style = MaterialTheme.typography.headlineSmall)
         Text(
@@ -440,20 +435,15 @@ private fun WelcomeScreen(
         ) {
             OutlinedTextField(
                 value = name,
-                onValueChange = {
-                    nameError = false
-                    onNameChanged(it)
-                },
+                onValueChange = onNameChanged,
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                isError = nameError,
+                isError = nameError != null,
                 label = { Text("Display Name") },
-                supportingText = if (nameError) {
-                    { Text("Please enter a display name") }
-                } else {
-                    null
+                supportingText = nameError?.let { message ->
+                    { Text(message) }
                 },
-                trailingIcon = if (nameError) {
+                trailingIcon = if (nameError != null) {
                     { Icon(painterResource(R.drawable.ic_error), contentDescription = null) }
                 } else {
                     null
@@ -462,24 +452,15 @@ private fun WelcomeScreen(
             )
             OutlinedTextField(
                 value = phoneNumber,
-                onValueChange = {
-                    phoneError = false
-                    onPhoneChanged(it)
-                },
+                onValueChange = onPhoneChanged,
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true,
-                isError = phoneError,
+                isError = phoneError != null,
                 label = { Text("Phone Number") },
                 supportingText = {
-                    Text(
-                        if (phoneError) {
-                            "Enter a valid phone number with your country code"
-                        } else {
-                            "Use your country code for seamless contact sync"
-                        },
-                    )
+                    Text(phoneError ?: "Use your country code for seamless contact sync")
                 },
-                trailingIcon = if (phoneError) {
+                trailingIcon = if (phoneError != null) {
                     { Icon(painterResource(R.drawable.ic_error), contentDescription = null) }
                 } else {
                     null
@@ -488,7 +469,7 @@ private fun WelcomeScreen(
                     keyboardType = KeyboardType.Phone,
                     imeAction = ImeAction.Done,
                 ),
-                keyboardActions = KeyboardActions(onDone = { submit() }),
+                keyboardActions = KeyboardActions(onDone = { onStart() }),
             )
 
             if (deniedPermissions.isNotEmpty()) {
@@ -509,7 +490,7 @@ private fun WelcomeScreen(
             }
         }
         Button(
-            onClick = submit,
+            onClick = onStart,
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 24.dp)
