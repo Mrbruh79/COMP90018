@@ -4,10 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 
-// New dark, high-contrast theme for the onboarding-flow screens (Splash, Sign-in,
-// Onboarding, Profile setup), taken from the Figma "Main Design" file. Kept separate
-// from the existing NearbyChatTheme (used by the current nearby-chat prototype
-// screens) so this work stays additive until the two flows are wired together.
+// CommonGround App main theme
 private val CommonGroundColorScheme = darkColorScheme(
     primary = AccentCyan,
     onPrimary = Background,
@@ -20,7 +17,22 @@ private val CommonGroundColorScheme = darkColorScheme(
     surfaceVariant = SurfaceElevated,
     onSurfaceVariant = TextMuted,
     outline = Hairline,
+    outlineVariant = Hairline,
     error = Error,
+    errorContainer = Error.copy(alpha = 0.12f),
+    onErrorContainer = Error,
+    primaryContainer = AccentCyan.copy(alpha = 0.12f),
+    onPrimaryContainer = AccentCyan,
+    secondaryContainer = AccentAmber.copy(alpha = 0.12f),
+    onSecondaryContainer = AccentAmber,
+    surfaceContainerLowest = Background,
+    surfaceContainerLow = Surface,
+    surfaceContainer = Surface,
+    surfaceContainerHigh = SurfaceElevated,
+    surfaceContainerHighest = SurfaceMuted,
+    inverseSurface = SurfaceElevated,
+    inverseOnSurface = TextPrimary,
+    inversePrimary = AccentCyan,
 )
 
 @Composable
