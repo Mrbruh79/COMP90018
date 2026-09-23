@@ -33,6 +33,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
@@ -40,6 +41,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
@@ -201,6 +203,7 @@ fun NearbyChatApp(
                         connectionCount = uiState.directConnectionCount,
                         deniedPermissions = deniedPermissions,
                         onStartNearby = onStartChat,
+                        onStopNearby = onStopChat,
                         onOpenSettings = onOpenSettings,
                     )
 
@@ -509,6 +512,7 @@ private fun ConversationList(
     connectionCount: Int,
     deniedPermissions: List<String>,
     onStartNearby: () -> Unit,
+    onStopNearby: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     val filteredConversations = conversations.filter {
@@ -565,6 +569,17 @@ private fun ConversationList(
                         if (!nearbyActive) {
                             Button(onClick = onStartNearby, modifier = Modifier.padding(top = 10.dp)) {
                                 Text("Turn on nearby")
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = onStopNearby,
+                                modifier = Modifier.padding(top = 10.dp),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                )
+                            ) {
+                                Text("Turn off nearby")
                             }
                         }
                         if (deniedPermissions.isNotEmpty()) {
