@@ -83,8 +83,6 @@ import com.example.blap.chat.MessageAuthor
 import com.example.blap.chat.MessageStatus
 import com.example.blap.chat.NearbyDevice
 import com.example.blap.chat.SavedContact
-import com.example.blap.ui.theme.OnSentBubble
-import com.example.blap.ui.theme.SentBubble
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import java.text.SimpleDateFormat
@@ -679,7 +677,7 @@ private fun Avatar(name: String, connected: Boolean) {
             .clip(CircleShape)
             .background(
                 if (connected) {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.tertiary
                 } else {
                     MaterialTheme.colorScheme.surfaceContainerHighest
                 },
@@ -687,9 +685,9 @@ private fun Avatar(name: String, connected: Boolean) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            name.take(1).uppercase(),
+            initialsOf(name),
             color = if (connected) {
-                MaterialTheme.colorScheme.onPrimary
+                MaterialTheme.colorScheme.onTertiary
             } else {
                 MaterialTheme.colorScheme.onSurface
             },
@@ -697,6 +695,13 @@ private fun Avatar(name: String, connected: Boolean) {
         )
     }
 }
+
+private fun initialsOf(name: String) = name
+    .split(' ')
+    .filter(String::isNotBlank)
+    .take(2)
+    .map { it.first().uppercaseChar() }
+    .joinToString("")
 
 @Composable
 private fun ConnectingScreen(authenticationDigits: String?, onBack: () -> Unit) {
@@ -1416,9 +1421,19 @@ private fun MessageBubble(message: ChatMessage, showSender: Boolean) {
             modifier = Modifier
                 .widthIn(max = 310.dp)
                 .clip(RoundedCornerShape(17.dp))
-                .background(if (mine) SentBubble else MaterialTheme.colorScheme.surface)
+                .background(
+                    if (mine) {
+                        MaterialTheme.colorScheme.tertiary
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
+                )
                 .padding(horizontal = 14.dp, vertical = 10.dp),
-            color = if (mine) OnSentBubble else MaterialTheme.colorScheme.onSurface,
+            color = if (mine) {
+                MaterialTheme.colorScheme.onTertiary
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
         )
         val timestamp = formatTimestamp(message.sentAt)
         if (mine) {
