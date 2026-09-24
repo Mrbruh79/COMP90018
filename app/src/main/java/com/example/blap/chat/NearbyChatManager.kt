@@ -173,7 +173,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     }
 
     @SuppressLint("MissingPermission")
-    override fun sendMessage(message: OutgoingNearbyMessage) {
+    override fun sendMessage(message: OutgoingMessageEnvelope) {
         val packet = NearbyPacket.Message(
             messageId = message.messageId,
             senderId = localPeerId,
@@ -330,7 +330,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
             val firstSeen = rememberId(seenMessageIds, packet.messageId)
             if (firstSeen) rememberGroupMessage(packet)
             listener?.onMessageReceived(
-                IncomingNearbyMessage(
+                IncomingMessageEnvelope(
                     messageId = packet.messageId,
                     conversationId = packet.recipientId,
                     senderId = packet.senderId,
@@ -352,7 +352,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         if (packet.senderId != peer.peerId || packet.recipientId != localPeerId) return
 
         listener?.onMessageReceived(
-            IncomingNearbyMessage(
+            IncomingMessageEnvelope(
                 messageId = packet.messageId,
                 conversationId = packet.senderId,
                 senderId = packet.senderId,

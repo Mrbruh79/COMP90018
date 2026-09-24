@@ -129,7 +129,7 @@ data class GroupContact(
     val availableOnMesh: Boolean = false,
 )
 
-data class OutgoingNearbyMessage(
+data class OutgoingMessageEnvelope(
     val messageId: String,
     val peerId: String,
     val text: String,
@@ -137,7 +137,7 @@ data class OutgoingNearbyMessage(
     val isGroup: Boolean = false,
 )
 
-data class IncomingNearbyMessage(
+data class IncomingMessageEnvelope(
     val messageId: String,
     val conversationId: String,
     val senderId: String,

@@ -7,8 +7,11 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
@@ -44,6 +47,11 @@ class ChatCoordinator(
         ),
     )
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
+    private val _acceptedIncomingMessages = MutableSharedFlow<AcceptedIncomingMessage>(
+        extraBufferCapacity = 64,
+    )
+    val acceptedIncomingMessages: SharedFlow<AcceptedIncomingMessage> =
+        _acceptedIncomingMessages.asSharedFlow()
 
     init {
         nearbyChatController.listener = this
@@ -724,7 +732,10 @@ class ChatCoordinator(
         }
     }
 
-    override fun onMessageReceived(message: IncomingNearbyMessage) {
+    fun receiveIncomingMessage(
+        message: IncomingMessageEnvelope,
+        source: MessageTransport,
+    ) {
         val savedMessage = ChatMessage(
             id = message.messageId,
             peerId = message.conversationId,
@@ -755,18 +766,25 @@ class ChatCoordinator(
                 chatStore.savePeer(message.senderId, message.senderName, message.senderPhoneHash)
             }
             val inserted = chatStore.saveMessage(savedMessage)
-            if (inserted) {
-                reloadConversationsNow()
-                if (_uiState.value.selectedPeerId == message.conversationId) {
-                    reloadMessagesNow(message.conversationId)
-                }
-            }
-            nearbyChatController.acknowledgeMessage(
+            source.acknowledgeMessage(
                 message.conversationId,
                 message.senderId,
                 message.messageId,
             )
+            if (!inserted) return@launch
+
+            reloadConversationsNow()
+            if (_uiState.value.selectedPeerId == message.conversationId) {
+                reloadMessagesNow(message.conversationId)
+            }
+            val conversation = _uiState.value.conversations
+                .first { it.peerId == message.conversationId }
+            _acceptedIncomingMessages.emit(AcceptedIncomingMessage(savedMessage, conversation))
         }
+    }
+
+    override fun onMessageReceived(message: IncomingMessageEnvelope) {
+        receiveIncomingMessage(message, nearbyChatController)
     }
 
     override fun onMessageSent(peerId: String, messageId: String) {
@@ -837,7 +855,7 @@ class ChatCoordinator(
 
     private fun sendStoredMessage(message: ChatMessage) {
         nearbyChatController.sendMessage(
-            OutgoingNearbyMessage(
+            OutgoingMessageEnvelope(
                 messageId = message.id,
                 peerId = message.peerId,
                 text = message.text,

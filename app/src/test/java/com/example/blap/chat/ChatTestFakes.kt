@@ -119,7 +119,7 @@ internal class FakeNearbyChatController : NearbyChatController {
     var advertisedName: String? = null
     var advertisedPeerId: String? = null
     var discoveryStarted = false
-    val sentMessages = mutableListOf<OutgoingNearbyMessage>()
+    val sentMessages = mutableListOf<OutgoingMessageEnvelope>()
     val acknowledgements = mutableListOf<Pair<String, String>>()
     val groupSynchronizations = mutableListOf<Pair<String, List<StoredGroupMessage>>>()
     val publishedGroups = mutableListOf<PrivateGroup>()
@@ -136,7 +136,7 @@ internal class FakeNearbyChatController : NearbyChatController {
     }
 
     override fun connectToDevice(endpointId: String) = Unit
-    override fun sendMessage(message: OutgoingNearbyMessage) {
+    override fun sendMessage(message: OutgoingMessageEnvelope) {
         sentMessages += message
     }
 

@@ -1,6 +1,10 @@
 package com.example.blap.chat
 
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
+import kotlinx.coroutines.launch
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -63,7 +67,7 @@ class ChatViewModelTest {
         val sentMessage = requireNotNull(outgoing)
         controller.listener?.onMessageSent("bob-id", sentMessage.messageId)
         controller.listener?.onMessageReceived(
-            IncomingNearbyMessage(
+            IncomingMessageEnvelope(
                 "reply-id",
                 "bob-id",
                 "bob-id",
@@ -124,11 +128,49 @@ class ChatViewModelTest {
         controller.listener?.onConnected(ConnectedPeer("bob-id", "endpoint-bob", "Bob"))
 
         controller.listener?.onMessageReceived(
-            IncomingNearbyMessage("message-2", "bob-id", "bob-id", "Bob", "", "Made it", 200L),
+            IncomingMessageEnvelope("message-2", "bob-id", "bob-id", "Bob", "", "Made it", 200L),
         )
 
         assertEquals("Made it", store.getMessages("bob-id").single().text)
         assertEquals("bob-id" to "message-2", controller.acknowledgements.single())
+    }
+
+    @Test
+    fun newIncomingMessageEmitsOneAcceptedEvent() {
+        val controller = FakeNearbyChatController()
+        val store = FakeChatStore()
+        val viewModel = makeViewModel(controller, store)
+        val accepted = mutableListOf<AcceptedIncomingMessage>()
+        val job = CoroutineScope(Dispatchers.Unconfined).launch {
+            viewModel.coordinator.acceptedIncomingMessages.take(1).toList(accepted)
+        }
+
+        controller.listener?.onMessageReceived(
+            IncomingMessageEnvelope("m1", "bob", "bob", "Bob", "", "Hello", 100L),
+        )
+
+        assertEquals(listOf("m1"), accepted.map { it.message.id })
+        job.cancel()
+    }
+
+    @Test
+    fun duplicateIncomingMessageIsAcknowledgedButNotAcceptedTwice() {
+        val controller = FakeNearbyChatController()
+        val store = FakeChatStore()
+        val viewModel = makeViewModel(controller, store)
+        val accepted = mutableListOf<AcceptedIncomingMessage>()
+        val job = CoroutineScope(Dispatchers.Unconfined).launch {
+            viewModel.coordinator.acceptedIncomingMessages.toList(accepted)
+        }
+        val message = IncomingMessageEnvelope("m1", "bob", "bob", "Bob", "", "Hello", 100L)
+
+        controller.listener?.onMessageReceived(message)
+        controller.listener?.onMessageReceived(message)
+
+        assertEquals(1, store.getMessages("bob").size)
+        assertEquals(1, accepted.size)
+        assertEquals(2, controller.acknowledgements.size)
+        job.cancel()
     }
 
     @Test
@@ -141,7 +183,7 @@ class ChatViewModelTest {
 
         viewModel.sendMessage("Hello mesh")
         controller.listener?.onMessageReceived(
-            IncomingNearbyMessage(
+            IncomingMessageEnvelope(
                 messageId = "remote-group-message",
                 conversationId = MeshGroup.ID,
                 senderId = "carol-id",
@@ -211,7 +253,7 @@ class ChatViewModelTest {
         makeViewModel(controller, store)
 
         controller.listener?.onMessageReceived(
-            IncomingNearbyMessage(
+            IncomingMessageEnvelope(
                 messageId = "private-message",
                 conversationId = "unknown-private-group",
                 senderId = "carol-id",
@@ -244,7 +286,7 @@ class ChatViewModelTest {
 
         controller.listener?.onGroupReceived(group)
         controller.listener?.onMessageReceived(
-            IncomingNearbyMessage(
+            IncomingMessageEnvelope(
                 messageId = "private-message",
                 conversationId = group.id,
                 senderId = "carol-id",
