@@ -1,3 +1,7 @@
 <resources>
     <string name="app_name">BLAP</string>
+    <string name="notification_channel_nearby_name">Nearby messaging status</string>
+    <string name="notification_channel_messages_name">Incoming messages</string>
+    <string name="notification_nearby_active_title">Nearby messaging is active</string>
+    <string name="notification_nearby_active_text">BLAP can receive messages while the app is closed.</string>
 </resources>
