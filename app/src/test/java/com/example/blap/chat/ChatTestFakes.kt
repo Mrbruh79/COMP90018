@@ -126,6 +126,7 @@ internal class FakeNearbyChatController : NearbyChatController {
     var stopped = false
     var startAdvertisingCalls = 0
     var closeCalls = 0
+    var stopFailure: RuntimeException? = null
 
     override fun startAdvertising(displayName: String, peerId: String, phoneHash: String) {
         startAdvertisingCalls++
@@ -161,6 +162,7 @@ internal class FakeNearbyChatController : NearbyChatController {
     override fun disconnect(peerId: String) = Unit
     override fun stop() {
         stopped = true
+        stopFailure?.let { throw it }
     }
     override fun close() {
         closeCalls++

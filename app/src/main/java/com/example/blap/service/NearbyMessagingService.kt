@@ -14,17 +14,26 @@ import com.example.blap.notifications.MessageNotificationManager
 
 class NearbyMessagingService : Service() {
     private lateinit var session: NearbyServiceSession
-    private var stopped = false
+    private lateinit var teardown: NearbyServiceTeardown
 
     override fun onCreate() {
         super.onCreate()
         val app = application as BlapApplication
-        session = NearbyServiceSession(app.chatCoordinator, NearbyChatManager(this))
+        session = NearbyServiceSession(app.chatCoordinator, NearbyChatManager(this)) {
+            teardown.stop()
+        }
+        teardown = NearbyServiceTeardown(
+            stopSession = session::stop,
+            removeForeground = {
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            },
+            stopService = { stopSelf() },
+        )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            stopSession()
+            teardown.stop()
             return START_NOT_STICKY
         }
         val app = application as BlapApplication
@@ -43,27 +52,22 @@ class NearbyMessagingService : Service() {
             app.chatCoordinator.showError(
                 exception.message ?: "Could not keep Nearby messaging active.",
             )
-            stopSession()
+            teardown.stop()
             return START_NOT_STICKY
         }
-        if (!session.start()) stopSession()
+        if (!session.start()) teardown.stop()
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        stopSession()
-        super.onDestroy()
+        try {
+            teardown.stop()
+        } finally {
+            super.onDestroy()
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    private fun stopSession() {
-        if (stopped) return
-        stopped = true
-        session.stop()
-        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        stopSelf()
-    }
 
     companion object {
         private const val ACTION_START = "com.example.blap.START_NEARBY"
@@ -80,6 +84,28 @@ class NearbyMessagingService : Service() {
             context.startService(
                 Intent(context, NearbyMessagingService::class.java).setAction(ACTION_STOP),
             )
+        }
+    }
+}
+
+internal class NearbyServiceTeardown(
+    private val stopSession: () -> Unit,
+    private val removeForeground: () -> Unit,
+    private val stopService: () -> Unit,
+) {
+    private var stopped = false
+
+    fun stop() {
+        if (stopped) return
+        stopped = true
+        try {
+            stopSession()
+        } finally {
+            try {
+                removeForeground()
+            } finally {
+                stopService()
+            }
         }
     }
 }

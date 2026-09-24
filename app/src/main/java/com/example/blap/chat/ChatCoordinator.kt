@@ -24,6 +24,7 @@ class ChatCoordinator(
 ) : NearbyChatController.Listener {
     @Volatile
     private var nearbyChatController: NearbyChatController? = null
+    private var nearbyUnavailableHandler: (() -> Unit)? = null
     private val workScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val connectedPeers = ConcurrentHashMap<String, ConnectedPeer>()
     private val localPeerId = identityStore.getPeerId()
@@ -65,9 +66,17 @@ class ChatCoordinator(
     }
 
     fun attachNearbyController(controller: NearbyChatController) {
+        attachNearbyController(controller) {}
+    }
+
+    internal fun attachNearbyController(
+        controller: NearbyChatController,
+        onNearbyUnavailable: () -> Unit,
+    ) {
         if (nearbyChatController === controller) return
         check(nearbyChatController == null) { "A Nearby controller is already attached." }
         nearbyChatController = controller
+        nearbyUnavailableHandler = onNearbyUnavailable
         controller.listener = this
     }
 
@@ -75,6 +84,7 @@ class ChatCoordinator(
         if (nearbyChatController !== controller) return
         controller.listener = null
         nearbyChatController = null
+        nearbyUnavailableHandler = null
     }
 
     fun updateDisplayName(name: String) {
@@ -846,8 +856,12 @@ class ChatCoordinator(
     }
 
     override fun onNearbyUnavailable(message: String) {
-        stopChat()
         showError(message)
+        try {
+            stopChat()
+        } finally {
+            nearbyUnavailableHandler?.invoke()
+        }
     }
 
     fun close() {

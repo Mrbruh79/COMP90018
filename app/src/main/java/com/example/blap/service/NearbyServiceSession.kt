@@ -6,6 +6,7 @@ import com.example.blap.chat.NearbyChatController
 class NearbyServiceSession(
     private val coordinator: ChatCoordinator,
     private val controller: NearbyChatController,
+    private val onStopRequested: () -> Unit = {},
 ) {
     private var attached = false
     private var closed = false
@@ -13,7 +14,7 @@ class NearbyServiceSession(
     fun start(): Boolean {
         if (closed) return false
         if (!attached) {
-            coordinator.attachNearbyController(controller)
+            coordinator.attachNearbyController(controller, onStopRequested)
             attached = true
         }
         return coordinator.startChat()
@@ -21,10 +22,16 @@ class NearbyServiceSession(
 
     fun stop() {
         if (closed) return
-        coordinator.stopChat()
-        if (attached) coordinator.detachNearbyController(controller)
-        controller.close()
-        attached = false
         closed = true
+        try {
+            coordinator.stopChat()
+        } finally {
+            try {
+                if (attached) coordinator.detachNearbyController(controller)
+            } finally {
+                attached = false
+                controller.close()
+            }
+        }
     }
 }
