@@ -14,4 +14,12 @@ object IncomingNotificationPolicy {
             screen == ChatScreen.CONVERSATION &&
             selectedConversationId == incomingConversationId
         )
+
+    fun visibleConversationToCancel(
+        appForeground: Boolean,
+        screen: ChatScreen,
+        selectedConversationId: String?,
+    ): String? = selectedConversationId.takeIf {
+        appForeground && screen == ChatScreen.CONVERSATION
+    }
 }

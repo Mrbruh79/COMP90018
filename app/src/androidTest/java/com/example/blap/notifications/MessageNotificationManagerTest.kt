@@ -23,7 +23,11 @@ class MessageNotificationManagerTest {
         }
         var openedConversationId: String? = null
 
-        consumeNotificationConversationIntent(intent) { openedConversationId = it }
+        consumeNotificationConversationIntent(
+            intent = intent,
+            openConversation = { openedConversationId = it },
+            showConversationList = {},
+        )
 
         assertEquals("bob", openedConversationId)
         assertEquals(null, intent.action)
@@ -31,6 +35,32 @@ class MessageNotificationManagerTest {
             null,
             intent.getStringExtra(MessageNotificationManager.EXTRA_CONVERSATION_ID),
         )
+    }
+
+    @Test
+    fun blankConversationIntentIsConsumedAndFallsBackToConversationList() {
+        listOf(null, "   ").forEach { conversationId ->
+            val intent = Intent().apply {
+                action = MessageNotificationManager.ACTION_OPEN_CONVERSATION
+                conversationId?.let {
+                    putExtra(MessageNotificationManager.EXTRA_CONVERSATION_ID, it)
+                }
+            }
+            var fallbackCount = 0
+
+            consumeNotificationConversationIntent(
+                intent = intent,
+                openConversation = { throw AssertionError("Blank route must not open a chat") },
+                showConversationList = { fallbackCount++ },
+            )
+
+            assertEquals(1, fallbackCount)
+            assertEquals(null, intent.action)
+            assertEquals(
+                null,
+                intent.getStringExtra(MessageNotificationManager.EXTRA_CONVERSATION_ID),
+            )
+        }
     }
 
     @Test

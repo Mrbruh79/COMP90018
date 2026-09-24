@@ -44,14 +44,15 @@ internal fun handleNotificationPermissionResult(
 internal fun consumeNotificationConversationIntent(
     intent: Intent?,
     openConversation: (String) -> Unit,
+    showConversationList: () -> Unit,
 ) {
     if (intent?.action != MessageNotificationManager.ACTION_OPEN_CONVERSATION) return
     val conversationId = intent.getStringExtra(
         MessageNotificationManager.EXTRA_CONVERSATION_ID,
-    ) ?: return
-    openConversation(conversationId)
+    )?.takeIf(String::isNotBlank)
     intent.action = null
     intent.removeExtra(MessageNotificationManager.EXTRA_CONVERSATION_ID)
+    if (conversationId == null) showConversationList() else openConversation(conversationId)
 }
 
 class MainActivity : ComponentActivity() {
@@ -208,6 +209,7 @@ class MainActivity : ComponentActivity() {
         consumeNotificationConversationIntent(
             intent,
             viewModel::openConversationFromNotification,
+            viewModel::showConversationList,
         )
 
     private fun openAppSettings() {

@@ -806,11 +806,13 @@ class ChatCoordinator(
                 chatStore.savePeer(message.senderId, message.senderName, message.senderPhoneHash)
             }
             val inserted = chatStore.saveMessage(savedMessage)
-            source.acknowledgeMessage(
-                message.conversationId,
-                message.senderId,
-                message.messageId,
-            )
+            runCatching {
+                source.acknowledgeMessage(
+                    message.conversationId,
+                    message.senderId,
+                    message.messageId,
+                )
+            }
             if (!inserted) return@launch
 
             reloadConversationsNow()

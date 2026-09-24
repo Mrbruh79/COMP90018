@@ -206,6 +206,48 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun acknowledgementFailureStillRefreshesAndEmitsNewMessageExactlyOnce() {
+        val store = FakeChatStore()
+        val coordinator = ChatCoordinator(
+            chatStore = store,
+            identityStore = FakeIdentityStore(),
+            ioDispatcher = Dispatchers.Unconfined,
+        )
+        val accepted = mutableListOf<AcceptedIncomingMessage>()
+        val job = CoroutineScope(Dispatchers.Unconfined).launch {
+            coordinator.acceptedIncomingMessages.toList(accepted)
+        }
+        var acknowledgementAttempts = 0
+        val throwingTransport = object : MessageTransport {
+            override fun sendMessage(message: OutgoingMessageEnvelope) = Unit
+
+            override fun acknowledgeMessage(
+                conversationId: String,
+                senderId: String,
+                messageId: String,
+            ) {
+                acknowledgementAttempts++
+                throw IllegalStateException("acknowledgement failed")
+            }
+        }
+        val message = IncomingMessageEnvelope(
+            "m1", "bob", "bob", "Bob", "", "Hello", 100L,
+        )
+
+        coordinator.receiveIncomingMessage(message, throwingTransport)
+        coordinator.receiveIncomingMessage(message, throwingTransport)
+
+        assertEquals(2, acknowledgementAttempts)
+        assertEquals(listOf("m1"), store.getMessages("bob").map { it.id })
+        assertEquals(listOf("m1"), accepted.map { it.message.id })
+        assertEquals(
+            "Hello",
+            coordinator.uiState.value.conversations.first { it.peerId == "bob" }.lastMessage,
+        )
+        job.cancel()
+    }
+
+    @Test
     fun groupMessagesUseTheSharedConversationAndOriginalSender() {
         val controller = FakeNearbyChatController()
         val store = FakeChatStore()

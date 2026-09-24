@@ -1,5 +1,7 @@
 package com.example.blap.service
 
+import android.content.pm.ServiceInfo
+import android.os.Build
 import com.example.blap.chat.ChatCoordinator
 import com.example.blap.chat.FakeChatStore
 import com.example.blap.chat.FakeIdentityStore
@@ -117,5 +119,35 @@ class NearbyServiceSessionTest {
 
         assertNull(thrown)
         assertEquals(listOf("session", "foreground", "service"), calls)
+    }
+
+    @Test
+    fun serviceBoundaryReportsSynchronousStartupFailureAndTearsDown() {
+        val calls = mutableListOf<String>()
+        val teardown = NearbyServiceTeardown(
+            stopSession = { calls += "session" },
+            removeForeground = { calls += "foreground" },
+            stopService = { calls += "service" },
+        )
+        val boundary = NearbyServiceBoundary(teardown)
+        var reportedError: String? = null
+
+        val started = boundary.startSafely(
+            startSession = { throw SecurityException("Nearby permission revoked") },
+            reportError = { reportedError = it },
+        )
+
+        assertFalse(started)
+        assertEquals("Nearby permission revoked", reportedError)
+        assertEquals(listOf("session", "foreground", "service"), calls)
+    }
+
+    @Test
+    fun connectedDeviceForegroundTypeIsUsedFromApi29() {
+        assertEquals(
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+            foregroundServiceType(Build.VERSION_CODES.Q),
+        )
+        assertEquals(0, foregroundServiceType(Build.VERSION_CODES.Q - 1))
     }
 }

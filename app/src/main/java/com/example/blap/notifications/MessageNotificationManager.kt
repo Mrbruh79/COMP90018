@@ -19,11 +19,24 @@ import com.example.blap.MainActivity
 import com.example.blap.R
 import com.example.blap.chat.AcceptedIncomingMessage
 import com.example.blap.chat.ChatCoordinator
+import com.example.blap.chat.ChatUiState
 import com.example.blap.chat.ConversationType
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+
+internal fun notificationCancellationConversationIds(
+    uiStates: Flow<ChatUiState>,
+    appForeground: Flow<Boolean>,
+): Flow<String?> = combine(uiStates, appForeground) { state, foreground ->
+    IncomingNotificationPolicy.visibleConversationToCancel(
+        appForeground = foreground,
+        screen = state.screen,
+        selectedConversationId = state.selectedPeerId,
+    )
+}.distinctUntilChanged()
 
 class MessageNotificationManager(
     private val context: Context,
@@ -42,13 +55,10 @@ class MessageNotificationManager(
             }
         }
         scope.launch {
-            coordinator.uiState
-                .map { state ->
-                    state.selectedPeerId.takeIf {
-                        state.screen == com.example.blap.chat.ChatScreen.CONVERSATION
-                    }
-                }
-                .distinctUntilChanged()
+            notificationCancellationConversationIds(
+                coordinator.uiState,
+                visibility.appForeground,
+            )
                 .collect { conversationId ->
                     conversationId?.let(::cancelConversation)
                 }

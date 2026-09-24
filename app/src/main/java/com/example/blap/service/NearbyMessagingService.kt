@@ -1,5 +1,6 @@
 package com.example.blap.service
 
+import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -44,11 +45,7 @@ class NearbyMessagingService : Service() {
                 this,
                 MessageNotificationManager.SERVICE_NOTIFICATION_ID,
                 app.messageNotifications.serviceNotification(),
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
-                } else {
-                    0
-                },
+                foregroundServiceType(Build.VERSION.SDK_INT),
             )
         } catch (exception: RuntimeException) {
             app.chatCoordinator.showError(
@@ -57,7 +54,10 @@ class NearbyMessagingService : Service() {
             boundary.stopSafely()
             return START_NOT_STICKY
         }
-        if (!session.start()) boundary.stopSafely()
+        boundary.startSafely(
+            startSession = session::start,
+            reportError = app.chatCoordinator::showError,
+        )
         return START_NOT_STICKY
     }
 
@@ -87,6 +87,14 @@ class NearbyMessagingService : Service() {
     }
 }
 
+@SuppressLint("InlinedApi")
+internal fun foregroundServiceType(sdkInt: Int): Int =
+    if (sdkInt >= Build.VERSION_CODES.Q) {
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE
+    } else {
+        0
+    }
+
 internal class NearbyServiceTeardown(
     private val stopSession: () -> Unit,
     private val removeForeground: () -> Unit,
@@ -112,6 +120,22 @@ internal class NearbyServiceTeardown(
 internal class NearbyServiceBoundary(
     private val teardown: NearbyServiceTeardown,
 ) {
+    fun startSafely(
+        startSession: () -> Boolean,
+        reportError: (String) -> Unit,
+    ): Boolean {
+        val started = try {
+            startSession()
+        } catch (exception: RuntimeException) {
+            runCatching {
+                reportError(exception.message ?: "Could not start Nearby messaging.")
+            }
+            false
+        }
+        if (!started) stopSafely()
+        return started
+    }
+
     fun stopSafely() {
         runCatching { teardown.stop() }
     }

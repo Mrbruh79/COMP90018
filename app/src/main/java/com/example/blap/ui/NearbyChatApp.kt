@@ -563,7 +563,7 @@ private fun ConversationList(
                             connectionCount > 0 -> "$connectionCount phone${if (connectionCount == 1) "" else "s"} connected"
                             else -> "Looking for people nearby"
                         }, style = MaterialTheme.typography.titleMedium)
-                        Text(if (nearbyActive) "Keep BLAP open on both phones to connect."
+                        Text(if (nearbyActive) "Nearby messaging stays active while BLAP runs in the background."
                             else "Turn on nearby messaging to discover other phones running BLAP.",
                             color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
                         if (!nearbyActive) {
