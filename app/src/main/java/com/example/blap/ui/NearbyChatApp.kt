@@ -24,6 +24,8 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
@@ -183,6 +185,8 @@ fun NearbyChatApp(
                     ChatScreen.WELCOME -> WelcomeScreen(
                         name = uiState.displayName,
                         phoneNumber = uiState.phoneNumber,
+                        nameError = uiState.nameError,
+                        phoneError = uiState.phoneError,
                         deniedPermissions = deniedPermissions,
                         onNameChanged = onNameChanged,
                         onPhoneChanged = onPhoneChanged,
@@ -410,76 +414,69 @@ private fun Header(state: ChatUiState) {
 private fun WelcomeScreen(
     name: String,
     phoneNumber: String,
+    nameError: String?,
+    phoneError: String?,
     deniedPermissions: List<String>,
     onNameChanged: (String) -> Unit,
     onPhoneChanged: (String) -> Unit,
     onStart: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        verticalArrangement = Arrangement.Center,
-        contentPadding = PaddingValues(bottom = 28.dp),
-    ) {
-        item {
-            Text("A little closer.\nEven offline.", style = MaterialTheme.typography.displaySmall)
-            Text(
-                "Set up your profile to get started. You can turn on nearby messaging when you are ready.",
-                modifier = Modifier.padding(top = 12.dp, bottom = 24.dp),
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    Column(Modifier.fillMaxSize()) {
+        Text("Set up your profile", style = MaterialTheme.typography.headlineSmall)
+        Text(
+            "Your display name will be shown to nearby users. Phone number shown only when you connect.",
+            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            OutlinedTextField(
+                value = name,
+                onValueChange = onNameChanged,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                isError = nameError != null,
+                label = { Text("Display Name") },
+                supportingText = nameError?.let { message ->
+                    { Text(message) }
+                },
+                trailingIcon = if (nameError != null) {
+                    { Icon(painterResource(R.drawable.ic_error), contentDescription = null) }
+                } else {
+                    null
+                },
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
             )
-            Card(
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(22.dp),
-            ) {
-                Column(Modifier.padding(18.dp)) {
-                    Text("Your name", style = MaterialTheme.typography.titleMedium)
-                    OutlinedTextField(
-                        value = name,
-                        onValueChange = onNameChanged,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 8.dp),
-                        singleLine = true,
-                        placeholder = { Text("Name shown to nearby people") },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(onDone = { onStart() }),
-                        shape = RoundedCornerShape(15.dp),
-                    )
-                    OutlinedTextField(
-                        value = phoneNumber,
-                        onValueChange = onPhoneChanged,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 10.dp),
-                        singleLine = true,
-                        label = { Text("Your phone number") },
-                        supportingText = { Text("Include country code so contacts can recognize you") },
-                        keyboardOptions = KeyboardOptions(
-                            keyboardType = KeyboardType.Phone,
-                            imeAction = ImeAction.Done,
-                        ),
-                        keyboardActions = KeyboardActions(onDone = { onStart() }),
-                        shape = RoundedCornerShape(15.dp),
-                    )
-                    Button(
-                        onClick = onStart,
-                        enabled = name.isNotBlank() && phoneNumber.isNotBlank(),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(top = 14.dp)
-                            .height(52.dp),
-                        shape = RoundedCornerShape(15.dp),
-                    ) {
-                        Text("Continue")
-                    }
-                }
-            }
+            OutlinedTextField(
+                value = phoneNumber,
+                onValueChange = onPhoneChanged,
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                isError = phoneError != null,
+                label = { Text("Phone Number") },
+                supportingText = {
+                    Text(phoneError ?: "Use your country code for seamless contact sync")
+                },
+                trailingIcon = if (phoneError != null) {
+                    { Icon(painterResource(R.drawable.ic_error), contentDescription = null) }
+                } else {
+                    null
+                },
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Phone,
+                    imeAction = ImeAction.Done,
+                ),
+                keyboardActions = KeyboardActions(onDone = { onStart() }),
+            )
 
             if (deniedPermissions.isNotEmpty()) {
                 Card(
-                    modifier = Modifier.padding(top = 15.dp),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
                     shape = RoundedCornerShape(18.dp),
                 ) {
@@ -494,6 +491,15 @@ private fun WelcomeScreen(
                     }
                 }
             }
+        }
+        Button(
+            onClick = onStart,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 24.dp)
+                .height(56.dp),
+        ) {
+            Text("Continue")
         }
     }
 }

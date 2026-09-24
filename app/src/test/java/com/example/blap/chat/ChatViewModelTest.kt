@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -15,8 +16,51 @@ class ChatViewModelTest {
 
         viewModel.startChat()
 
+        val state = viewModel.uiState.value
         assertFalse(controller.advertisingStarted)
-        assertEquals("Enter a display name first.", viewModel.uiState.value.error)
+        assertEquals("Please enter a display name", state.error)
+        assertNull(state.nameError)
+        assertNull(state.phoneError)
+    }
+
+    @Test
+    fun completeSetupReportsFieldErrors() {
+        val viewModel = makeViewModel(FakeNearbyChatController())
+        viewModel.updatePhoneNumber("123")
+
+        viewModel.completeSetup()
+
+        val state = viewModel.uiState.value
+        assertEquals("Please enter a display name", state.nameError)
+        assertEquals("Enter a valid phone number with your country code", state.phoneError)
+        assertNull(state.error)
+        assertEquals(ChatScreen.WELCOME, state.screen)
+    }
+
+    @Test
+    fun editingAFieldClearsOnlyItsOwnError() {
+        val viewModel = makeViewModel(FakeNearbyChatController())
+        viewModel.updatePhoneNumber("123")
+        viewModel.completeSetup()
+
+        viewModel.updateDisplayName("Alice")
+
+        assertNull(viewModel.uiState.value.nameError)
+        assertNotNull(viewModel.uiState.value.phoneError)
+    }
+
+    @Test
+    fun completeSetupNavigatesWhenValid() {
+        val viewModel = makeViewModel(FakeNearbyChatController())
+        viewModel.updateDisplayName("  Alice  ")
+
+        viewModel.completeSetup()
+
+        val state = viewModel.uiState.value
+        assertEquals(ChatScreen.CHATS, state.screen)
+        assertEquals("Alice", state.displayName)
+        assertNull(state.nameError)
+        assertNull(state.phoneError)
     }
 
     @Test

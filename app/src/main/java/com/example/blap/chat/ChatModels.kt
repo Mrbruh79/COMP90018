@@ -199,6 +199,8 @@ data class ChatUiState(
     val conversationSearch: String = "",
     val contactSearch: String = "",
     val error: String? = null,
+    val nameError: String? = null,
+    val phoneError: String? = null,
 )
 
 object MeshGroup {

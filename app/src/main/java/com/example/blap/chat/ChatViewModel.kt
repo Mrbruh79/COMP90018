@@ -58,16 +58,23 @@ class ChatViewModel(
     }
 
     fun updateDisplayName(name: String) {
-        _uiState.update { it.copy(displayName = name.take(MAX_NAME_LENGTH)) }
+        _uiState.update { it.copy(displayName = name.take(MAX_NAME_LENGTH), nameError = null) }
     }
 
     fun updatePhoneNumber(phoneNumber: String) {
-        _uiState.update { it.copy(phoneNumber = phoneNumber.take(MAX_PHONE_LENGTH)) }
+        _uiState.update { it.copy(phoneNumber = phoneNumber.take(MAX_PHONE_LENGTH), phoneError = null) }
     }
 
     fun startChat() {
         if (_uiState.value.nearbyActive) return
-        if (!saveIdentity()) return
+        when (val check = checkIdentity()) {
+            is IdentityCheck.Invalid -> {
+                _uiState.update { it.copy(error = check.nameError ?: check.phoneError) }
+                return
+            }
+
+            is IdentityCheck.Valid -> saveIdentity(check.name, check.phone)
+        }
         if (_uiState.value.screen == ChatScreen.WELCOME) showConversationList()
         val state = _uiState.value
         _uiState.update { it.copy(nearbyActive = true, error = null) }
@@ -76,31 +83,46 @@ class ChatViewModel(
     }
 
     fun completeSetup() {
-        if (saveIdentity()) showConversationList()
+        when (val check = checkIdentity()) {
+            is IdentityCheck.Invalid ->
+                _uiState.update { it.copy(nameError = check.nameError, phoneError = check.phoneError) }
+
+            is IdentityCheck.Valid -> {
+                saveIdentity(check.name, check.phone)
+                showConversationList()
+            }
+        }
     }
 
-    private fun saveIdentity(): Boolean {
+    private fun checkIdentity(): IdentityCheck {
         val name = _uiState.value.displayName.trim()
-        if (name.isBlank()) {
-            _uiState.update { it.copy(error = "Enter a display name first.") }
-            return false
+        val phone = PhoneIdentity.normalize(_uiState.value.phoneNumber)
+        if (name.isBlank() || phone == null) {
+            return IdentityCheck.Invalid(
+                nameError = "Please enter a display name".takeIf { name.isBlank() },
+                phoneError = "Enter a valid phone number with your country code".takeIf { phone == null },
+            )
         }
-        val normalizedPhone = PhoneIdentity.normalize(_uiState.value.phoneNumber)
-        if (normalizedPhone == null) {
-            _uiState.update { it.copy(error = "Enter a valid phone number, including country code.") }
-            return false
-        }
+        return IdentityCheck.Valid(name, phone)
+    }
 
-        identityStore.saveProfile(currentProfile().copy(displayName = name, phoneNumber = normalizedPhone))
-        localPhoneHash = requireNotNull(PhoneIdentity.hash(normalizedPhone))
+    private fun saveIdentity(name: String, phone: String) {
+        identityStore.saveProfile(currentProfile().copy(displayName = name, phoneNumber = phone))
+        localPhoneHash = requireNotNull(PhoneIdentity.hash(phone))
         _uiState.update {
             it.copy(
                 displayName = name,
-                phoneNumber = normalizedPhone,
+                phoneNumber = phone,
                 error = null,
+                nameError = null,
+                phoneError = null,
             )
         }
-        return true
+    }
+
+    private sealed interface IdentityCheck {
+        data class Valid(val name: String, val phone: String) : IdentityCheck
+        data class Invalid(val nameError: String?, val phoneError: String?) : IdentityCheck
     }
 
     fun connectToDevice(endpointId: String) {
