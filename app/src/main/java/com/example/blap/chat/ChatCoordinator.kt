@@ -1037,19 +1037,22 @@ class ChatCoordinator(
 
     fun stopChat() {
         requestedEndpointId = null
-        nearbyChatController?.stop()
-        connectedPeers.clear()
-        _uiState.update {
-            it.copy(
-                nearbyActive = false,
-                screen = if (it.screen == ChatScreen.CONNECTING) ChatScreen.CHATS else it.screen,
-                discoveredDevices = emptyList(),
-                authenticationDigits = null,
-                directConnectionCount = 0,
-                conversations = it.conversations.map { conversation ->
-                    conversation.copy(connected = false)
-                },
-            )
+        try {
+            nearbyChatController?.stop()
+        } finally {
+            connectedPeers.clear()
+            _uiState.update {
+                it.copy(
+                    nearbyActive = false,
+                    screen = if (it.screen == ChatScreen.CONNECTING) ChatScreen.CHATS else it.screen,
+                    discoveredDevices = emptyList(),
+                    authenticationDigits = null,
+                    directConnectionCount = 0,
+                    conversations = it.conversations.map { conversation ->
+                        conversation.copy(connected = false)
+                    },
+                )
+            }
         }
     }
 

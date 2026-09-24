@@ -74,6 +74,7 @@ class NearbyServiceSessionTest {
         session.stop()
 
         assertSame(failure, thrown)
+        assertFalse(coordinator.uiState.value.nearbyActive)
         assertNull(controller.listener)
         assertEquals(1, controller.closeCalls)
     }
@@ -95,6 +96,26 @@ class NearbyServiceSessionTest {
         teardown.stop()
 
         assertSame(failure, thrown)
+        assertEquals(listOf("session", "foreground", "service"), calls)
+    }
+
+    @Test
+    fun serviceBoundarySuppressesForegroundRemovalFailureAfterStoppingSelf() {
+        val calls = mutableListOf<String>()
+        val teardown = NearbyServiceTeardown(
+            stopSession = { calls += "session" },
+            removeForeground = {
+                calls += "foreground"
+                throw IllegalStateException("foreground removal failed")
+            },
+            stopService = { calls += "service" },
+        )
+        val boundary = NearbyServiceBoundary(teardown)
+
+        val thrown = runCatching { boundary.stopSafely() }.exceptionOrNull()
+        boundary.stopSafely()
+
+        assertNull(thrown)
         assertEquals(listOf("session", "foreground", "service"), calls)
     }
 }

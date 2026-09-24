@@ -14,26 +14,28 @@ import com.example.blap.notifications.MessageNotificationManager
 
 class NearbyMessagingService : Service() {
     private lateinit var session: NearbyServiceSession
-    private lateinit var teardown: NearbyServiceTeardown
+    private lateinit var boundary: NearbyServiceBoundary
 
     override fun onCreate() {
         super.onCreate()
         val app = application as BlapApplication
         session = NearbyServiceSession(app.chatCoordinator, NearbyChatManager(this)) {
-            teardown.stop()
+            boundary.stopSafely()
         }
-        teardown = NearbyServiceTeardown(
-            stopSession = session::stop,
-            removeForeground = {
-                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-            },
-            stopService = { stopSelf() },
+        boundary = NearbyServiceBoundary(
+            NearbyServiceTeardown(
+                stopSession = session::stop,
+                removeForeground = {
+                    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                },
+                stopService = { stopSelf() },
+            ),
         )
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            teardown.stop()
+            boundary.stopSafely()
             return START_NOT_STICKY
         }
         val app = application as BlapApplication
@@ -52,19 +54,16 @@ class NearbyMessagingService : Service() {
             app.chatCoordinator.showError(
                 exception.message ?: "Could not keep Nearby messaging active.",
             )
-            teardown.stop()
+            boundary.stopSafely()
             return START_NOT_STICKY
         }
-        if (!session.start()) teardown.stop()
+        if (!session.start()) boundary.stopSafely()
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        try {
-            teardown.stop()
-        } finally {
-            super.onDestroy()
-        }
+        boundary.stopSafely()
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -107,5 +106,13 @@ internal class NearbyServiceTeardown(
                 stopService()
             }
         }
+    }
+}
+
+internal class NearbyServiceBoundary(
+    private val teardown: NearbyServiceTeardown,
+) {
+    fun stopSafely() {
+        runCatching { teardown.stop() }
     }
 }
