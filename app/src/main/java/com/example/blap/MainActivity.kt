@@ -31,7 +31,7 @@ import kotlinx.coroutines.Dispatchers
 
 class MainActivity : ComponentActivity() {
     private val viewModel: ChatViewModel by viewModels {
-        ChatViewModel.factory(applicationContext)
+        ChatViewModel.factory(application as BlapApplication)
     }
 
     private var deniedPermissions by mutableStateOf<List<String>>(emptyList())
