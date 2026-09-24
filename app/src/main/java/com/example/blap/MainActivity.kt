@@ -32,6 +32,28 @@ import com.example.blap.venue.VenueManager
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 
+internal fun handleNotificationPermissionResult(
+    granted: Boolean,
+    startNearby: () -> Boolean,
+    showNotificationsOffNotice: () -> Unit,
+) {
+    val startSucceeded = startNearby()
+    if (!granted && startSucceeded) showNotificationsOffNotice()
+}
+
+internal fun consumeNotificationConversationIntent(
+    intent: Intent?,
+    openConversation: (String) -> Unit,
+) {
+    if (intent?.action != MessageNotificationManager.ACTION_OPEN_CONVERSATION) return
+    val conversationId = intent.getStringExtra(
+        MessageNotificationManager.EXTRA_CONVERSATION_ID,
+    ) ?: return
+    openConversation(conversationId)
+    intent.action = null
+    intent.removeExtra(MessageNotificationManager.EXTRA_CONVERSATION_ID)
+}
+
 class MainActivity : ComponentActivity() {
     private val viewModel: ChatViewModel by viewModels {
         ChatViewModel.factory(application as BlapApplication)
@@ -50,10 +72,13 @@ class MainActivity : ComponentActivity() {
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
-        startNearbyService()
-        if (!granted) {
-            viewModel.showNotice("Notifications are off. New messages will still appear in BLAP.")
-        }
+        handleNotificationPermissionResult(
+            granted = granted,
+            startNearby = ::startNearbyService,
+            showNotificationsOffNotice = {
+                viewModel.showNotice("Notifications are off. New messages will still appear in BLAP.")
+            },
+        )
     }
 
     private val venuePermissionLauncher = registerForActivityResult(
@@ -170,23 +195,20 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun startNearbyService() {
+    private fun startNearbyService(): Boolean =
         try {
             NearbyMessagingService.start(this)
+            true
         } catch (exception: RuntimeException) {
             viewModel.showError(exception.message ?: "Could not keep Nearby messaging active.")
+            false
         }
-    }
 
-    private fun handleNotificationIntent(intent: Intent?) {
-        if (intent?.action != MessageNotificationManager.ACTION_OPEN_CONVERSATION) return
-        val conversationId = intent.getStringExtra(
-            MessageNotificationManager.EXTRA_CONVERSATION_ID,
-        ) ?: return
-        viewModel.openConversationFromNotification(conversationId)
-        intent.action = null
-        intent.removeExtra(MessageNotificationManager.EXTRA_CONVERSATION_ID)
-    }
+    private fun handleNotificationIntent(intent: Intent?) =
+        consumeNotificationConversationIntent(
+            intent,
+            viewModel::openConversationFromNotification,
+        )
 
     private fun openAppSettings() {
         val uri = Uri.fromParts("package", packageName, null)

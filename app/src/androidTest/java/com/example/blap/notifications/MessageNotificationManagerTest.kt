@@ -2,10 +2,12 @@ package com.example.blap.notifications
 
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.example.blap.BlapApplication
+import com.example.blap.consumeNotificationConversationIntent
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Test
@@ -13,6 +15,24 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class MessageNotificationManagerTest {
+    @Test
+    fun handledConversationIntentIsConsumed() {
+        val intent = Intent().apply {
+            action = MessageNotificationManager.ACTION_OPEN_CONVERSATION
+            putExtra(MessageNotificationManager.EXTRA_CONVERSATION_ID, "bob")
+        }
+        var openedConversationId: String? = null
+
+        consumeNotificationConversationIntent(intent) { openedConversationId = it }
+
+        assertEquals("bob", openedConversationId)
+        assertEquals(null, intent.action)
+        assertEquals(
+            null,
+            intent.getStringExtra(MessageNotificationManager.EXTRA_CONVERSATION_ID),
+        )
+    }
+
     @Test
     fun conversationIntentUsesDistinctDataAndExplicitAction() {
         val application = ApplicationProvider.getApplicationContext<BlapApplication>()
