@@ -20,6 +20,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.core.content.ContextCompat
 import com.example.blap.auth.AuthManager
 import com.example.blap.chat.ChatViewModel
+import com.example.blap.service.NearbyMessagingService
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -41,7 +42,7 @@ class MainActivity : ComponentActivity() {
     ) {
         val missing = NearbyPermissions.missing(this)
         deniedPermissions = missing
-        if (missing.isEmpty()) viewModel.startChat()
+        if (missing.isEmpty()) startNearbyService()
     }
 
     private val venuePermissionLauncher = registerForActivityResult(
@@ -75,7 +76,7 @@ class MainActivity : ComponentActivity() {
                     onPhoneChanged = viewModel::updatePhoneNumber,
                     onStartChat = ::requestNearbyPermissionsAndStart,
                     onCompleteSetup = viewModel::completeSetup,
-                    onStopChat = viewModel::stopChat,
+                    onStopChat = { NearbyMessagingService.stop(this) },
                     onCheckVenue = ::requestVenueCheck,
                     onConnect = viewModel::connectToDevice,
                     onOpenConversation = viewModel::openConversation,
@@ -123,9 +124,17 @@ class MainActivity : ComponentActivity() {
         val missing = NearbyPermissions.missing(this)
         if (missing.isEmpty()) {
             deniedPermissions = emptyList()
-            viewModel.startChat()
+            startNearbyService()
         } else {
             nearbyPermissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
+    private fun startNearbyService() {
+        try {
+            NearbyMessagingService.start(this)
+        } catch (exception: RuntimeException) {
+            viewModel.showError(exception.message ?: "Could not keep Nearby messaging active.")
         }
     }
 

@@ -608,10 +608,10 @@ class ChatViewModelTest {
         identityStore: FakeIdentityStore = FakeIdentityStore(),
     ): ChatViewModel {
         val coordinator = ChatCoordinator(
-            nearbyChatController = controller,
             chatStore = store,
             identityStore = identityStore,
             ioDispatcher = Dispatchers.Unconfined,
+            initialNearbyChatController = controller,
         )
         return ChatViewModel(coordinator)
     }

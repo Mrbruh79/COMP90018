@@ -124,8 +124,11 @@ internal class FakeNearbyChatController : NearbyChatController {
     val groupSynchronizations = mutableListOf<Pair<String, List<StoredGroupMessage>>>()
     val publishedGroups = mutableListOf<PrivateGroup>()
     var stopped = false
+    var startAdvertisingCalls = 0
+    var closeCalls = 0
 
     override fun startAdvertising(displayName: String, peerId: String, phoneHash: String) {
+        startAdvertisingCalls++
         advertisingStarted = true
         advertisedName = displayName
         advertisedPeerId = peerId
@@ -159,5 +162,7 @@ internal class FakeNearbyChatController : NearbyChatController {
     override fun stop() {
         stopped = true
     }
-    override fun close() = Unit
+    override fun close() {
+        closeCalls++
+    }
 }

@@ -17,11 +17,13 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 
 class ChatCoordinator(
-    private val nearbyChatController: NearbyChatController,
     private val chatStore: ChatStore,
     private val identityStore: IdentityStore,
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    initialNearbyChatController: NearbyChatController? = null,
 ) : NearbyChatController.Listener {
+    @Volatile
+    private var nearbyChatController: NearbyChatController? = null
     private val workScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val connectedPeers = ConcurrentHashMap<String, ConnectedPeer>()
     private val localPeerId = identityStore.getPeerId()
@@ -54,12 +56,25 @@ class ChatCoordinator(
         _acceptedIncomingMessages.asSharedFlow()
 
     init {
-        nearbyChatController.listener = this
+        initialNearbyChatController?.let(::attachNearbyController)
         workScope.launch {
             chatStore.savePeer(MeshGroup.ID, MeshGroup.NAME)
             reloadConversationsNow()
             reloadSavedContactsNow()
         }
+    }
+
+    fun attachNearbyController(controller: NearbyChatController) {
+        if (nearbyChatController === controller) return
+        check(nearbyChatController == null) { "A Nearby controller is already attached." }
+        nearbyChatController = controller
+        controller.listener = this
+    }
+
+    fun detachNearbyController(controller: NearbyChatController) {
+        if (nearbyChatController !== controller) return
+        controller.listener = null
+        nearbyChatController = null
     }
 
     fun updateDisplayName(name: String) {
@@ -70,14 +85,16 @@ class ChatCoordinator(
         _uiState.update { it.copy(phoneNumber = phoneNumber.take(MAX_PHONE_LENGTH)) }
     }
 
-    fun startChat() {
-        if (_uiState.value.nearbyActive) return
-        if (!saveIdentity()) return
+    fun startChat(): Boolean {
+        if (_uiState.value.nearbyActive) return true
+        if (!saveIdentity()) return false
+        val controller = nearbyChatController ?: return false
         if (_uiState.value.screen == ChatScreen.WELCOME) showConversationList()
         val state = _uiState.value
         _uiState.update { it.copy(nearbyActive = true, error = null) }
-        nearbyChatController.startAdvertising(state.displayName, localPeerId, localPhoneHash)
-        if (_uiState.value.nearbyActive) nearbyChatController.startDiscovery()
+        controller.startAdvertising(state.displayName, localPeerId, localPhoneHash)
+        if (_uiState.value.nearbyActive) controller.startDiscovery()
+        return true
     }
 
     fun completeSetup() {
@@ -119,7 +136,7 @@ class ChatCoordinator(
                 error = null,
             )
         }
-        nearbyChatController.connectToDevice(device.endpointId)
+        nearbyChatController?.connectToDevice(device.endpointId)
     }
 
     fun openConversation(peerId: String) {
@@ -403,7 +420,7 @@ class ChatCoordinator(
                     selected.map { GroupMember(it.peerId, it.name, it.phoneHash) },
             )
             chatStore.saveGroup(group)
-            nearbyChatController.publishGroup(group)
+            nearbyChatController?.publishGroup(group)
             reloadConversationsNow()
             _uiState.update { it.copy(screen = ChatScreen.CONVERSATION) }
         }
@@ -484,7 +501,8 @@ class ChatCoordinator(
         localPhoneHash = PhoneIdentity.hash(normalizedPhone).orEmpty()
         applyProfile(saved)
         if (wasActive) {
-            nearbyChatController.stop()
+            val controller = nearbyChatController
+            controller?.stop()
             connectedPeers.clear()
             _uiState.update {
                 it.copy(
@@ -495,8 +513,8 @@ class ChatCoordinator(
                     },
                 )
             }
-            nearbyChatController.startAdvertising(saved.displayName, localPeerId, localPhoneHash)
-            if (_uiState.value.nearbyActive) nearbyChatController.startDiscovery()
+            controller?.startAdvertising(saved.displayName, localPeerId, localPhoneHash)
+            if (_uiState.value.nearbyActive) controller?.startDiscovery()
         }
         _uiState.update { it.copy(screen = profileReturnScreen, profileDraft = null, notice = "Profile saved.") }
     }
@@ -548,7 +566,7 @@ class ChatCoordinator(
         )
         workScope.launch {
             chatStore.saveGroup(group)
-            nearbyChatController.publishGroup(group)
+            nearbyChatController?.publishGroup(group)
             reloadConversationsNow()
             _uiState.update {
                 it.copy(
@@ -625,7 +643,7 @@ class ChatCoordinator(
     }
 
     fun disconnect(peerId: String) {
-        nearbyChatController.disconnect(peerId)
+        nearbyChatController?.disconnect(peerId)
     }
 
     fun dismissError() {
@@ -784,7 +802,8 @@ class ChatCoordinator(
     }
 
     override fun onMessageReceived(message: IncomingMessageEnvelope) {
-        receiveIncomingMessage(message, nearbyChatController)
+        val source = nearbyChatController ?: return
+        receiveIncomingMessage(message, source)
     }
 
     override fun onMessageSent(peerId: String, messageId: String) {
@@ -832,7 +851,7 @@ class ChatCoordinator(
     }
 
     fun close() {
-        nearbyChatController.close()
+        nearbyChatController?.close()
         workScope.cancel()
         chatStore.close()
     }
@@ -854,7 +873,7 @@ class ChatCoordinator(
     }
 
     private fun sendStoredMessage(message: ChatMessage) {
-        nearbyChatController.sendMessage(
+        nearbyChatController?.sendMessage(
             OutgoingMessageEnvelope(
                 messageId = message.id,
                 peerId = message.peerId,
@@ -931,7 +950,7 @@ class ChatCoordinator(
                 )
             }
         }
-        nearbyChatController.synchronizeGroups(peerId, groups, messages)
+        nearbyChatController?.synchronizeGroups(peerId, groups, messages)
     }
 
     private fun reloadGroupContactsNow(force: Boolean = false) {
@@ -1004,7 +1023,7 @@ class ChatCoordinator(
 
     fun stopChat() {
         requestedEndpointId = null
-        nearbyChatController.stop()
+        nearbyChatController?.stop()
         connectedPeers.clear()
         _uiState.update {
             it.copy(
