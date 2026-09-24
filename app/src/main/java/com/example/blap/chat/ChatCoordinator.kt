@@ -162,6 +162,14 @@ class ChatCoordinator(
         reloadMessages(peerId)
     }
 
+    fun openConversationFromNotification(peerId: String) {
+        workScope.launch {
+            reloadConversationsNow()
+            val exists = _uiState.value.conversations.any { it.peerId == peerId }
+            if (exists) openConversation(peerId) else showConversationList()
+        }
+    }
+
     fun showConversationList() {
         requestedEndpointId = null
         _uiState.update {
@@ -667,6 +675,10 @@ class ChatCoordinator(
 
     fun showError(message: String) {
         _uiState.update { it.copy(error = message) }
+    }
+
+    fun showNotice(message: String) {
+        _uiState.update { it.copy(notice = message, error = null) }
     }
 
     fun updateVenueStatus(message: String, checking: Boolean = false) {

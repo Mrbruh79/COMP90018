@@ -13,6 +13,38 @@ import org.junit.Test
 
 class ChatViewModelTest {
     @Test
+    fun notificationRouteOpensConversationAfterReload() {
+        val store = FakeChatStore().apply { savePeer("bob", "Bob") }
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+
+        viewModel.openConversationFromNotification("bob")
+
+        assertEquals(ChatScreen.CONVERSATION, viewModel.uiState.value.screen)
+        assertEquals("bob", viewModel.uiState.value.selectedPeerId)
+    }
+
+    @Test
+    fun unknownNotificationRouteFallsBackToConversationList() {
+        val viewModel = makeViewModel(FakeNearbyChatController())
+
+        viewModel.openConversationFromNotification("missing")
+
+        assertEquals(ChatScreen.CHATS, viewModel.uiState.value.screen)
+        assertEquals(null, viewModel.uiState.value.selectedPeerId)
+    }
+
+    @Test
+    fun notificationPermissionDenialShowsANotice() {
+        val viewModel = makeViewModel(FakeNearbyChatController())
+        viewModel.showError("Old error")
+
+        viewModel.showNotice("Notifications are off.")
+
+        assertEquals("Notifications are off.", viewModel.uiState.value.notice)
+        assertEquals(null, viewModel.uiState.value.error)
+    }
+
+    @Test
     fun startChatNeedsAName() {
         val controller = FakeNearbyChatController()
         val viewModel = makeViewModel(controller)

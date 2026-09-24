@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.activity.ComponentActivity
@@ -20,6 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.core.content.ContextCompat
 import com.example.blap.auth.AuthManager
 import com.example.blap.chat.ChatViewModel
+import com.example.blap.notifications.MessageNotificationManager
 import com.example.blap.service.NearbyMessagingService
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
@@ -42,7 +44,16 @@ class MainActivity : ComponentActivity() {
     ) {
         val missing = NearbyPermissions.missing(this)
         deniedPermissions = missing
-        if (missing.isEmpty()) startNearbyService()
+        if (missing.isEmpty()) requestNotificationsAndStartNearby()
+    }
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        startNearbyService()
+        if (!granted) {
+            viewModel.showNotice("Notifications are off. New messages will still appear in BLAP.")
+        }
     }
 
     private val venuePermissionLauncher = registerForActivityResult(
@@ -113,6 +124,24 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+
+        handleNotificationIntent(intent)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        (application as BlapApplication).conversationVisibility.setAppForeground(true)
+    }
+
+    override fun onStop() {
+        (application as BlapApplication).conversationVisibility.setAppForeground(false)
+        super.onStop()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleNotificationIntent(intent)
     }
 
     override fun onResume() {
@@ -124,9 +153,20 @@ class MainActivity : ComponentActivity() {
         val missing = NearbyPermissions.missing(this)
         if (missing.isEmpty()) {
             deniedPermissions = emptyList()
-            startNearbyService()
+            requestNotificationsAndStartNearby()
         } else {
             nearbyPermissionLauncher.launch(missing.toTypedArray())
+        }
+    }
+
+    private fun requestNotificationsAndStartNearby() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU ||
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            startNearbyService()
+        } else {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
     }
 
@@ -136,6 +176,16 @@ class MainActivity : ComponentActivity() {
         } catch (exception: RuntimeException) {
             viewModel.showError(exception.message ?: "Could not keep Nearby messaging active.")
         }
+    }
+
+    private fun handleNotificationIntent(intent: Intent?) {
+        if (intent?.action != MessageNotificationManager.ACTION_OPEN_CONVERSATION) return
+        val conversationId = intent.getStringExtra(
+            MessageNotificationManager.EXTRA_CONVERSATION_ID,
+        ) ?: return
+        viewModel.openConversationFromNotification(conversationId)
+        intent.action = null
+        intent.removeExtra(MessageNotificationManager.EXTRA_CONVERSATION_ID)
     }
 
     private fun openAppSettings() {

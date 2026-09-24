@@ -15,6 +15,8 @@ class ChatViewModel internal constructor(
     fun completeSetup() = coordinator.completeSetup()
     fun connectToDevice(id: String) = coordinator.connectToDevice(id)
     fun openConversation(id: String) = coordinator.openConversation(id)
+    fun openConversationFromNotification(id: String) =
+        coordinator.openConversationFromNotification(id)
     fun showConversationList() = coordinator.showConversationList()
     fun beginManageContacts() = coordinator.beginManageContacts()
     fun beginAddContact() = coordinator.beginAddContact()
@@ -48,6 +50,7 @@ class ChatViewModel internal constructor(
     fun dismissError() = coordinator.dismissError()
     fun updateMessageDraft(text: String) = coordinator.updateMessageDraft(text)
     fun showError(message: String) = coordinator.showError(message)
+    fun showNotice(message: String) = coordinator.showNotice(message)
     fun updateVenueStatus(message: String, checking: Boolean = false) =
         coordinator.updateVenueStatus(message, checking)
     fun stopChat() = coordinator.stopChat()

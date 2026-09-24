@@ -119,18 +119,19 @@ class MessageNotificationManager(
             PackageManager.PERMISSION_GRANTED) &&
             manager.areNotificationsEnabled()
 
-    private fun conversationPendingIntent(conversationId: String): PendingIntent {
-        val intent = Intent(context, MainActivity::class.java).apply {
+    internal fun conversationIntent(conversationId: String): Intent =
+        Intent(context, MainActivity::class.java).apply {
             action = ACTION_OPEN_CONVERSATION
             data = Uri.parse("blap://conversation/${Uri.encode(conversationId)}")
             putExtra(EXTRA_CONVERSATION_ID, conversationId)
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
-        return PendingIntent.getActivity(
-            context, 0, intent,
+
+    private fun conversationPendingIntent(conversationId: String): PendingIntent =
+        PendingIntent.getActivity(
+            context, 0, conversationIntent(conversationId),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
-    }
 
     private fun mainPendingIntent(): PendingIntent = PendingIntent.getActivity(
         context,
