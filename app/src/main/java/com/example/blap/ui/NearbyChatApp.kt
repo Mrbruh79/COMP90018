@@ -88,6 +88,7 @@ import com.example.blap.chat.GroupContact
 import com.example.blap.chat.MessageAuthor
 import com.example.blap.chat.MessageStatus
 import com.example.blap.chat.NearbyDevice
+import com.example.blap.chat.ProfileUrl
 import com.example.blap.chat.SavedContact
 import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventUiState
@@ -1325,11 +1326,11 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
                     }
                     val items = listOf(
                         ProfileItem("Email", profile.email, openable = false),
-                        ProfileItem("Website", profile.websiteUrl),
-                        ProfileItem("Instagram", profile.instagramUrl),
-                        ProfileItem("X / Twitter", profile.xUrl),
-                        ProfileItem("LinkedIn", profile.linkedinUrl),
-                        ProfileItem("GitHub", profile.githubUrl),
+                        ProfileItem("Website", profile.websiteUrl, ProfileUrl.isOpenable(profile.websiteUrl)),
+                        ProfileItem("Instagram", profile.instagramUrl, ProfileUrl.isOpenable(profile.instagramUrl)),
+                        ProfileItem("X / Twitter", profile.xUrl, ProfileUrl.isOpenable(profile.xUrl)),
+                        ProfileItem("LinkedIn", profile.linkedinUrl, ProfileUrl.isOpenable(profile.linkedinUrl)),
+                        ProfileItem("GitHub", profile.githubUrl, ProfileUrl.isOpenable(profile.githubUrl)),
                     ).filter { it.value.isNotBlank() }
                     if (items.isNotEmpty()) {
                         HorizontalDivider()
@@ -1369,11 +1370,11 @@ private fun ProfileItemRow(item: ProfileItem) {
         if (item.openable) {
             IconButton(
                 onClick = {
-                    runCatching { uriHandler.openUri(item.value.asWebUrl()) }
+                    runCatching { uriHandler.openUri(ProfileUrl.normalize(item.value)) }
                 },
             ) {
                 Icon(
-                    painterResource(R.drawable.ic_link),
+                    painterResource(R.drawable.ic_open_in_new),
                     contentDescription = "Open ${item.label}",
                     tint = MaterialTheme.colorScheme.primary,
                 )
@@ -1381,13 +1382,6 @@ private fun ProfileItemRow(item: ProfileItem) {
         }
     }
 }
-
-private fun String.asWebUrl() =
-    if (startsWith("http://", ignoreCase = true) || startsWith("https://", ignoreCase = true)) {
-        this
-    } else {
-        "https://$this"
-    }
 
 internal fun createQrBitmap(payload: String, size: Int = 900): Bitmap {
     val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size)
