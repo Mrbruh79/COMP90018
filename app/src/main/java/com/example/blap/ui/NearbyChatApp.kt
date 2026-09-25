@@ -3,6 +3,7 @@ package com.example.blap.ui
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -83,8 +84,6 @@ import com.example.blap.chat.MessageAuthor
 import com.example.blap.chat.MessageStatus
 import com.example.blap.chat.NearbyDevice
 import com.example.blap.chat.SavedContact
-import com.example.blap.ui.theme.OnSentBubble
-import com.example.blap.ui.theme.SentBubble
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import java.text.SimpleDateFormat
@@ -178,9 +177,7 @@ fun NearbyChatApp(
                     .imePadding()
                     .padding(horizontal = 18.dp),
             ) {
-                if (uiState.screen in TOP_LEVEL_SCREENS ||
-                    uiState.screen == ChatScreen.WELCOME
-                    ) Header(uiState)
+                if (uiState.screen in TOP_LEVEL_SCREENS) Header(uiState)
                 when (uiState.screen) {
                     ChatScreen.WELCOME -> WelcomeScreen(
                         name = uiState.displayName,
@@ -313,12 +310,14 @@ fun NearbyChatApp(
     }
 }
 
-private val TOP_LEVEL_SCREENS = setOf(
-    ChatScreen.CHATS,
-    ChatScreen.MANAGING_CONTACTS,
-    ChatScreen.SHOWING_MY_CARD,
-    ChatScreen.SETTINGS,
+private val TOP_LEVEL_TITLES = mapOf(
+    ChatScreen.CHATS to "Messages",
+    ChatScreen.MANAGING_CONTACTS to "Contacts",
+    ChatScreen.SHOWING_MY_CARD to "Profile Card",
+    ChatScreen.SETTINGS to "Settings",
 )
+
+private val TOP_LEVEL_SCREENS = TOP_LEVEL_TITLES.keys
 
 private fun ChatUiState.profile() = ContactProfile(
     displayName = displayName,
@@ -369,7 +368,7 @@ private fun AppNavigationBar(
             selected = state == ChatScreen.SHOWING_MY_CARD,
             onClick = onMyCard,
             icon = { Icon(painterResource(R.drawable.ic_qr), contentDescription = null) },
-            label = { Text("My card") },
+            label = { Text("Profile Card") },
         )
         NavigationBarItem(
             selected = state == ChatScreen.SETTINGS,
@@ -382,7 +381,6 @@ private fun AppNavigationBar(
 
 @Composable
 private fun Header(state: ChatUiState) {
-    val connectedCount = state.directConnectionCount
     Row(
         Modifier
             .fillMaxWidth()
@@ -390,24 +388,48 @@ private fun Header(state: ChatUiState) {
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column {
-            Text("BLAP", style = MaterialTheme.typography.titleLarge, color = MaterialTheme.colorScheme.onBackground)
-        }
-        val text = when {
-            !state.nearbyActive -> "Nearby off"
-            connectedCount == 0 -> "Finding nearby"
-            else -> "$connectedCount connected"
-        }
         Text(
-            text,
+            TOP_LEVEL_TITLES[state.screen].orEmpty(),
             modifier = Modifier
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer)
-                .padding(horizontal = 11.dp, vertical = 7.dp),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                .weight(1f)
+                .padding(end = 12.dp),
+            style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.onBackground,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
+        NearbyPill(state)
     }
+}
+
+@Composable
+private fun NearbyPill(state: ChatUiState) {
+    val connectedCount = state.directConnectionCount
+    val text = when {
+        !state.nearbyActive -> "Nearby Off"
+        connectedCount == 0 -> "Nearby Active"
+        else -> "$connectedCount connected"
+    }
+    Text(
+        text,
+        modifier = Modifier
+            .clip(CircleShape)
+            .then(
+                if (state.nearbyActive) {
+                    Modifier.background(MaterialTheme.colorScheme.primary)
+                } else {
+                    Modifier.border(1.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                },
+            )
+            .padding(horizontal = 14.dp, vertical = 7.dp),
+        style = MaterialTheme.typography.labelLarge,
+        maxLines = 1,
+        color = if (state.nearbyActive) {
+            MaterialTheme.colorScheme.onPrimary
+        } else {
+            MaterialTheme.colorScheme.primary
+        },
+    )
 }
 
 @Composable
@@ -531,7 +553,6 @@ private fun ConversationList(
         contentPadding = PaddingValues(bottom = 20.dp),
     ) {
         item {
-            Text("Messages", style = MaterialTheme.typography.headlineMedium)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onManageContacts) { Text("New message") }
                 TextButton(onClick = onBeginCreateGroup) { Text("New group") }
@@ -679,7 +700,7 @@ private fun Avatar(name: String, connected: Boolean) {
             .clip(CircleShape)
             .background(
                 if (connected) {
-                    MaterialTheme.colorScheme.primary
+                    MaterialTheme.colorScheme.tertiary
                 } else {
                     MaterialTheme.colorScheme.surfaceContainerHighest
                 },
@@ -687,9 +708,9 @@ private fun Avatar(name: String, connected: Boolean) {
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            name.take(1).uppercase(),
+            initialsOf(name),
             color = if (connected) {
-                MaterialTheme.colorScheme.onPrimary
+                MaterialTheme.colorScheme.onTertiary
             } else {
                 MaterialTheme.colorScheme.onSurface
             },
@@ -697,6 +718,13 @@ private fun Avatar(name: String, connected: Boolean) {
         )
     }
 }
+
+private fun initialsOf(name: String) = name
+    .split(' ')
+    .filter(String::isNotBlank)
+    .take(2)
+    .map { it.first().uppercaseChar() }
+    .joinToString("")
 
 @Composable
 private fun ConnectingScreen(authenticationDigits: String?, onBack: () -> Unit) {
@@ -868,18 +896,21 @@ private fun ContactsScreen(
     }
     Column(Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("Contacts", style = MaterialTheme.typography.headlineMedium)
+            Text(
+                "Keep your people in one place. Tap a card to edit their details.",
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Button(onClick = onAdd) { Text("Add") }
         }
-        Text(
-            "Keep your people in one place. Tap a card to edit their details.",
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 12.dp),
-        )
         OutlinedTextField(
             value = search,
             onValueChange = onSearchChanged,
@@ -1144,13 +1175,16 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Column(Modifier.weight(1f)) {
-                    Text("My card", style = MaterialTheme.typography.headlineMedium)
-                    Text("Share your details with a scan", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                Text(
+                    "Share your details with a scan",
+                    modifier = Modifier
+                        .weight(1f)
+                        .padding(end = 12.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Button(onClick = onEdit) { Text("Edit") }
             }
         }
@@ -1227,10 +1261,6 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = 18.dp),
     ) {
-        item {
-            Text("Settings", style = MaterialTheme.typography.headlineMedium)
-            Text("Identity, privacy, and device access", color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
         item {
             SettingsCard(
                 title = "Nearby messaging",
@@ -1416,9 +1446,19 @@ private fun MessageBubble(message: ChatMessage, showSender: Boolean) {
             modifier = Modifier
                 .widthIn(max = 310.dp)
                 .clip(RoundedCornerShape(17.dp))
-                .background(if (mine) SentBubble else MaterialTheme.colorScheme.surface)
+                .background(
+                    if (mine) {
+                        MaterialTheme.colorScheme.tertiary
+                    } else {
+                        MaterialTheme.colorScheme.surface
+                    },
+                )
                 .padding(horizontal = 14.dp, vertical = 10.dp),
-            color = if (mine) OnSentBubble else MaterialTheme.colorScheme.onSurface,
+            color = if (mine) {
+                MaterialTheme.colorScheme.onTertiary
+            } else {
+                MaterialTheme.colorScheme.onSurface
+            },
         )
         val timestamp = formatTimestamp(message.sentAt)
         if (mine) {
