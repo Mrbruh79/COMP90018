@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
@@ -42,6 +43,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -65,6 +67,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import com.example.blap.R
 import androidx.compose.ui.text.font.FontWeight
@@ -1072,8 +1075,8 @@ private fun ProfileEditorScreen(
     onBack: () -> Unit,
 ) {
     ProfileForm(
-        title = "Edit my card",
-        subtitle = "Only details you put here are included when someone scans your QR code.",
+        title = "Edit Profile Card",
+        subtitle = "These details will be shared when you connect with other users.",
         profile = profile,
         onChanged = onChanged,
         onSave = onSave,
@@ -1095,9 +1098,19 @@ private fun ProfileForm(
 ) {
     var confirmingDelete by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("Back") }
-            Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onBack, modifier = Modifier.offset(x = (-12).dp)) {
+                Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = "Back")
+            }
+            Text(
+                title,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 10.dp))
         LazyColumn(
@@ -1132,7 +1145,13 @@ private fun ProfileForm(
                     shape = RoundedCornerShape(15.dp),
                 )
             }
-            item { Text("Links", style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(top = 6.dp)) }
+            item {
+                Text(
+                    "Links & Social Media",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.padding(top = 16.dp),
+                )
+            }
             item {
                 ProfileTextField("Website", profile.websiteUrl, KeyboardType.Uri) {
                     onChanged(profile.copy(websiteUrl = it))
@@ -1300,7 +1319,8 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
                             }
                         }
                         if (profile.bio.isNotBlank()) {
-                            Text(profile.bio, style = MaterialTheme.typography.bodyMedium)
+                            Text(profile.bio, style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.padding(top = 8.dp))
                         }
                     }
                     val items = listOf(
@@ -1331,6 +1351,7 @@ private data class ProfileItem(
 
 @Composable
 private fun ProfileItemRow(item: ProfileItem) {
+    val uriHandler = LocalUriHandler.current
     Row(verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f)) {
             Text(
@@ -1346,15 +1367,27 @@ private fun ProfileItemRow(item: ProfileItem) {
             )
         }
         if (item.openable) {
-            Icon(
-                painterResource(R.drawable.ic_link),
-                contentDescription = "Open ${item.label}",
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(start = 12.dp),
-            )
+            IconButton(
+                onClick = {
+                    runCatching { uriHandler.openUri(item.value.asWebUrl()) }
+                },
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_link),
+                    contentDescription = "Open ${item.label}",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
         }
     }
 }
+
+private fun String.asWebUrl() =
+    if (startsWith("http://", ignoreCase = true) || startsWith("https://", ignoreCase = true)) {
+        this
+    } else {
+        "https://$this"
+    }
 
 internal fun createQrBitmap(payload: String, size: Int = 900): Bitmap {
     val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size)
