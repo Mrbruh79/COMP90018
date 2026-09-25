@@ -17,6 +17,11 @@ import com.google.android.gms.nearby.connection.Payload
 import com.google.android.gms.nearby.connection.PayloadCallback
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate
 import com.google.android.gms.nearby.connection.Strategy
+import com.example.blap.event.EventAnnouncement
+import com.example.blap.event.EventChatMessage
+import com.example.blap.event.CommunityEvent
+import com.example.blap.event.EventMutation
+import java.security.MessageDigest
 
 class NearbyChatManager(context: Context) : NearbyChatController {
     private val connectionsClient: ConnectionsClient = Nearby.getConnectionsClient(context)
@@ -28,13 +33,20 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     private val seenMessageIds = boundedIdSet()
     private val seenAcknowledgements = boundedIdSet()
     private val seenGroupDefinitions = boundedIdSet()
+    private val seenEventMessageIds = boundedIdSet()
+    private val seenEventAnnouncementIds = boundedIdSet()
+    private val seenEventMutationIds = boundedIdSet()
     private val knownMeshPeers = mutableMapOf<String, GroupMember>()
     private val cachedGroupDefinitions = linkedMapOf<String, NearbyPacket.GroupDefinition>()
     private val cachedGroupMessages = linkedMapOf<String, NearbyPacket.Message>()
+    private val eventEndpoints = mutableSetOf<String>()
 
     private var localDisplayName = ""
     private var localPeerId = ""
     private var localPhoneHash = ""
+    private var activeEventId: String? = null
+    private var advertisingRequested = false
+    private var discoveryRequested = false
 
     override var listener: NearbyChatController.Listener? = null
 
@@ -49,6 +61,10 @@ class NearbyChatManager(context: Context) : NearbyChatController {
                 is NearbyPacket.Acknowledgement -> handleAcknowledgement(endpointId, packet)
                 is NearbyPacket.GroupDefinition -> handleGroupDefinition(endpointId, packet)
                 is NearbyPacket.PeerAnnouncement -> handlePeerAnnouncement(endpointId, packet)
+                is NearbyPacket.EventPresence -> handleEventPresence(endpointId, packet)
+                is NearbyPacket.EventChatMessage -> handleEventChatMessage(endpointId, packet)
+                is NearbyPacket.EventAnnouncement -> handleEventAnnouncement(endpointId, packet)
+                is NearbyPacket.EventMutation -> handleEventMutation(endpointId, packet)
             }
         }
 
@@ -62,9 +78,16 @@ class NearbyChatManager(context: Context) : NearbyChatController {
                 return
             }
 
-            val device = NearbyDevice(endpointId, info.endpointName)
+            val isEventConnection = activeEventId != null
+            if (isEventConnection) eventEndpoints += endpointId
+            val device = NearbyDevice(
+                endpointId,
+                if (isEventConnection) EVENT_ATTENDEE_NAME else info.endpointName,
+            )
             pendingDevices[endpointId] = device
-            listener?.onConnectionInitiated(device, info.authenticationDigits)
+            if (!isEventConnection) {
+                listener?.onConnectionInitiated(device, info.authenticationDigits)
+            }
             acceptConnection(endpointId)
         }
 
@@ -92,10 +115,11 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         override fun onDisconnected(endpointId: String) {
             establishedEndpoints.remove(endpointId)
             pendingDevices.remove(endpointId)
+            val wasEventConnection = eventEndpoints.remove(endpointId)
             val peer = peerByEndpoint.remove(endpointId) ?: return
             if (endpointByPeer[peer.peerId] == endpointId) {
                 endpointByPeer.remove(peer.peerId)
-                listener?.onDisconnected(peer.peerId)
+                if (!wasEventConnection) listener?.onDisconnected(peer.peerId)
             }
         }
     }
@@ -103,9 +127,21 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     private val endpointDiscoveryCallback = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
             if (endpointId in establishedEndpoints || endpointId in pendingDevices) return
-            val device = NearbyDevice(endpointId, info.endpointName)
+            val eventPeerId = info.endpointName.eventPeerIdOrNull()
+            val isEventDiscovery = activeEventId != null
+            if (isEventDiscovery && (eventPeerId == null || eventPeerId == localPeerId)) return
+            val device = NearbyDevice(
+                endpointId,
+                if (isEventDiscovery) EVENT_ATTENDEE_NAME else info.endpointName,
+            )
             knownDevices[endpointId] = device
-            listener?.onDeviceFound(device)
+            if (isEventDiscovery) {
+                if (shouldInitiateEventConnection(localPeerId, requireNotNull(eventPeerId))) {
+                    connectToDevice(endpointId)
+                }
+            } else {
+                listener?.onDeviceFound(device)
+            }
         }
 
         override fun onEndpointLost(endpointId: String) {
@@ -120,13 +156,19 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         localPeerId = peerId
         localPhoneHash = phoneHash
         knownMeshPeers[peerId] = GroupMember(peerId, displayName, phoneHash)
+        advertisingRequested = true
+        startAdvertisingForCurrentMode()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startAdvertisingForCurrentMode() {
         connectionsClient.stopAdvertising()
 
         val options = AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
         try {
             connectionsClient.startAdvertising(
-                displayName,
-                SERVICE_ID,
+                advertisedEndpointName(),
+                currentServiceId(),
                 connectionLifecycleCallback,
                 options,
             ).addOnFailureListener { exception ->
@@ -139,10 +181,16 @@ class NearbyChatManager(context: Context) : NearbyChatController {
 
     @SuppressLint("MissingPermission")
     override fun startDiscovery() {
+        discoveryRequested = true
+        startDiscoveryForCurrentMode()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startDiscoveryForCurrentMode() {
         connectionsClient.stopDiscovery()
         val options = DiscoveryOptions.Builder().setStrategy(STRATEGY).build()
         try {
-            connectionsClient.startDiscovery(SERVICE_ID, endpointDiscoveryCallback, options)
+            connectionsClient.startDiscovery(currentServiceId(), endpointDiscoveryCallback, options)
                 .addOnFailureListener { exception ->
                     listener?.onNearbyUnavailable("Could not find nearby phones: ${exception.readableMessage()}")
                 }
@@ -174,6 +222,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
 
     @SuppressLint("MissingPermission")
     override fun sendMessage(message: OutgoingNearbyMessage) {
+        if (activeEventId != null) return
         val packet = NearbyPacket.Message(
             messageId = message.messageId,
             senderId = localPeerId,
@@ -201,6 +250,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     }
 
     override fun publishGroup(group: PrivateGroup) {
+        if (activeEventId != null) return
         val packet = group.toPacket()
         rememberId(seenGroupDefinitions, groupDefinitionId(packet))
         cachedGroupDefinitions[group.id] = packet
@@ -212,6 +262,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         groups: List<PrivateGroup>,
         messages: List<StoredGroupMessage>,
     ) {
+        if (activeEventId != null) return
         val endpointId = endpointByPeer[peerId] ?: return
         groups.forEach { group ->
             val packet = group.toPacket()
@@ -240,6 +291,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     }
 
     override fun acknowledgeMessage(conversationId: String, senderId: String, messageId: String) {
+        if (activeEventId != null) return
         val packet = NearbyPacket.Acknowledgement(
             messageId = messageId,
             senderId = localPeerId,
@@ -254,6 +306,47 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         } else {
             val endpointId = endpointByPeer[senderId] ?: return
             sendPacket(endpointId, packet)
+        }
+    }
+
+    override fun setActiveEvent(eventId: String?) {
+        if (eventId == activeEventId) {
+            broadcastEventPresence(eventId)
+            return
+        }
+        broadcastEventPresence(null)
+        activeEventId = eventId
+        restartForCurrentMode()
+    }
+
+    override fun sendEventChatMessage(message: EventChatMessage) {
+        if (message.eventId != activeEventId || message.text.isBlank()) return
+        val packet = message.toPacket()
+        rememberId(seenEventMessageIds, message.id)
+        sendPacketToMany(establishedEndpoints, packet) {
+            listener?.onEventMessageSent(message.eventId, message.id)
+        }
+    }
+
+    override fun sendEventAnnouncement(announcement: EventAnnouncement) {
+        if (announcement.eventId != activeEventId) return
+        val packet = announcement.toPacket()
+        rememberId(seenEventAnnouncementIds, eventAnnouncementKey(packet))
+        sendPacketToMany(establishedEndpoints, packet)
+    }
+
+    override fun sendEventMutation(mutation: EventMutation) {
+        if (!mutation.event.isDeleted && mutation.event.id != activeEventId) return
+        val packet = mutation.toPacket()
+        rememberId(seenEventMutationIds, eventMutationKey(packet))
+        sendPacketToMany(establishedEndpoints, packet)
+    }
+
+    override fun synchronizeEventHistory(peerId: String, messages: List<EventChatMessage>) {
+        val endpointId = endpointByPeer[peerId] ?: return
+        messages.takeLast(MAX_EVENT_HISTORY).forEach { message ->
+            rememberId(seenEventMessageIds, message.id)
+            sendPacket(endpointId, message.toPacket())
         }
     }
 
@@ -274,9 +367,16 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         seenMessageIds.clear()
         seenAcknowledgements.clear()
         seenGroupDefinitions.clear()
+        seenEventMessageIds.clear()
+        seenEventAnnouncementIds.clear()
+        seenEventMutationIds.clear()
         knownMeshPeers.clear()
         cachedGroupDefinitions.clear()
         cachedGroupMessages.clear()
+        eventEndpoints.clear()
+        activeEventId = null
+        advertisingRequested = false
+        discoveryRequested = false
     }
 
     override fun close() {
@@ -294,8 +394,14 @@ class NearbyChatManager(context: Context) : NearbyChatController {
 
         val peer = ConnectedPeer(packet.peerId, endpointId, packet.name.take(24), packet.phoneHash)
         peerByEndpoint[endpointId] = peer
-        knownMeshPeers[peer.peerId] = GroupMember(peer.peerId, peer.name, peer.phoneHash)
         knownDevices.remove(endpointId)
+        if (endpointId in eventEndpoints || activeEventId != null) {
+            eventEndpoints += endpointId
+            broadcastEventPresence(activeEventId, listOf(endpointId))
+            return
+        }
+
+        knownMeshPeers[peer.peerId] = GroupMember(peer.peerId, peer.name, peer.phoneHash)
         listener?.onConnected(peer)
 
         knownMeshPeers.values.forEach { knownPeer ->
@@ -321,7 +427,59 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         }
     }
 
+    private fun restartForCurrentMode() {
+        val normalPeers = peerByEndpoint
+            .filterKeys { endpointId -> endpointId !in eventEndpoints }
+            .values
+            .map(ConnectedPeer::peerId)
+            .distinct()
+        connectionsClient.stopAdvertising()
+        connectionsClient.stopDiscovery()
+        connectionsClient.stopAllEndpoints()
+        knownDevices.clear()
+        pendingDevices.clear()
+        establishedEndpoints.clear()
+        peerByEndpoint.clear()
+        endpointByPeer.clear()
+        eventEndpoints.clear()
+        knownMeshPeers.clear()
+        if (localPeerId.isNotBlank()) {
+            knownMeshPeers[localPeerId] = GroupMember(localPeerId, localDisplayName, localPhoneHash)
+        }
+        normalPeers.forEach { peerId -> listener?.onDisconnected(peerId) }
+        if (localPeerId.isBlank()) return
+        if (advertisingRequested) startAdvertisingForCurrentMode()
+        if (discoveryRequested) startDiscoveryForCurrentMode()
+    }
+
+    private fun broadcastEventPresence(
+        eventId: String?,
+        endpointIds: Collection<String> = establishedEndpoints,
+    ) {
+        if (localPeerId.isBlank()) return
+        sendPacketToMany(
+            endpointIds,
+            NearbyPacket.EventPresence(
+                eventId = eventId.orEmpty(),
+                peerId = localPeerId,
+                name = localDisplayName,
+                active = eventId != null,
+            ),
+        )
+    }
+
+    private fun currentServiceId(): String = activeEventId
+        ?.let(::eventServiceId)
+        ?: SERVICE_ID
+
+    private fun advertisedEndpointName(): String = if (activeEventId == null) {
+        localDisplayName
+    } else {
+        "$EVENT_ENDPOINT_PREFIX$localPeerId"
+    }
+
     private fun handleMessage(endpointId: String, packet: NearbyPacket.Message) {
+        if (endpointId in eventEndpoints) return
         val peer = peerByEndpoint[endpointId] ?: return
         if (packet.messageId.isBlank() || packet.text.isBlank()) return
         if (packet.hopsRemaining !in 0..MAX_HOPS) return
@@ -365,6 +523,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     }
 
     private fun handleAcknowledgement(endpointId: String, packet: NearbyPacket.Acknowledgement) {
+        if (endpointId in eventEndpoints) return
         val peer = peerByEndpoint[endpointId] ?: return
         if (packet.isGroup) {
             if (packet.hopsRemaining !in 0..MAX_HOPS) return
@@ -386,6 +545,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     }
 
     private fun handleGroupDefinition(endpointId: String, packet: NearbyPacket.GroupDefinition) {
+        if (endpointId in eventEndpoints) return
         if (peerByEndpoint[endpointId] == null) return
         if (packet.groupId.isBlank() || packet.name.isBlank() || packet.ownerId.isBlank()) return
         if (packet.members.isEmpty() || packet.members.size > MAX_GROUP_MEMBERS) return
@@ -412,6 +572,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     }
 
     private fun handlePeerAnnouncement(endpointId: String, packet: NearbyPacket.PeerAnnouncement) {
+        if (endpointId in eventEndpoints) return
         if (peerByEndpoint[endpointId] == null) return
         if (packet.peerId.isBlank() || packet.name.isBlank() || packet.peerId == localPeerId) return
         if (packet.hopsRemaining !in 0..MAX_HOPS) return
@@ -423,6 +584,109 @@ class NearbyChatManager(context: Context) : NearbyChatController {
             sendPacketToMany(
                 establishedEndpoints - endpointId,
                 packet.copy(name = peer.name, phoneHash = peer.phoneHash, hopsRemaining = packet.hopsRemaining - 1),
+            )
+        }
+    }
+
+    private fun handleEventPresence(endpointId: String, packet: NearbyPacket.EventPresence) {
+        if (endpointId !in eventEndpoints) return
+        val peer = peerByEndpoint[endpointId] ?: return
+        if (!packet.active || packet.eventId.isBlank()) return
+        if (packet.peerId != peer.peerId) return
+        if (packet.eventId == activeEventId) {
+            listener?.onEventPeerAvailable(peer.peerId, packet.eventId)
+        }
+    }
+
+    private fun handleEventChatMessage(endpointId: String, packet: NearbyPacket.EventChatMessage) {
+        if (endpointId !in eventEndpoints) return
+        if (peerByEndpoint[endpointId] == null) return
+        if (packet.messageId.isBlank() || packet.eventId.isBlank() || packet.senderId.isBlank() ||
+            packet.senderName.isBlank() || packet.text.isBlank()
+        ) return
+        if (packet.hopsRemaining !in 0..MAX_HOPS) return
+        if (packet.eventId != activeEventId) return
+        if (!rememberId(seenEventMessageIds, packet.messageId)) return
+        listener?.onEventChatMessageReceived(
+            EventChatMessage(
+                id = packet.messageId,
+                eventId = packet.eventId,
+                senderId = packet.senderId,
+                senderName = packet.senderName.take(24),
+                text = packet.text.take(MAX_EVENT_MESSAGE_LENGTH),
+                createdAt = packet.sentAt,
+            ),
+        )
+        if (packet.hopsRemaining > 0) {
+            sendPacketToMany(
+                establishedEndpoints - endpointId,
+                packet.copy(hopsRemaining = packet.hopsRemaining - 1),
+            )
+        }
+    }
+
+    private fun handleEventAnnouncement(endpointId: String, packet: NearbyPacket.EventAnnouncement) {
+        if (endpointId !in eventEndpoints) return
+        if (peerByEndpoint[endpointId] == null) return
+        if (packet.announcementId.isBlank() || packet.eventId.isBlank() || packet.adminId.isBlank() ||
+            packet.adminName.isBlank() || packet.text.isBlank()
+        ) return
+        if (packet.hopsRemaining !in 0..MAX_HOPS) return
+        if (packet.eventId != activeEventId) return
+        if (!rememberId(seenEventAnnouncementIds, eventAnnouncementKey(packet))) return
+        listener?.onEventAnnouncementReceived(
+            EventAnnouncement(
+                id = packet.announcementId,
+                eventId = packet.eventId,
+                adminId = packet.adminId,
+                adminName = packet.adminName.take(24),
+                text = packet.text.take(MAX_EVENT_MESSAGE_LENGTH),
+                createdAt = packet.createdAt,
+                revision = packet.revision,
+                signature = packet.signature,
+                syncedToCloud = false,
+            ),
+        )
+        if (packet.hopsRemaining > 0) {
+            sendPacketToMany(
+                establishedEndpoints - endpointId,
+                packet.copy(hopsRemaining = packet.hopsRemaining - 1),
+            )
+        }
+    }
+
+    private fun handleEventMutation(endpointId: String, packet: NearbyPacket.EventMutation) {
+        if (endpointId !in eventEndpoints) return
+        if (peerByEndpoint[endpointId] == null) return
+        if (packet.eventId.isBlank() || packet.adminId.isBlank() || packet.title.isBlank() ||
+            packet.createdBy.isBlank() || packet.signature.isBlank()
+        ) return
+        if (packet.hopsRemaining !in 0..MAX_HOPS || packet.eventId != activeEventId) return
+        if (!rememberId(seenEventMutationIds, eventMutationKey(packet))) return
+        val event = runCatching {
+            CommunityEvent(
+                id = packet.eventId,
+                title = packet.title.take(80),
+                description = packet.description.take(1_000),
+                venueName = packet.venueName.take(200),
+                latitude = packet.latitude,
+                longitude = packet.longitude,
+                radiusMetres = packet.radiusMetres,
+                startsAt = packet.startsAt,
+                endsAt = packet.endsAt,
+                createdBy = packet.createdBy,
+                adminIds = packet.adminIds.toSet(),
+                adminPublicKeys = packet.adminPublicKeys,
+                createdAt = packet.createdAt,
+                updatedAt = packet.updatedAt,
+                deletedAt = packet.deletedAt,
+            )
+        }.getOrNull() ?: return
+        listener?.onEventMutationReceived(EventMutation(event, packet.adminId, packet.signature))
+        if (packet.hopsRemaining > 0) {
+            sendPacketToMany(
+                establishedEndpoints - endpointId,
+                packet.copy(hopsRemaining = packet.hopsRemaining - 1),
             )
         }
     }
@@ -477,6 +741,55 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         }
     }
 
+    private fun EventChatMessage.toPacket() = NearbyPacket.EventChatMessage(
+        messageId = id,
+        eventId = eventId,
+        senderId = senderId,
+        senderName = senderName,
+        text = text.take(MAX_EVENT_MESSAGE_LENGTH),
+        sentAt = createdAt,
+        hopsRemaining = MAX_HOPS,
+    )
+
+    private fun EventAnnouncement.toPacket() = NearbyPacket.EventAnnouncement(
+        announcementId = id,
+        eventId = eventId,
+        adminId = adminId,
+        adminName = adminName,
+        text = text.take(MAX_EVENT_MESSAGE_LENGTH),
+        createdAt = createdAt,
+        revision = revision,
+        signature = signature,
+        hopsRemaining = MAX_HOPS,
+    )
+
+    private fun EventMutation.toPacket() = NearbyPacket.EventMutation(
+        eventId = event.id,
+        adminId = adminId,
+        title = event.title,
+        description = event.description,
+        venueName = event.venueName,
+        latitude = event.latitude,
+        longitude = event.longitude,
+        radiusMetres = event.radiusMetres,
+        startsAt = event.startsAt,
+        endsAt = event.endsAt,
+        createdBy = event.createdBy,
+        adminIds = event.adminIds.sorted(),
+        adminPublicKeys = event.adminPublicKeys,
+        createdAt = event.createdAt,
+        updatedAt = event.updatedAt,
+        deletedAt = event.deletedAt,
+        signature = signature,
+        hopsRemaining = MAX_HOPS,
+    )
+
+    private fun eventAnnouncementKey(packet: NearbyPacket.EventAnnouncement): String =
+        "${packet.announcementId}:${packet.revision}"
+
+    private fun eventMutationKey(packet: NearbyPacket.EventMutation): String =
+        "${packet.eventId}:${packet.updatedAt}"
+
     private fun PrivateGroup.toPacket() = NearbyPacket.GroupDefinition(
         groupId = id,
         name = name,
@@ -519,14 +832,34 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         else -> "The connection failed (${ConnectionsStatusCodes.getStatusCodeString(statusCode)})."
     }
 
-    private companion object {
+    internal companion object {
         const val SERVICE_ID = "com.example.blap"
         const val MAX_HOPS = 16
         const val MAX_REMEMBERED_IDS = 10_000
         const val MAX_GROUP_MEMBERS = 100
         const val MAX_CACHED_GROUP_MESSAGES = 2_000
+        const val MAX_EVENT_HISTORY = 50
+        const val MAX_EVENT_MESSAGE_LENGTH = 1_000
+        const val EVENT_ENDPOINT_PREFIX = "cg-event|"
+        const val EVENT_ATTENDEE_NAME = "Event attendee"
         val STRATEGY: Strategy = Strategy.P2P_CLUSTER
 
         fun boundedIdSet() = LinkedHashSet<String>()
+
+        fun eventServiceId(eventId: String): String {
+            val digest = MessageDigest.getInstance("SHA-256").digest(eventId.toByteArray())
+            val token = digest.take(EVENT_SERVICE_HASH_BYTES)
+                .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
+            return "$SERVICE_ID.event.$token"
+        }
+
+        fun String.eventPeerIdOrNull(): String? = takeIf { startsWith(EVENT_ENDPOINT_PREFIX) }
+            ?.removePrefix(EVENT_ENDPOINT_PREFIX)
+            ?.takeIf(String::isNotBlank)
+
+        fun shouldInitiateEventConnection(localPeerId: String, remotePeerId: String): Boolean =
+            localPeerId.isNotBlank() && remotePeerId.isNotBlank() && localPeerId < remotePeerId
+
+        const val EVENT_SERVICE_HASH_BYTES = 12
     }
 }

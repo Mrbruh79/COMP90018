@@ -39,13 +39,21 @@ class MainActivity : ComponentActivity() {
     }
 
     private var deniedPermissions by mutableStateOf<List<String>>(emptyList())
+    private var pendingEventGpsEntry = false
+    private var pendingEventQrScan = false
 
     private val nearbyPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
         val missing = NearbyPermissions.missing(this)
         deniedPermissions = missing
-        if (missing.isEmpty()) viewModel.startChat()
+        if (missing.isEmpty()) {
+            viewModel.startChat()
+            when {
+                pendingEventGpsEntry -> requestEventLocationPermission()
+                pendingEventQrScan -> scanEventCheckInQrNow()
+            }
+        }
     }
 
     private val venuePermissionLauncher = registerForActivityResult(
@@ -60,6 +68,16 @@ class MainActivity : ComponentActivity() {
     ) { granted ->
         if (granted) importDeviceContacts()
         else viewModel.showError("Contacts permission is needed to import device contacts.")
+    }
+
+    private val eventLocationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions(),
+    ) {
+        if (VenuePermissions.missing(this).isEmpty()) checkEventLocation()
+        else {
+            pendingEventGpsEntry = false
+            viewModel.showError("Allow location access or use the venue check-in QR.")
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -88,8 +106,10 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+                val eventUiState by viewModel.eventUiState.collectAsStateWithLifecycle()
                 NearbyChatApp(
                     uiState = uiState,
+                    eventUiState = eventUiState,
                     deniedPermissions = deniedPermissions.map(NearbyPermissions::displayName),
                     onNameChanged = viewModel::updateDisplayName,
                     onPhoneChanged = viewModel::updatePhoneNumber,
@@ -122,12 +142,45 @@ class MainActivity : ComponentActivity() {
                     onSaveProfile = viewModel::saveProfile,
                     onCancelProfile = viewModel::cancelProfileEdit,
                     onShowSettingsScreen = viewModel::showSettings,
+                    onShowEvents = viewModel::showEvents,
+                    onBeginCreateEvent = viewModel::beginCreateEvent,
+                    onBeginEditEvent = viewModel::beginEditEvent,
+                    onCreateEvent = { request ->
+                        viewModel.createEvent(
+                            request.title,
+                            request.description,
+                            request.venueName,
+                            request.latitude,
+                            request.longitude,
+                            request.radiusMetres,
+                            request.startsAt,
+                            request.endsAt,
+                        )
+                    },
+                    onOpenEvent = viewModel::openEvent,
+                    onUpdateEvent = viewModel::updateSelectedEvent,
+                    onDeleteEvent = viewModel::deleteSelectedEvent,
+                    onJoinEvent = viewModel::joinSelectedEvent,
+                    onLeaveEvent = viewModel::leaveSelectedEvent,
+                    onPromoteEventMember = viewModel::promoteEventMember,
+                    onRemoveEventMember = viewModel::removeEventMember,
+                    onDeleteEventData = viewModel::deleteSelectedEventData,
+                    onShowEventAnnouncements = viewModel::showEventAnnouncements,
+                    onPublishEventAnnouncement = viewModel::publishEventAnnouncement,
+                    onRequestEventGpsEntry = ::requestEventGpsEntry,
+                    onScanEventQr = ::requestEventQrScan,
+                    onShowEventQr = viewModel::showEventCheckInQr,
+                    onHideEventQr = viewModel::hideEventCheckInQr,
+                    onShowSavedEventChat = viewModel::showSavedEventChat,
+                    onSendEventMessage = viewModel::sendEventMessage,
+                    onEventBack = viewModel::eventBack,
                     onConversationSearchChanged = viewModel::updateConversationSearch,
                     onContactSearchChanged = viewModel::updateContactSearch,
                     onBeginGroupSettings = viewModel::beginGroupSettings,
                     onSaveGroupSettings = viewModel::saveGroupSettings,
                     onSystemBack = viewModel::handleBack,
                     onDismissError = viewModel::dismissError,
+                    onDismissEventMessage = viewModel::dismissEventMessage,
                     onOpenSettings = ::openAppSettings,
                 )
             }
@@ -147,6 +200,75 @@ class MainActivity : ComponentActivity() {
         } else {
             nearbyPermissionLauncher.launch(missing.toTypedArray())
         }
+    }
+
+    private fun requestEventGpsEntry() {
+        pendingEventGpsEntry = true
+        pendingEventQrScan = false
+        val missingNearby = NearbyPermissions.missing(this)
+        if (missingNearby.isEmpty()) {
+            viewModel.startChat()
+            requestEventLocationPermission()
+        } else {
+            nearbyPermissionLauncher.launch(missingNearby.toTypedArray())
+        }
+    }
+
+    private fun requestEventLocationPermission() {
+        val missing = VenuePermissions.missing(this)
+        if (missing.isEmpty()) checkEventLocation()
+        else eventLocationPermissionLauncher.launch(missing.toTypedArray())
+    }
+
+    private fun checkEventLocation() {
+        lifecycleScope.launch {
+            try {
+                val location = VenueManager.getFreshLocation(applicationContext)
+                if (location == null) {
+                    viewModel.showError("A current location was not available. Use the venue check-in QR.")
+                } else {
+                    viewModel.enterEventWithGps(
+                        location.latitude,
+                        location.longitude,
+                        location.accuracy.toDouble(),
+                    )
+                }
+            } catch (_: Exception) {
+                viewModel.showError("Location could not be checked. Use the venue check-in QR.")
+            } finally {
+                pendingEventGpsEntry = false
+            }
+        }
+    }
+
+    private fun requestEventQrScan() {
+        pendingEventQrScan = true
+        pendingEventGpsEntry = false
+        val missingNearby = NearbyPermissions.missing(this)
+        if (missingNearby.isEmpty()) {
+            viewModel.startChat()
+            scanEventCheckInQrNow()
+        } else {
+            nearbyPermissionLauncher.launch(missingNearby.toTypedArray())
+        }
+    }
+
+    private fun scanEventCheckInQrNow() {
+        val options = GmsBarcodeScannerOptions.Builder()
+            .setBarcodeFormats(Barcode.FORMAT_QR_CODE)
+            .enableAutoZoom()
+            .build()
+        GmsBarcodeScanning.getClient(this, options).startScan()
+            .addOnSuccessListener { barcode ->
+                pendingEventQrScan = false
+                val payload = barcode.rawValue
+                if (payload.isNullOrBlank()) viewModel.showError("This QR code has no check-in data.")
+                else viewModel.enterEventWithQr(payload)
+            }
+            .addOnFailureListener { error ->
+                pendingEventQrScan = false
+                viewModel.showError(error.message ?: "The venue check-in QR could not be scanned.")
+            }
     }
 
     private fun openAppSettings() {

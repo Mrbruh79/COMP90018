@@ -12,6 +12,7 @@ enum class ChatScreen {
     SHOWING_MY_CARD,
     GROUP_SETTINGS,
     SETTINGS,
+    EVENTS,
     ERROR,
 }
 

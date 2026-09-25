@@ -54,4 +54,62 @@ class NearbyProtocolTest {
 
         assertEquals(packet, NearbyProtocol.decode(NearbyProtocol.encode(packet)))
     }
+
+    @Test
+    fun eventChatMessageRoundTripKeepsEventBoundary() {
+        val packet = NearbyPacket.EventChatMessage(
+            messageId = "event-message-1",
+            eventId = "event-1",
+            senderId = "alice-id",
+            senderName = "Alice",
+            text = "Meet at the main stage",
+            sentAt = 1234L,
+            hopsRemaining = 8,
+        )
+
+        assertEquals(packet, NearbyProtocol.decode(NearbyProtocol.encode(packet)))
+    }
+
+    @Test
+    fun eventAnnouncementRoundTripKeepsSignatureAndRevision() {
+        val packet = NearbyPacket.EventAnnouncement(
+            announcementId = "announcement-1",
+            eventId = "event-1",
+            adminId = "admin-1",
+            adminName = "Organiser",
+            text = "The keynote begins in ten minutes",
+            createdAt = 1234L,
+            revision = 1235L,
+            signature = "signature",
+            hopsRemaining = 16,
+        )
+
+        assertEquals(packet, NearbyProtocol.decode(NearbyProtocol.encode(packet)))
+    }
+
+    @Test
+    fun eventMutationRoundTripKeepsEditAndDeletionFields() {
+        val packet = NearbyPacket.EventMutation(
+            eventId = "event-1",
+            adminId = "admin-1",
+            title = "Updated event",
+            description = "Updated description",
+            venueName = "New venue",
+            latitude = -37.8136,
+            longitude = 144.9631,
+            radiusMetres = 120.0,
+            startsAt = 1_000L,
+            endsAt = 2_000L,
+            createdBy = "admin-1",
+            adminIds = listOf("admin-1", "admin-2"),
+            adminPublicKeys = mapOf("admin-1" to "public-key"),
+            createdAt = 100L,
+            updatedAt = 200L,
+            deletedAt = 200L,
+            signature = "signature",
+            hopsRemaining = 16,
+        )
+
+        assertEquals(packet, NearbyProtocol.decode(NearbyProtocol.encode(packet)))
+    }
 }

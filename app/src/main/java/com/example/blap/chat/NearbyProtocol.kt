@@ -44,16 +44,70 @@ sealed interface NearbyPacket {
         val phoneHash: String,
         val hopsRemaining: Int,
     ) : NearbyPacket
+
+    data class EventPresence(
+        val eventId: String,
+        val peerId: String,
+        val name: String,
+        val active: Boolean,
+    ) : NearbyPacket
+
+    data class EventChatMessage(
+        val messageId: String,
+        val eventId: String,
+        val senderId: String,
+        val senderName: String,
+        val text: String,
+        val sentAt: Long,
+        val hopsRemaining: Int,
+    ) : NearbyPacket
+
+    data class EventAnnouncement(
+        val announcementId: String,
+        val eventId: String,
+        val adminId: String,
+        val adminName: String,
+        val text: String,
+        val createdAt: Long,
+        val revision: Long,
+        val signature: String,
+        val hopsRemaining: Int,
+    ) : NearbyPacket
+
+    data class EventMutation(
+        val eventId: String,
+        val adminId: String,
+        val title: String,
+        val description: String,
+        val venueName: String,
+        val latitude: Double,
+        val longitude: Double,
+        val radiusMetres: Double,
+        val startsAt: Long,
+        val endsAt: Long,
+        val createdBy: String,
+        val adminIds: List<String>,
+        val adminPublicKeys: Map<String, String>,
+        val createdAt: Long,
+        val updatedAt: Long,
+        val deletedAt: Long?,
+        val signature: String,
+        val hopsRemaining: Int,
+    ) : NearbyPacket
 }
 
 object NearbyProtocol {
     private const val MAGIC = 0x424C4150
-    private const val VERSION = 5
+    private const val VERSION = 7
     private const val HELLO = 1
     private const val MESSAGE = 2
     private const val ACKNOWLEDGEMENT = 3
     private const val GROUP_DEFINITION = 4
     private const val PEER_ANNOUNCEMENT = 5
+    private const val EVENT_PRESENCE = 6
+    private const val EVENT_CHAT_MESSAGE = 7
+    private const val EVENT_ANNOUNCEMENT = 8
+    private const val EVENT_MUTATION = 9
 
     fun encode(packet: NearbyPacket): ByteArray {
         val bytes = ByteArrayOutputStream()
@@ -111,6 +165,66 @@ object NearbyProtocol {
                     output.writeUTF(packet.peerId)
                     output.writeUTF(packet.name)
                     output.writeUTF(packet.phoneHash)
+                    output.writeInt(packet.hopsRemaining)
+                }
+
+                is NearbyPacket.EventPresence -> {
+                    output.writeInt(EVENT_PRESENCE)
+                    output.writeUTF(packet.eventId)
+                    output.writeUTF(packet.peerId)
+                    output.writeUTF(packet.name)
+                    output.writeBoolean(packet.active)
+                }
+
+                is NearbyPacket.EventChatMessage -> {
+                    output.writeInt(EVENT_CHAT_MESSAGE)
+                    output.writeUTF(packet.messageId)
+                    output.writeUTF(packet.eventId)
+                    output.writeUTF(packet.senderId)
+                    output.writeUTF(packet.senderName)
+                    output.writeUTF(packet.text)
+                    output.writeLong(packet.sentAt)
+                    output.writeInt(packet.hopsRemaining)
+                }
+
+                is NearbyPacket.EventAnnouncement -> {
+                    output.writeInt(EVENT_ANNOUNCEMENT)
+                    output.writeUTF(packet.announcementId)
+                    output.writeUTF(packet.eventId)
+                    output.writeUTF(packet.adminId)
+                    output.writeUTF(packet.adminName)
+                    output.writeUTF(packet.text)
+                    output.writeLong(packet.createdAt)
+                    output.writeLong(packet.revision)
+                    output.writeUTF(packet.signature)
+                    output.writeInt(packet.hopsRemaining)
+                }
+
+                is NearbyPacket.EventMutation -> {
+                    output.writeInt(EVENT_MUTATION)
+                    output.writeUTF(packet.eventId)
+                    output.writeUTF(packet.adminId)
+                    output.writeUTF(packet.title)
+                    output.writeUTF(packet.description)
+                    output.writeUTF(packet.venueName)
+                    output.writeDouble(packet.latitude)
+                    output.writeDouble(packet.longitude)
+                    output.writeDouble(packet.radiusMetres)
+                    output.writeLong(packet.startsAt)
+                    output.writeLong(packet.endsAt)
+                    output.writeUTF(packet.createdBy)
+                    output.writeInt(packet.adminIds.size)
+                    packet.adminIds.forEach(output::writeUTF)
+                    output.writeInt(packet.adminPublicKeys.size)
+                    packet.adminPublicKeys.toSortedMap().forEach { (id, key) ->
+                        output.writeUTF(id)
+                        output.writeUTF(key)
+                    }
+                    output.writeLong(packet.createdAt)
+                    output.writeLong(packet.updatedAt)
+                    output.writeBoolean(packet.deletedAt != null)
+                    packet.deletedAt?.let(output::writeLong)
+                    output.writeUTF(packet.signature)
                     output.writeInt(packet.hopsRemaining)
                 }
             }
@@ -171,6 +285,80 @@ object NearbyProtocol {
                     hopsRemaining = input.readInt(),
                 )
 
+                EVENT_PRESENCE -> NearbyPacket.EventPresence(
+                    eventId = input.readUTF(),
+                    peerId = input.readUTF(),
+                    name = input.readUTF(),
+                    active = input.readBoolean(),
+                )
+
+                EVENT_CHAT_MESSAGE -> NearbyPacket.EventChatMessage(
+                    messageId = input.readUTF(),
+                    eventId = input.readUTF(),
+                    senderId = input.readUTF(),
+                    senderName = input.readUTF(),
+                    text = input.readUTF(),
+                    sentAt = input.readLong(),
+                    hopsRemaining = input.readInt(),
+                )
+
+                EVENT_ANNOUNCEMENT -> NearbyPacket.EventAnnouncement(
+                    announcementId = input.readUTF(),
+                    eventId = input.readUTF(),
+                    adminId = input.readUTF(),
+                    adminName = input.readUTF(),
+                    text = input.readUTF(),
+                    createdAt = input.readLong(),
+                    revision = input.readLong(),
+                    signature = input.readUTF(),
+                    hopsRemaining = input.readInt(),
+                )
+
+                EVENT_MUTATION -> {
+                    val eventId = input.readUTF()
+                    val adminId = input.readUTF()
+                    val title = input.readUTF()
+                    val description = input.readUTF()
+                    val venueName = input.readUTF()
+                    val latitude = input.readDouble()
+                    val longitude = input.readDouble()
+                    val radiusMetres = input.readDouble()
+                    val startsAt = input.readLong()
+                    val endsAt = input.readLong()
+                    val createdBy = input.readUTF()
+                    val adminCount = input.readInt()
+                    if (adminCount !in 1..MAX_EVENT_ADMINS) return null
+                    val adminIds = List(adminCount) { input.readUTF() }
+                    val keyCount = input.readInt()
+                    if (keyCount !in 0..MAX_EVENT_ADMINS) return null
+                    val adminKeys = buildMap {
+                        repeat(keyCount) { put(input.readUTF(), input.readUTF()) }
+                    }
+                    val createdAt = input.readLong()
+                    val updatedAt = input.readLong()
+                    val deletedAt = if (input.readBoolean()) input.readLong() else null
+                    NearbyPacket.EventMutation(
+                        eventId,
+                        adminId,
+                        title,
+                        description,
+                        venueName,
+                        latitude,
+                        longitude,
+                        radiusMetres,
+                        startsAt,
+                        endsAt,
+                        createdBy,
+                        adminIds,
+                        adminKeys,
+                        createdAt,
+                        updatedAt,
+                        deletedAt,
+                        input.readUTF(),
+                        input.readInt(),
+                    )
+                }
+
                 else -> null
             }
         }
@@ -179,4 +367,5 @@ object NearbyProtocol {
     }
 
     private const val MAX_GROUP_MEMBERS = 100
+    private const val MAX_EVENT_ADMINS = 100
 }

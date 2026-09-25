@@ -25,7 +25,7 @@ object VenueManager {
     private val firestore by lazy { FirebaseFirestore.getInstance() }
 
     @SuppressLint("MissingPermission")
-    private suspend fun getFreshLocation(context: Context) =
+    suspend fun getFreshLocation(context: Context) =
         LocationServices.getFusedLocationProviderClient(context)
             .getCurrentLocation(
                 CurrentLocationRequest.Builder().setPriority(Priority.PRIORITY_HIGH_ACCURACY).build(),

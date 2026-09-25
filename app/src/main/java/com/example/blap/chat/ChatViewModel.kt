@@ -15,12 +15,27 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import com.example.blap.event.EventAdminKeyStore
+import com.example.blap.event.EventAnnouncement
+import com.example.blap.event.EventCreateRequest
+import com.example.blap.event.EventChatMessage
+import com.example.blap.event.EventMutation
+import com.example.blap.event.EventCoordinator
+import com.example.blap.event.EventRemoteRepository
+import com.example.blap.event.EventStore
+import com.example.blap.event.EventUiState
+import com.example.blap.event.FirebaseEventRemoteRepository
+import com.example.blap.event.LocalEventAdminKeyStore
+import com.example.blap.event.SqliteEventStore
 
 class ChatViewModel(
     private val nearbyChatController: NearbyChatController,
     private val chatStore: ChatStore,
     private val identityStore: IdentityStore,
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    eventStore: EventStore? = null,
+    eventRemoteRepository: EventRemoteRepository? = null,
+    eventAdminKeyStore: EventAdminKeyStore? = null,
 ) : ViewModel(), NearbyChatController.Listener {
     private val workScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val connectedPeers = ConcurrentHashMap<String, ConnectedPeer>()
@@ -29,6 +44,20 @@ class ChatViewModel(
     private val initialProfile = identityStore.getProfile()
     private var profileReturnScreen = ChatScreen.SHOWING_MY_CARD
     private var requestedEndpointId: String? = null
+    private val eventCoordinator = if (
+        eventStore != null && eventRemoteRepository != null && eventAdminKeyStore != null
+    ) {
+        EventCoordinator(
+            eventStore = eventStore,
+            remoteRepository = eventRemoteRepository,
+            adminKeyStore = eventAdminKeyStore,
+            identityStore = identityStore,
+            nearbyController = nearbyChatController,
+            scope = workScope,
+        )
+    } else null
+    private val emptyEventUiState = MutableStateFlow(EventUiState())
+    val eventUiState: StateFlow<EventUiState> = eventCoordinator?.uiState ?: emptyEventUiState.asStateFlow()
 
     private val _uiState = MutableStateFlow(
         ChatUiState(
@@ -166,6 +195,56 @@ class ChatViewModel(
             )
         }
     }
+
+    fun showEvents() {
+        _uiState.update { it.copy(screen = ChatScreen.EVENTS, error = null) }
+        eventCoordinator?.showList()
+    }
+
+    fun beginCreateEvent() = eventCoordinator?.beginCreate() ?: Unit
+    fun beginEditEvent() = eventCoordinator?.beginEdit() ?: Unit
+
+    fun createEvent(
+        title: String,
+        description: String,
+        venueName: String,
+        latitude: Double,
+        longitude: Double,
+        radiusMetres: Double,
+        startsAt: Long,
+        endsAt: Long,
+    ) = eventCoordinator?.createEvent(
+        title,
+        description,
+        venueName,
+        latitude,
+        longitude,
+        radiusMetres,
+        startsAt,
+        endsAt,
+    ) ?: Unit
+
+    fun openEvent(eventId: String) = eventCoordinator?.openEvent(eventId) ?: Unit
+    fun updateSelectedEvent(request: EventCreateRequest) = eventCoordinator?.updateSelectedEvent(request) ?: Unit
+    fun deleteSelectedEvent() = eventCoordinator?.deleteSelectedEvent() ?: Unit
+    fun joinSelectedEvent() = eventCoordinator?.joinSelectedEvent() ?: Unit
+    fun leaveSelectedEvent() = eventCoordinator?.leaveSelectedEvent() ?: Unit
+    fun promoteEventMember(userId: String) = eventCoordinator?.promoteMemberToCoAdmin(userId) ?: Unit
+    fun removeEventMember(userId: String) = eventCoordinator?.blockMember(userId) ?: Unit
+    fun deleteSelectedEventData() = eventCoordinator?.deleteSelectedEventData() ?: Unit
+    fun showEventAnnouncements() = eventCoordinator?.showAnnouncements() ?: Unit
+    fun publishEventAnnouncement(text: String) = eventCoordinator?.publishAnnouncement(text) ?: Unit
+    fun enterEventWithGps(latitude: Double, longitude: Double, accuracyMetres: Double) =
+        eventCoordinator?.enterWithGps(latitude, longitude, accuracyMetres) ?: Unit
+
+    fun enterEventWithQr(payload: String) = eventCoordinator?.enterWithQr(payload) ?: Unit
+    fun createEventCheckInQr(): String? = eventCoordinator?.createVenueCheckInQr()
+    fun showEventCheckInQr() = eventCoordinator?.showVenueCheckInQr() ?: Unit
+    fun hideEventCheckInQr() = eventCoordinator?.hideVenueCheckInQr() ?: Unit
+    fun sendEventMessage(text: String) = eventCoordinator?.sendOnSiteMessage(text) ?: Unit
+    fun showSavedEventChat() = eventCoordinator?.showSavedOnSiteHistory() ?: Unit
+    fun eventBack() = eventCoordinator?.back() ?: Unit
+    fun dismissEventMessage() = eventCoordinator?.dismissMessage() ?: Unit
 
     fun beginManageContacts() {
         _uiState.update {
@@ -599,6 +678,7 @@ class ChatViewModel(
             }
 
             ChatScreen.CHATS,
+            ChatScreen.EVENTS,
             ChatScreen.ERROR,
             -> Unit
 
@@ -802,6 +882,22 @@ class ChatViewModel(
         setMessageStatus(peerId, messageId, MessageStatus.DELIVERED)
     }
 
+    override fun onEventPeerAvailable(peerId: String, eventId: String) {
+        eventCoordinator?.onEventPeerAvailable(peerId, eventId)
+    }
+
+    override fun onEventChatMessageReceived(message: EventChatMessage) {
+        eventCoordinator?.onEventChatMessageReceived(message)
+    }
+
+    override fun onEventAnnouncementReceived(announcement: EventAnnouncement) {
+        eventCoordinator?.onEventAnnouncementReceived(announcement)
+    }
+
+    override fun onEventMutationReceived(mutation: EventMutation) {
+        eventCoordinator?.onEventMutationReceived(mutation)
+    }
+
     override fun onDisconnected(peerId: String) {
         connectedPeers.remove(peerId)
         _uiState.update { state ->
@@ -842,6 +938,7 @@ class ChatViewModel(
         nearbyChatController.close()
         workScope.cancel()
         chatStore.close()
+        eventCoordinator?.close()
     }
 
     private fun setMessageStatus(peerId: String, messageId: String, status: MessageStatus) {
@@ -1044,6 +1141,9 @@ class ChatViewModel(
                     nearbyChatController = NearbyChatManager(appContext),
                     chatStore = SqliteChatStore(appContext),
                     identityStore = LocalIdentityStore(appContext),
+                    eventStore = SqliteEventStore(appContext),
+                    eventRemoteRepository = FirebaseEventRemoteRepository(),
+                    eventAdminKeyStore = LocalEventAdminKeyStore(appContext),
                 ) as T
             }
         }

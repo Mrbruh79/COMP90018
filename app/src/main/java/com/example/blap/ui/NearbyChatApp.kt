@@ -84,6 +84,8 @@ import com.example.blap.chat.MessageAuthor
 import com.example.blap.chat.MessageStatus
 import com.example.blap.chat.NearbyDevice
 import com.example.blap.chat.SavedContact
+import com.example.blap.event.EventCreateRequest
+import com.example.blap.event.EventUiState
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
 import java.text.SimpleDateFormat
@@ -93,6 +95,7 @@ import java.util.Locale
 @Composable
 fun NearbyChatApp(
     uiState: ChatUiState,
+    eventUiState: EventUiState,
     deniedPermissions: List<String>,
     onNameChanged: (String) -> Unit,
     onPhoneChanged: (String) -> Unit,
@@ -125,23 +128,47 @@ fun NearbyChatApp(
     onSaveProfile: () -> Unit,
     onCancelProfile: () -> Unit,
     onShowSettingsScreen: () -> Unit,
+    onShowEvents: () -> Unit,
+    onBeginCreateEvent: () -> Unit,
+    onBeginEditEvent: () -> Unit,
+    onCreateEvent: (EventCreateRequest) -> Unit,
+    onOpenEvent: (String) -> Unit,
+    onUpdateEvent: (EventCreateRequest) -> Unit,
+    onDeleteEvent: () -> Unit,
+    onJoinEvent: () -> Unit,
+    onLeaveEvent: () -> Unit,
+    onPromoteEventMember: (String) -> Unit,
+    onRemoveEventMember: (String) -> Unit,
+    onDeleteEventData: () -> Unit,
+    onShowEventAnnouncements: () -> Unit,
+    onPublishEventAnnouncement: (String) -> Unit,
+    onRequestEventGpsEntry: () -> Unit,
+    onScanEventQr: () -> Unit,
+    onShowEventQr: () -> Unit,
+    onHideEventQr: () -> Unit,
+    onShowSavedEventChat: () -> Unit,
+    onSendEventMessage: (String) -> Unit,
+    onEventBack: () -> Unit,
     onConversationSearchChanged: (String) -> Unit,
     onContactSearchChanged: (String) -> Unit,
     onBeginGroupSettings: () -> Unit,
     onSaveGroupSettings: () -> Unit,
     onSystemBack: () -> Unit,
     onDismissError: () -> Unit,
+    onDismissEventMessage: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     BackHandler(
         enabled = uiState.screen != ChatScreen.WELCOME && uiState.screen != ChatScreen.CHATS,
-        onBack = onSystemBack,
+        onBack = { if (uiState.screen == ChatScreen.EVENTS) onEventBack() else onSystemBack() },
     )
     val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(uiState.error, uiState.notice) {
-        val message = uiState.error ?: uiState.notice ?: return@LaunchedEffect
+    LaunchedEffect(uiState.error, uiState.notice, eventUiState.error, eventUiState.notice) {
+        val message = uiState.error ?: uiState.notice ?: eventUiState.error ?: eventUiState.notice
+            ?: return@LaunchedEffect
         snackbar.showSnackbar(message)
         onDismissError()
+        onDismissEventMessage()
     }
 
     Box(
@@ -162,6 +189,7 @@ fun NearbyChatApp(
                     AppNavigationBar(
                         state = uiState.screen,
                         onChats = onBackToChats,
+                        onEvents = onShowEvents,
                         onContacts = onManageContacts,
                         onMyCard = onShowMyCard,
                         onSettings = onShowSettingsScreen,
@@ -290,6 +318,30 @@ fun NearbyChatApp(
                         onCheckVenue = onCheckVenue,
                     )
 
+                    ChatScreen.EVENTS -> EventHub(
+                        state = eventUiState,
+                        onBeginCreate = onBeginCreateEvent,
+                        onBeginEdit = onBeginEditEvent,
+                        onCreate = onCreateEvent,
+                        onOpen = onOpenEvent,
+                        onUpdate = onUpdateEvent,
+                        onDeleteEvent = onDeleteEvent,
+                        onJoin = onJoinEvent,
+                        onLeave = onLeaveEvent,
+                        onPromoteMember = onPromoteEventMember,
+                        onRemoveMember = onRemoveEventMember,
+                        onDeleteLocalData = onDeleteEventData,
+                        onShowAnnouncements = onShowEventAnnouncements,
+                        onPublishAnnouncement = onPublishEventAnnouncement,
+                        onRequestGpsEntry = onRequestEventGpsEntry,
+                        onScanCheckInQr = onScanEventQr,
+                        onShowCheckInQr = onShowEventQr,
+                        onHideCheckInQr = onHideEventQr,
+                        onShowSavedChat = onShowSavedEventChat,
+                        onSendChat = onSendEventMessage,
+                        onBack = onEventBack,
+                    )
+
                     ChatScreen.GROUP_SETTINGS -> CreateGroupScreen(
                         name = uiState.groupNameDraft,
                         contacts = uiState.groupContacts,
@@ -313,6 +365,7 @@ fun NearbyChatApp(
 private val TOP_LEVEL_TITLES = mapOf(
     ChatScreen.CHATS to "Messages",
     ChatScreen.MANAGING_CONTACTS to "Contacts",
+    ChatScreen.EVENTS to "Events",
     ChatScreen.SHOWING_MY_CARD to "Profile Card",
     ChatScreen.SETTINGS to "Settings",
 )
@@ -347,6 +400,7 @@ private fun ChatUiState.contactDraftProfile() = ContactProfile(
 private fun AppNavigationBar(
     state: ChatScreen,
     onChats: () -> Unit,
+    onEvents: () -> Unit,
     onContacts: () -> Unit,
     onMyCard: () -> Unit,
     onSettings: () -> Unit,
@@ -363,6 +417,12 @@ private fun AppNavigationBar(
             onClick = onContacts,
             icon = { Icon(painterResource(R.drawable.ic_contacts), contentDescription = null) },
             label = { Text("Contacts") },
+        )
+        NavigationBarItem(
+            selected = state == ChatScreen.EVENTS,
+            onClick = onEvents,
+            icon = { Icon(painterResource(R.drawable.ic_chat), contentDescription = null) },
+            label = { Text("Events") },
         )
         NavigationBarItem(
             selected = state == ChatScreen.SHOWING_MY_CARD,
@@ -1232,7 +1292,7 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
     }
 }
 
-private fun createQrBitmap(payload: String, size: Int = 900): Bitmap {
+internal fun createQrBitmap(payload: String, size: Int = 900): Bitmap {
     val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size)
     val pixels = IntArray(size * size)
     val dark = android.graphics.Color.BLACK
@@ -1427,7 +1487,7 @@ private fun ChatScreen(
 }
 
 @Composable
-private fun MessageBubble(message: ChatMessage, showSender: Boolean) {
+internal fun MessageBubble(message: ChatMessage, showSender: Boolean) {
     val mine = message.author == MessageAuthor.ME
     Column(
         Modifier.fillMaxWidth(),
@@ -1488,7 +1548,7 @@ private fun formatTimestamp(sentAt: Long): String =
     SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(sentAt))
 
 @Composable
-private fun MessageComposer(text: String, onTextChanged: (String) -> Unit, onSend: (String) -> Unit) {
+internal fun MessageComposer(text: String, onTextChanged: (String) -> Unit, onSend: (String) -> Unit) {
     val send = {
         if (text.isNotBlank()) {
             onSend(text)
