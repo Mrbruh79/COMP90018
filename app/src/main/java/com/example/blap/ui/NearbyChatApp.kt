@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -69,6 +70,7 @@ import com.example.blap.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.blap.chat.ChatScreen
@@ -1233,24 +1235,8 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
         contentPadding = PaddingValues(bottom = 18.dp),
     ) {
         item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    "Share your details with a scan",
-                    modifier = Modifier
-                        .weight(1f)
-                        .padding(end = 12.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Button(onClick = onEdit) { Text("Edit") }
-            }
-        }
-        item {
             Card(
-                modifier = Modifier.padding(top = 18.dp),
+                modifier = Modifier.padding(top = 20.dp),
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 shape = RoundedCornerShape(24.dp),
             ) {
@@ -1258,36 +1244,114 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
                     bitmap = bitmap.asImageBitmap(),
                     contentDescription = "QR code for ${profile.displayName}'s BLAP contact card",
                     modifier = Modifier
-                        .size(280.dp)
-                        .padding(16.dp),
+                        .size(248.dp)
+                        .padding(24.dp),
                 )
             }
+        }
+        item {
+            Text(
+                "Share this QR to other CommonGround users to have them add you as a contact",
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 12.dp),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+            )
         }
         item {
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 16.dp),
+                    .padding(top = 24.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(20.dp),
+                shape = RoundedCornerShape(16.dp),
             ) {
-                Column(Modifier.padding(18.dp)) {
-                    Text(profile.displayName.ifBlank { "Your name" }, style = MaterialTheme.typography.headlineMedium)
-                    Text(profile.phoneNumber, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-                    if (profile.email.isNotBlank()) Text(profile.email, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (profile.bio.isNotBlank()) Text(profile.bio, modifier = Modifier.padding(top = 12.dp))
-                    val links = listOf(
-                        "Website" to profile.websiteUrl,
-                        "Instagram" to profile.instagramUrl,
-                        "X / Twitter" to profile.xUrl,
-                        "LinkedIn" to profile.linkedinUrl,
-                        "GitHub" to profile.githubUrl,
-                    ).filter { it.second.isNotBlank() }
-                    links.forEach { (label, value) ->
-                        Text("$label · $value", color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 7.dp))
+                Column(
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .padding(end = 12.dp),
+                            ) {
+                                Text(
+                                    profile.displayName.ifBlank { "Your name" },
+                                    style = MaterialTheme.typography.headlineSmall,
+                                )
+                                Text(
+                                    profile.phoneNumber,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = onEdit,
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            ) {
+                                Text("Edit", style = MaterialTheme.typography.titleSmall)
+                            }
+                        }
+                        if (profile.bio.isNotBlank()) {
+                            Text(profile.bio, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    val items = listOf(
+                        ProfileItem("Email", profile.email, openable = false),
+                        ProfileItem("Website", profile.websiteUrl),
+                        ProfileItem("Instagram", profile.instagramUrl),
+                        ProfileItem("X / Twitter", profile.xUrl),
+                        ProfileItem("LinkedIn", profile.linkedinUrl),
+                        ProfileItem("GitHub", profile.githubUrl),
+                    ).filter { it.value.isNotBlank() }
+                    if (items.isNotEmpty()) {
+                        HorizontalDivider()
+                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            items.forEach { ProfileItemRow(it) }
+                        }
                     }
                 }
             }
+        }
+    }
+}
+
+private data class ProfileItem(
+    val label: String,
+    val value: String,
+    val openable: Boolean = true,
+)
+
+@Composable
+private fun ProfileItemRow(item: ProfileItem) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(
+                item.label,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Text(
+                item.value,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        if (item.openable) {
+            Icon(
+                painterResource(R.drawable.ic_link),
+                contentDescription = "Open ${item.label}",
+                tint = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 12.dp),
+            )
         }
     }
 }
