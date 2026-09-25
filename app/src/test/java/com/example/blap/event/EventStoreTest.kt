@@ -80,6 +80,30 @@ class EventStoreTest {
         assertEquals(retained, store.getEvent(retained.id))
     }
 
+    @Test
+    fun announcementHistoryReturnsTheLatestHundredInOrder() {
+        val store = InMemoryEventStore()
+        repeat(120) { index ->
+            store.saveAnnouncement(
+                EventAnnouncement(
+                    id = "announcement-$index",
+                    eventId = "event-1",
+                    adminId = "admin",
+                    adminName = "Admin",
+                    text = "Announcement $index",
+                    createdAt = index.toLong(),
+                    signature = "signature-$index",
+                ),
+            )
+        }
+
+        val announcements = store.getAnnouncements("event-1", 100)
+
+        assertEquals(100, announcements.size)
+        assertEquals("announcement-20", announcements.first().id)
+        assertEquals("announcement-119", announcements.last().id)
+    }
+
     private fun event(id: String) = CommunityEvent(
         id = id,
         title = id,

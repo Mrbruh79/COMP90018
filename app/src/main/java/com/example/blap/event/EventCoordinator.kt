@@ -686,6 +686,7 @@ class EventCoordinator(
     fun onEventPeerAvailable(peerId: String, eventId: String) {
         if (_uiState.value.activeEventId != eventId) return
         nearbyController.synchronizeEventHistory(peerId, eventStore.getRecentChatMessages(eventId, 50))
+        nearbyController.synchronizeEventAnnouncements(peerId, eventStore.getAnnouncements(eventId, 100))
     }
 
     fun onEventChatMessageReceived(message: EventChatMessage) {

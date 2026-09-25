@@ -350,6 +350,24 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         }
     }
 
+    override fun synchronizeEventAnnouncements(
+        peerId: String,
+        announcements: List<EventAnnouncement>,
+    ) {
+        val eventId = activeEventId ?: return
+        val endpointId = endpointByPeer[peerId]?.takeIf(eventEndpoints::contains) ?: return
+        announcements
+            .filter { announcement ->
+                announcement.eventId == eventId && announcement.signature.isNotBlank()
+            }
+            .takeLast(MAX_EVENT_ANNOUNCEMENT_HISTORY)
+            .forEach { announcement ->
+                val packet = announcement.toPacket()
+                rememberId(seenEventAnnouncementIds, eventAnnouncementKey(packet))
+                sendPacket(endpointId, packet)
+            }
+    }
+
     override fun disconnect(peerId: String) {
         val endpointId = endpointByPeer[peerId] ?: return
         connectionsClient.disconnectFromEndpoint(endpointId)
@@ -839,6 +857,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         const val MAX_GROUP_MEMBERS = 100
         const val MAX_CACHED_GROUP_MESSAGES = 2_000
         const val MAX_EVENT_HISTORY = 50
+        const val MAX_EVENT_ANNOUNCEMENT_HISTORY = 100
         const val MAX_EVENT_MESSAGE_LENGTH = 1_000
         const val EVENT_ENDPOINT_PREFIX = "cg-event|"
         const val EVENT_ATTENDEE_NAME = "Event attendee"

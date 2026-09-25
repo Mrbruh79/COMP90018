@@ -23,6 +23,7 @@ interface NearbyChatController {
     fun sendEventAnnouncement(announcement: EventAnnouncement) = Unit
     fun sendEventMutation(mutation: EventMutation) = Unit
     fun synchronizeEventHistory(peerId: String, messages: List<EventChatMessage>) = Unit
+    fun synchronizeEventAnnouncements(peerId: String, announcements: List<EventAnnouncement>) = Unit
     fun disconnect(peerId: String)
     fun stop()
     fun close()
