@@ -376,11 +376,11 @@ class ChatViewModel(
                     } else linkedPeerId,
                     email = state.contactEmailDraft.trim(),
                     bio = state.contactBioDraft.trim(),
-                    websiteUrl = state.contactWebsiteDraft.trim(),
-                    instagramUrl = state.contactInstagramDraft.trim(),
-                    xUrl = state.contactXDraft.trim(),
-                    linkedinUrl = state.contactLinkedinDraft.trim(),
-                    githubUrl = state.contactGithubDraft.trim(),
+                    websiteUrl = ProfileUrl.normalize(state.contactWebsiteDraft),
+                    instagramUrl = ProfileUrl.normalize(state.contactInstagramDraft),
+                    xUrl = ProfileUrl.normalize(state.contactXDraft),
+                    linkedinUrl = ProfileUrl.normalize(state.contactLinkedinDraft),
+                    githubUrl = ProfileUrl.normalize(state.contactGithubDraft),
                     source = state.contactSourceDraft,
                 ),
             )
@@ -575,6 +575,11 @@ class ChatViewModel(
             phoneNumber = normalizedPhone,
             email = profile.email.trim(),
             bio = profile.bio.trim(),
+            websiteUrl = ProfileUrl.normalize(profile.websiteUrl),
+            instagramUrl = ProfileUrl.normalize(profile.instagramUrl),
+            xUrl = ProfileUrl.normalize(profile.xUrl),
+            linkedinUrl = ProfileUrl.normalize(profile.linkedinUrl),
+            githubUrl = ProfileUrl.normalize(profile.githubUrl),
         )
         identityStore.saveProfile(saved)
         localPhoneHash = PhoneIdentity.hash(normalizedPhone).orEmpty()
