@@ -21,6 +21,9 @@ import com.example.blap.event.EventAnnouncement
 import com.example.blap.event.EventChatMessage
 import com.example.blap.event.CommunityEvent
 import com.example.blap.event.EventMutation
+import com.example.blap.event.EventAccessGrant
+import com.example.blap.event.EventAccessRequest
+import com.example.blap.event.EventVisibility
 import java.security.MessageDigest
 
 class NearbyChatManager(context: Context) : NearbyChatController {
@@ -36,6 +39,8 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     private val seenEventMessageIds = boundedIdSet()
     private val seenEventAnnouncementIds = boundedIdSet()
     private val seenEventMutationIds = boundedIdSet()
+    private val seenEventAccessRequestIds = boundedIdSet()
+    private val seenEventAccessGrantIds = boundedIdSet()
     private val knownMeshPeers = mutableMapOf<String, GroupMember>()
     private val cachedGroupDefinitions = linkedMapOf<String, NearbyPacket.GroupDefinition>()
     private val cachedGroupMessages = linkedMapOf<String, NearbyPacket.Message>()
@@ -45,6 +50,9 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     private var localPeerId = ""
     private var localPhoneHash = ""
     private var activeEventId: String? = null
+    private var activeEventMeshSecret = ""
+    private var activeEventUserId = ""
+    private var activeEventAccessGranted = false
     private var advertisingRequested = false
     private var discoveryRequested = false
 
@@ -65,6 +73,8 @@ class NearbyChatManager(context: Context) : NearbyChatController {
                 is NearbyPacket.EventChatMessage -> handleEventChatMessage(endpointId, packet)
                 is NearbyPacket.EventAnnouncement -> handleEventAnnouncement(endpointId, packet)
                 is NearbyPacket.EventMutation -> handleEventMutation(endpointId, packet)
+                is NearbyPacket.EventAccessRequest -> handleEventAccessRequest(endpointId, packet)
+                is NearbyPacket.EventAccessGrant -> handleEventAccessGrant(endpointId, packet)
             }
         }
 
@@ -309,37 +319,61 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         }
     }
 
-    override fun setActiveEvent(eventId: String?) {
-        if (eventId == activeEventId) {
+    override fun setActiveEvent(
+        eventId: String?,
+        meshSecret: String,
+        userId: String,
+        accessGranted: Boolean,
+    ) {
+        if (eventId == activeEventId && meshSecret == activeEventMeshSecret) {
+            activeEventUserId = userId
+            activeEventAccessGranted = accessGranted
             broadcastEventPresence(eventId)
             return
         }
         broadcastEventPresence(null)
         activeEventId = eventId
+        activeEventMeshSecret = meshSecret
+        activeEventUserId = userId
+        activeEventAccessGranted = accessGranted && eventId != null
         restartForCurrentMode()
     }
 
     override fun sendEventChatMessage(message: EventChatMessage) {
-        if (message.eventId != activeEventId || message.text.isBlank()) return
+        if (!activeEventAccessGranted || message.eventId != activeEventId || message.text.isBlank()) return
         val packet = message.toPacket()
         rememberId(seenEventMessageIds, message.id)
-        sendPacketToMany(establishedEndpoints, packet) {
+        sendPacketToMany(eventEndpoints, packet) {
             listener?.onEventMessageSent(message.eventId, message.id)
         }
     }
 
     override fun sendEventAnnouncement(announcement: EventAnnouncement) {
-        if (announcement.eventId != activeEventId) return
+        if (!activeEventAccessGranted || announcement.eventId != activeEventId) return
         val packet = announcement.toPacket()
         rememberId(seenEventAnnouncementIds, eventAnnouncementKey(packet))
-        sendPacketToMany(establishedEndpoints, packet)
+        sendPacketToMany(eventEndpoints, packet)
     }
 
     override fun sendEventMutation(mutation: EventMutation) {
-        if (!mutation.event.isDeleted && mutation.event.id != activeEventId) return
+        if (!activeEventAccessGranted || mutation.event.id != activeEventId) return
         val packet = mutation.toPacket()
         rememberId(seenEventMutationIds, eventMutationKey(packet))
-        sendPacketToMany(establishedEndpoints, packet)
+        sendPacketToMany(eventEndpoints, packet)
+    }
+
+    override fun sendEventAccessRequest(request: EventAccessRequest) {
+        if (request.eventId != activeEventId || request.userId != activeEventUserId) return
+        val packet = request.toPacket()
+        rememberId(seenEventAccessRequestIds, request.id)
+        sendPacketToMany(eventEndpoints, packet)
+    }
+
+    override fun sendEventAccessGrant(grant: EventAccessGrant) {
+        if (!activeEventAccessGranted || grant.eventId != activeEventId) return
+        val packet = grant.toPacket()
+        rememberId(seenEventAccessGrantIds, grant.id)
+        sendPacketToMany(eventEndpoints, packet)
     }
 
     override fun synchronizeEventHistory(peerId: String, messages: List<EventChatMessage>) {
@@ -388,11 +422,16 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         seenEventMessageIds.clear()
         seenEventAnnouncementIds.clear()
         seenEventMutationIds.clear()
+        seenEventAccessRequestIds.clear()
+        seenEventAccessGrantIds.clear()
         knownMeshPeers.clear()
         cachedGroupDefinitions.clear()
         cachedGroupMessages.clear()
         eventEndpoints.clear()
         activeEventId = null
+        activeEventMeshSecret = ""
+        activeEventUserId = ""
+        activeEventAccessGranted = false
         advertisingRequested = false
         discoveryRequested = false
     }
@@ -481,13 +520,15 @@ class NearbyChatManager(context: Context) : NearbyChatController {
                 eventId = eventId.orEmpty(),
                 peerId = localPeerId,
                 name = localDisplayName,
+                userId = activeEventUserId,
                 active = eventId != null,
+                accessGranted = activeEventAccessGranted,
             ),
         )
     }
 
     private fun currentServiceId(): String = activeEventId
-        ?.let(::eventServiceId)
+        ?.let { eventServiceId(it, activeEventMeshSecret) }
         ?: SERVICE_ID
 
     private fun advertisedEndpointName(): String = if (activeEventId == null) {
@@ -612,11 +653,12 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         if (!packet.active || packet.eventId.isBlank()) return
         if (packet.peerId != peer.peerId) return
         if (packet.eventId == activeEventId) {
-            listener?.onEventPeerAvailable(peer.peerId, packet.eventId)
+            listener?.onEventPeerAvailable(peer.peerId, packet.eventId, packet.userId, packet.accessGranted)
         }
     }
 
     private fun handleEventChatMessage(endpointId: String, packet: NearbyPacket.EventChatMessage) {
+        if (!activeEventAccessGranted) return
         if (endpointId !in eventEndpoints) return
         if (peerByEndpoint[endpointId] == null) return
         if (packet.messageId.isBlank() || packet.eventId.isBlank() || packet.senderId.isBlank() ||
@@ -637,13 +679,14 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         )
         if (packet.hopsRemaining > 0) {
             sendPacketToMany(
-                establishedEndpoints - endpointId,
+                eventEndpoints - endpointId,
                 packet.copy(hopsRemaining = packet.hopsRemaining - 1),
             )
         }
     }
 
     private fun handleEventAnnouncement(endpointId: String, packet: NearbyPacket.EventAnnouncement) {
+        if (!activeEventAccessGranted) return
         if (endpointId !in eventEndpoints) return
         if (peerByEndpoint[endpointId] == null) return
         if (packet.announcementId.isBlank() || packet.eventId.isBlank() || packet.adminId.isBlank() ||
@@ -667,13 +710,14 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         )
         if (packet.hopsRemaining > 0) {
             sendPacketToMany(
-                establishedEndpoints - endpointId,
+                eventEndpoints - endpointId,
                 packet.copy(hopsRemaining = packet.hopsRemaining - 1),
             )
         }
     }
 
     private fun handleEventMutation(endpointId: String, packet: NearbyPacket.EventMutation) {
+        if (!activeEventAccessGranted) return
         if (endpointId !in eventEndpoints) return
         if (peerByEndpoint[endpointId] == null) return
         if (packet.eventId.isBlank() || packet.adminId.isBlank() || packet.title.isBlank() ||
@@ -694,7 +738,13 @@ class NearbyChatManager(context: Context) : NearbyChatController {
                 endsAt = packet.endsAt,
                 createdBy = packet.createdBy,
                 adminIds = packet.adminIds.toSet(),
+                memberIds = packet.adminIds.toSet(),
                 adminPublicKeys = packet.adminPublicKeys,
+                visibility = EventVisibility.valueOf(packet.visibility),
+                requiresSignIn = packet.requiresSignIn,
+                privateMeshSecret = if (packet.visibility == EventVisibility.PRIVATE.name) {
+                    "pending-verification"
+                } else "",
                 createdAt = packet.createdAt,
                 updatedAt = packet.updatedAt,
                 deletedAt = packet.deletedAt,
@@ -703,7 +753,59 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         listener?.onEventMutationReceived(EventMutation(event, packet.adminId, packet.signature))
         if (packet.hopsRemaining > 0) {
             sendPacketToMany(
-                establishedEndpoints - endpointId,
+                eventEndpoints - endpointId,
+                packet.copy(hopsRemaining = packet.hopsRemaining - 1),
+            )
+        }
+    }
+
+    private fun handleEventAccessRequest(endpointId: String, packet: NearbyPacket.EventAccessRequest) {
+        if (endpointId !in eventEndpoints || peerByEndpoint[endpointId] == null) return
+        if (packet.requestId.isBlank() || packet.eventId != activeEventId || packet.userId.isBlank() ||
+            packet.peerId.isBlank() || packet.hopsRemaining !in 0..MAX_HOPS
+        ) return
+        if (!rememberId(seenEventAccessRequestIds, packet.requestId)) return
+        listener?.onEventAccessRequestReceived(
+            EventAccessRequest(
+                id = packet.requestId,
+                eventId = packet.eventId,
+                userId = packet.userId,
+                peerId = packet.peerId,
+                displayName = packet.displayName.take(24),
+                requestedAt = packet.requestedAt,
+            ),
+        )
+        if (packet.hopsRemaining > 0) {
+            sendPacketToMany(
+                eventEndpoints - endpointId,
+                packet.copy(hopsRemaining = packet.hopsRemaining - 1),
+            )
+        }
+    }
+
+    private fun handleEventAccessGrant(endpointId: String, packet: NearbyPacket.EventAccessGrant) {
+        if (endpointId !in eventEndpoints || peerByEndpoint[endpointId] == null) return
+        if (packet.grantId.isBlank() || packet.requestId.isBlank() || packet.eventId != activeEventId ||
+            packet.userId.isBlank() || packet.adminId.isBlank() || packet.signature.isBlank() ||
+            packet.hopsRemaining !in 0..MAX_HOPS
+        ) return
+        if (!rememberId(seenEventAccessGrantIds, packet.grantId)) return
+        listener?.onEventAccessGrantReceived(
+            EventAccessGrant(
+                id = packet.grantId,
+                requestId = packet.requestId,
+                eventId = packet.eventId,
+                userId = packet.userId,
+                peerId = packet.peerId,
+                adminId = packet.adminId,
+                issuedAt = packet.issuedAt,
+                expiresAt = packet.expiresAt,
+                signature = packet.signature,
+            ),
+        )
+        if (packet.hopsRemaining > 0) {
+            sendPacketToMany(
+                eventEndpoints - endpointId,
                 packet.copy(hopsRemaining = packet.hopsRemaining - 1),
             )
         }
@@ -795,9 +897,34 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         createdBy = event.createdBy,
         adminIds = event.adminIds.sorted(),
         adminPublicKeys = event.adminPublicKeys,
+        visibility = event.visibility.name,
+        requiresSignIn = event.requiresSignIn,
         createdAt = event.createdAt,
         updatedAt = event.updatedAt,
         deletedAt = event.deletedAt,
+        signature = signature,
+        hopsRemaining = MAX_HOPS,
+    )
+
+    private fun EventAccessRequest.toPacket() = NearbyPacket.EventAccessRequest(
+        requestId = id,
+        eventId = eventId,
+        userId = userId,
+        peerId = peerId,
+        displayName = displayName,
+        requestedAt = requestedAt,
+        hopsRemaining = MAX_HOPS,
+    )
+
+    private fun EventAccessGrant.toPacket() = NearbyPacket.EventAccessGrant(
+        grantId = id,
+        requestId = requestId,
+        eventId = eventId,
+        userId = userId,
+        peerId = peerId,
+        adminId = adminId,
+        issuedAt = issuedAt,
+        expiresAt = expiresAt,
         signature = signature,
         hopsRemaining = MAX_HOPS,
     )
@@ -865,8 +992,9 @@ class NearbyChatManager(context: Context) : NearbyChatController {
 
         fun boundedIdSet() = LinkedHashSet<String>()
 
-        fun eventServiceId(eventId: String): String {
-            val digest = MessageDigest.getInstance("SHA-256").digest(eventId.toByteArray())
+        fun eventServiceId(eventId: String, meshSecret: String = ""): String {
+            val digest = MessageDigest.getInstance("SHA-256")
+                .digest("$eventId|$meshSecret".toByteArray())
             val token = digest.take(EVENT_SERVICE_HASH_BYTES)
                 .joinToString("") { byte -> "%02x".format(byte.toInt() and 0xff) }
             return "$SERVICE_ID.event.$token"

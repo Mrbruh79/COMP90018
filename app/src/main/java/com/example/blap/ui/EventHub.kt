@@ -30,6 +30,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimePicker
@@ -57,6 +58,8 @@ import com.example.blap.event.CommunityEvent
 import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventPage
 import com.example.blap.event.EventUiState
+import com.example.blap.event.EventVisibility
+import com.example.blap.event.EventInvitationStatus
 import com.example.blap.venue.VenueManager
 import java.text.SimpleDateFormat
 import java.net.SocketTimeoutException
@@ -81,6 +84,10 @@ fun EventHub(
     onUpdate: (EventCreateRequest) -> Unit,
     onDeleteEvent: () -> Unit,
     onJoin: () -> Unit,
+    onInvite: (String) -> Unit,
+    onAcceptInvitation: (String) -> Unit,
+    onDeclineInvitation: (String) -> Unit,
+    onRevokeInvitation: (String) -> Unit,
     onLeave: () -> Unit,
     onPromoteMember: (String) -> Unit,
     onRemoveMember: (String) -> Unit,
@@ -88,6 +95,8 @@ fun EventHub(
     onShowAnnouncements: () -> Unit,
     onPublishAnnouncement: (String) -> Unit,
     onRequestGpsEntry: () -> Unit,
+    onRequestAdminAccess: () -> Unit,
+    onApproveAdminAccess: (String) -> Unit,
     onScanCheckInQr: () -> Unit,
     onShowCheckInQr: () -> Unit,
     onHideCheckInQr: () -> Unit,
@@ -118,7 +127,13 @@ fun EventHub(
     }
 
     when (state.page) {
-        EventPage.LIST -> EventListScreen(state, onBeginCreate, onOpen)
+        EventPage.LIST -> EventListScreen(
+            state,
+            onBeginCreate,
+            onOpen,
+            onAcceptInvitation,
+            onDeclineInvitation,
+        )
         EventPage.CREATE -> EventFormScreen(null, state.loading, onCreate, onBack)
         EventPage.EDIT -> EventFormScreen(state.selectedEvent, state.loading, onUpdate, onBack)
         EventPage.DETAIL -> EventDetailScreen(
@@ -126,12 +141,16 @@ fun EventHub(
             onBeginEdit,
             onDeleteEvent,
             onJoin,
+            onInvite,
+            onRevokeInvitation,
             onLeave,
             onPromoteMember,
             onRemoveMember,
             onDeleteLocalData,
             onShowAnnouncements,
             onRequestGpsEntry,
+            onRequestAdminAccess,
+            onApproveAdminAccess,
             onScanCheckInQr,
             onShowCheckInQr,
             onShowSavedChat,
@@ -147,6 +166,8 @@ private fun EventListScreen(
     state: EventUiState,
     onBeginCreate: () -> Unit,
     onOpen: (String) -> Unit,
+    onAcceptInvitation: (String) -> Unit,
+    onDeclineInvitation: (String) -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
         Row(
@@ -168,6 +189,31 @@ private fun EventListScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(vertical = 16.dp),
         ) {
+            if (state.invitations.isNotEmpty()) {
+                item { Text("Private invitations", style = MaterialTheme.typography.titleLarge) }
+                items(state.invitations, key = { "invite-${it.id}" }) { invitation ->
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(invitation.eventTitle, style = MaterialTheme.typography.titleMedium)
+                            Text(
+                                "Invited by ${invitation.inviterName} · ${formatEventTime(invitation.startsAt)}",
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Button(
+                                    onClick = { onAcceptInvitation(invitation.id) },
+                                    enabled = !state.loading,
+                                ) { Text("Accept") }
+                                OutlinedButton(
+                                    onClick = { onDeclineInvitation(invitation.id) },
+                                    enabled = !state.loading,
+                                ) { Text("Decline") }
+                            }
+                        }
+                    }
+                }
+                item { Text("Events", style = MaterialTheme.typography.titleLarge) }
+            }
             if (state.events.isEmpty()) {
                 item {
                     Text(
@@ -184,6 +230,19 @@ private fun EventListScreen(
                 ) {
                     Column(Modifier.padding(16.dp)) {
                         Text(event.title, style = MaterialTheme.typography.titleMedium)
+                        if (event.visibility == EventVisibility.PRIVATE) {
+                            Text(
+                                "Private · invite only",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        } else if (event.requiresSignIn) {
+                            Text(
+                                "Protected · sign-in required to join",
+                                color = MaterialTheme.colorScheme.primary,
+                                style = MaterialTheme.typography.labelMedium,
+                            )
+                        }
                         if (event.isDeleted) {
                             Text(
                                 "Deleted · read-only",
@@ -236,6 +295,12 @@ private fun EventFormScreen(
     var searchResults by remember { mutableStateOf<List<OsmSearchResult>>(emptyList()) }
     var searching by remember { mutableStateOf(false) }
     var radius by remember(existing?.id) { mutableFloatStateOf(existing?.radiusMetres?.toFloat() ?: 100f) }
+    var privateEvent by remember(existing?.id) {
+        mutableStateOf(existing?.visibility == EventVisibility.PRIVATE)
+    }
+    var protectedEvent by remember(existing?.id) {
+        mutableStateOf(existing?.requiresSignIn == true)
+    }
     var startsAt by remember(existing?.id) {
         mutableStateOf(existing?.startsAt?.let { Instant.ofEpochMilli(it).atZone(java.time.ZoneId.systemDefault()) }
             ?: defaultEventStart())
@@ -360,6 +425,56 @@ private fun EventFormScreen(
                 modifier = Modifier.fillMaxWidth(),
                 minLines = 3,
             )
+        }
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                    Text("Private event", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (existing == null) {
+                            "Hidden from Browse. Only signed-in CommonGround users you invite can join."
+                        } else {
+                            if (privateEvent) "Invite-only visibility" else "Visible to everyone"
+                        },
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+                Switch(
+                    checked = privateEvent,
+                    onCheckedChange = {
+                        privateEvent = it
+                        if (it) protectedEvent = false
+                    },
+                    enabled = existing == null,
+                )
+            }
+        }
+        if (!privateEvent) {
+            item {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f).padding(end = 12.dp)) {
+                        Text("Protected public event", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Everyone can discover the event, but only signed-in users can join.",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodySmall,
+                        )
+                    }
+                    Switch(
+                        checked = protectedEvent,
+                        onCheckedChange = { protectedEvent = it },
+                    )
+                }
+            }
         }
         item {
             Text("Event location", style = MaterialTheme.typography.titleMedium)
@@ -521,6 +636,8 @@ private fun EventFormScreen(
                                 radius.toDouble(),
                                 startsAt.toInstant().toEpochMilli(),
                                 endsAt.toInstant().toEpochMilli(),
+                                if (privateEvent) EventVisibility.PRIVATE else EventVisibility.PUBLIC,
+                                !privateEvent && protectedEvent,
                             ),
                         )
                     },
@@ -544,12 +661,16 @@ private fun EventDetailScreen(
     onBeginEdit: () -> Unit,
     onDeleteEvent: () -> Unit,
     onJoin: () -> Unit,
+    onInvite: (String) -> Unit,
+    onRevokeInvitation: (String) -> Unit,
     onLeave: () -> Unit,
     onPromoteMember: (String) -> Unit,
     onRemoveMember: (String) -> Unit,
     onDeleteLocalData: () -> Unit,
     onShowAnnouncements: () -> Unit,
     onRequestGpsEntry: () -> Unit,
+    onRequestAdminAccess: () -> Unit,
+    onApproveAdminAccess: (String) -> Unit,
     onScanCheckInQr: () -> Unit,
     onShowCheckInQr: () -> Unit,
     onShowSavedChat: () -> Unit,
@@ -561,6 +682,7 @@ private fun EventDetailScreen(
     val now = System.currentTimeMillis()
     var showDeleteConfirmation by remember(event.id) { mutableStateOf(false) }
     var showLeaveConfirmation by remember(event.id) { mutableStateOf(false) }
+    var inviteIdentifier by remember(event.id) { mutableStateOf("") }
     if (showDeleteConfirmation) {
         AlertDialog(
             onDismissRequest = { showDeleteConfirmation = false },
@@ -617,6 +739,21 @@ private fun EventDetailScreen(
         item { TextButton(onClick = onBack) { Text("‹ All events") } }
         item {
             Text(event.title, style = MaterialTheme.typography.headlineMedium)
+            if (event.visibility == EventVisibility.PRIVATE) {
+                Text(
+                    "Private · invite only",
+                    modifier = Modifier.padding(top = 6.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            } else if (event.requiresSignIn) {
+                Text(
+                    "Protected public event · sign-in required to join",
+                    modifier = Modifier.padding(top = 6.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
             if (event.isDeleted) {
                 Text(
                     "Deleted by the event admin · saved content is read-only",
@@ -658,17 +795,21 @@ private fun EventDetailScreen(
                 }
             }
         } else if (membership == null || membership.leftAt != null) {
-            item {
-                Button(onClick = onJoin, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) {
-                    Text("Join event")
-                }
-            }
-            if (event.isActive(now)) {
+            if (event.visibility == EventVisibility.PUBLIC) {
                 item {
-                    OutlinedButton(onClick = onScanCheckInQr, modifier = Modifier.fillMaxWidth()) {
-                        Text("Join and check in with venue QR")
+                    Button(onClick = onJoin, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) {
+                        Text("Join event")
                     }
                 }
+                if (event.isActive(now)) {
+                    item {
+                        OutlinedButton(onClick = onScanCheckInQr, modifier = Modifier.fillMaxWidth()) {
+                            Text("Join and check in with venue QR")
+                        }
+                    }
+                }
+            } else {
+                item { Text("An accepted in-app invitation is required to join this event.") }
             }
         } else {
             if (membership.isAdmin) {
@@ -681,9 +822,21 @@ private fun EventDetailScreen(
             item { Button(onClick = onShowAnnouncements, modifier = Modifier.fillMaxWidth()) { Text("Announcements") } }
             if (event.isActive(now)) {
                 item { Button(onClick = onRequestGpsEntry, modifier = Modifier.fillMaxWidth()) { Text("Enter on-site chat") } }
-                item { OutlinedButton(onClick = onScanCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Check in with venue QR") } }
-                if (membership.isAdmin) {
-                    item { OutlinedButton(onClick = onShowCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Display venue check-in QR") } }
+                if (event.visibility == EventVisibility.PUBLIC) {
+                    item { OutlinedButton(onClick = onScanCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Check in with venue QR") } }
+                    if (membership.isAdmin) {
+                        item { OutlinedButton(onClick = onShowCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Display venue check-in QR") } }
+                    }
+                } else {
+                    item {
+                        OutlinedButton(
+                            onClick = onRequestAdminAccess,
+                            enabled = !state.waitingForAdminAccess,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (state.waitingForAdminAccess) "Waiting for an admin…" else "Request admin access")
+                        }
+                    }
                 }
             } else {
                 item { OutlinedButton(onClick = onShowSavedChat, modifier = Modifier.fillMaxWidth()) { Text("View saved on-site chat") } }
@@ -735,6 +888,70 @@ private fun EventDetailScreen(
                         enabled = !state.loading,
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Delete event", color = MaterialTheme.colorScheme.error) }
+                }
+            }
+            if (event.visibility == EventVisibility.PRIVATE && membership.isAdmin) {
+                item { Text("Invite people", style = MaterialTheme.typography.titleMedium) }
+                item {
+                    Text(
+                        "Enter an exact @username or verified CommonGround account email.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedTextField(
+                            value = inviteIdentifier,
+                            onValueChange = { inviteIdentifier = it.take(120) },
+                            label = { Text("Username or email") },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Button(
+                            onClick = {
+                                onInvite(inviteIdentifier)
+                                inviteIdentifier = ""
+                            },
+                            enabled = inviteIdentifier.isNotBlank() && !state.loading,
+                        ) { Text("Invite") }
+                    }
+                }
+                items(state.eventInvitations, key = { "outgoing-${it.id}" }) { invitation ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(invitation.recipientName.ifBlank { "@${invitation.recipientUsername}" })
+                            Text(
+                                "@${invitation.recipientUsername} · ${invitation.status.name.lowercase()}",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        if (invitation.status == EventInvitationStatus.PENDING) {
+                            TextButton(onClick = { onRevokeInvitation(invitation.id) }) { Text("Revoke") }
+                        }
+                    }
+                }
+                if (state.accessRequests.isNotEmpty()) {
+                    item { Text("Nearby access requests", style = MaterialTheme.typography.titleMedium) }
+                    items(state.accessRequests, key = { "access-${it.id}" }) { request ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(request.displayName)
+                                Text("Accepted member waiting nearby", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Button(onClick = { onApproveAdminAccess(request.id) }) { Text("Allow") }
+                        }
+                    }
                 }
             }
             item { TextButton(onClick = onDeleteLocalData, modifier = Modifier.fillMaxWidth()) { Text("Delete local event data") } }

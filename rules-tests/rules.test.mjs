@@ -190,3 +190,133 @@ test('private groups restrict reads and membership changes to the owner', async 
   await assertFails(getDoc(doc(bob, 'privateChatsV2/g1/messages/m1')));
   await assertSucceeds(getDoc(doc(carol, 'privateChatsV2/g1')));
 });
+
+const eventFor = (id, creator, visibility, requiresSignIn = false) => {
+  const startsAt = Date.now() + 60_000;
+  const endsAt = startsAt + 3_600_000;
+  return {
+    title: `${visibility} event`, description: 'Event description', venueName: 'Venue',
+    latitude: -37.8136, longitude: 144.9631, radiusMetres: 100,
+    startsAt, endsAt, createdBy: creator, adminIds: [creator], memberIds: [creator],
+    adminPublicKeys: { [creator]: 'public-key' }, visibility,
+    requiresSignIn: visibility === 'PUBLIC' && requiresSignIn,
+    privateMeshSecret: visibility === 'PRIVATE' ? 's'.repeat(43) : '',
+    createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null,
+  };
+};
+
+const membershipFor = (eventId, uid, role = 'ATTENDEE') => ({
+  userId: uid, displayName: uid, role, joinedAt: Date.now(),
+  blockedAt: null, leftAt: null, accessMethod: null, checkedInAt: null,
+});
+
+async function createEventAs(uid, eventId, visibility, requiresSignIn = false) {
+  const db = client(uid);
+  const event = eventFor(eventId, uid, visibility, requiresSignIn);
+  const batch = writeBatch(db);
+  batch.set(doc(db, `events/${eventId}`), event);
+  batch.set(doc(db, `events/${eventId}/members/${uid}`), membershipFor(eventId, uid, 'PRIMARY_ADMIN'));
+  await assertSucceeds(batch.commit());
+  return event;
+}
+
+test('private events are invisible until an in-app invitation is accepted', async () => {
+  await publishAccount('alice');
+  await publishAccount('bob');
+  await publishAccount('carol');
+  const privateEvent = await createEventAs('alice', 'private-event', 'PRIVATE');
+  await createEventAs('alice', 'public-event', 'PUBLIC');
+  const alice = client('alice');
+  const bob = client('bob');
+  const carol = client('carol');
+
+  await assertFails(getDoc(doc(bob, 'events/private-event')));
+  await assertSucceeds(getDoc(doc(carol, 'events/public-event')));
+  await assertSucceeds(getDocs(query(collection(carol, 'events'), where('visibility', '==', 'PUBLIC'))));
+  await assertFails(getDocs(collection(carol, 'events')));
+
+  const invitationId = 'private-event_bob';
+  const invitation = {
+    eventId: 'private-event', eventTitle: privateEvent.title,
+    inviterUid: 'alice', inviterName: 'alice', recipientUid: 'bob',
+    recipientName: 'bob', recipientUsername: 'bob', startsAt: privateEvent.startsAt,
+    endsAt: privateEvent.endsAt, createdAt: Date.now(), expiresAt: privateEvent.endsAt,
+    status: 'PENDING',
+  };
+  await assertSucceeds(setDoc(doc(alice, `eventInvitations/${invitationId}`), invitation));
+  await assertSucceeds(getDoc(doc(bob, `eventInvitations/${invitationId}`)));
+  await assertFails(getDoc(doc(carol, `eventInvitations/${invitationId}`)));
+
+  const accept = writeBatch(bob);
+  accept.update(doc(bob, `eventInvitations/${invitationId}`), { status: 'ACCEPTED' });
+  accept.update(doc(bob, 'events/private-event'), { memberIds: ['alice', 'bob'] });
+  accept.set(doc(bob, 'events/private-event/members/bob'), membershipFor('private-event', 'bob'));
+  await assertSucceeds(accept.commit());
+  await assertSucceeds(getDoc(doc(bob, 'events/private-event')));
+  await assertSucceeds(getDocs(query(collection(bob, 'events'), where('memberIds', 'array-contains', 'bob'))));
+  await assertFails(getDoc(doc(carol, 'events/private-event')));
+});
+
+test('a private event cannot be joined without an accepted invitation', async () => {
+  await publishAccount('alice');
+  await publishAccount('bob');
+  await createEventAs('alice', 'private-event', 'PRIVATE');
+  const bob = client('bob');
+  const join = writeBatch(bob);
+  join.update(doc(bob, 'events/private-event'), { memberIds: ['alice', 'bob'] });
+  join.set(doc(bob, 'events/private-event/members/bob'), membershipFor('private-event', 'bob'));
+  await assertFails(join.commit());
+});
+
+test('guest users retain public event access but cannot access private events', async () => {
+  await publishAccount('alice');
+  await createEventAs('alice', 'public-event', 'PUBLIC');
+  await createEventAs('alice', 'private-event', 'PRIVATE');
+  const guest = environment.authenticatedContext('guest').firestore();
+
+  await assertSucceeds(getDoc(doc(guest, 'events/public-event')));
+  await assertSucceeds(getDocs(query(collection(guest, 'events'), where('visibility', '==', 'PUBLIC'))));
+  await assertFails(getDoc(doc(guest, 'events/private-event')));
+
+  const joinPublic = writeBatch(guest);
+  joinPublic.update(doc(guest, 'events/public-event'), { memberIds: ['alice', 'guest'] });
+  joinPublic.set(
+    doc(guest, 'events/public-event/members/guest'),
+    membershipFor('public-event', 'guest'),
+  );
+  await assertSucceeds(joinPublic.commit());
+
+  const createAsGuest = writeBatch(guest);
+  createAsGuest.set(doc(guest, 'events/guest-created'), eventFor('guest-created', 'guest', 'PUBLIC'));
+  createAsGuest.set(
+    doc(guest, 'events/guest-created/members/guest'),
+    membershipFor('guest-created', 'guest', 'PRIMARY_ADMIN'),
+  );
+  await assertFails(createAsGuest.commit());
+});
+
+test('protected public events remain visible but reject guest joins', async () => {
+  await publishAccount('alice');
+  await publishAccount('bob');
+  await createEventAs('alice', 'protected-event', 'PUBLIC', true);
+  const guest = environment.authenticatedContext('guest').firestore();
+  const bob = client('bob');
+
+  await assertSucceeds(getDoc(doc(guest, 'events/protected-event')));
+
+  const guestJoin = writeBatch(guest);
+  guestJoin.update(doc(guest, 'events/protected-event'), { memberIds: ['alice', 'guest'] });
+  guestJoin.set(
+    doc(guest, 'events/protected-event/members/guest'),
+    membershipFor('protected-event', 'guest'),
+  );
+  await assertFails(guestJoin.commit());
+
+  const accountJoin = writeBatch(bob);
+  accountJoin.update(doc(bob, 'events/protected-event'), { memberIds: ['alice', 'bob'] });
+  accountJoin.set(
+    doc(bob, 'events/protected-event/members/bob'),
+    membershipFor('protected-event', 'bob'),
+  );
+  await assertSucceeds(accountJoin.commit());
+});

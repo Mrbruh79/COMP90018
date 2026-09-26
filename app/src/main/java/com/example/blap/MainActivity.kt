@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
     private var deniedPermissions by mutableStateOf<List<String>>(emptyList())
     private var pendingEventGpsEntry = false
     private var pendingEventQrScan = false
+    private var pendingEventAdminAccess = false
     private var authAccount by mutableStateOf(AuthAccount())
     private var accountProfile by mutableStateOf<PublicAccountProfile?>(null)
     private var accountProfileLoading by mutableStateOf(false)
@@ -69,7 +70,15 @@ class MainActivity : ComponentActivity() {
             when {
                 pendingEventGpsEntry -> requestEventLocationPermission()
                 pendingEventQrScan -> scanEventCheckInQrNow()
+                pendingEventAdminAccess -> {
+                    pendingEventAdminAccess = false
+                    viewModel.requestEventAdminAccess()
+                }
             }
+        } else {
+            pendingEventGpsEntry = false
+            pendingEventQrScan = false
+            pendingEventAdminAccess = false
         }
     }
 
@@ -93,7 +102,9 @@ class MainActivity : ComponentActivity() {
         if (VenuePermissions.missing(this).isEmpty()) checkEventLocation()
         else {
             pendingEventGpsEntry = false
-            viewModel.showError("Allow location access or use the venue check-in QR.")
+            viewModel.showError(
+                "Allow location access, or use admin approval for a private event / the venue QR for a public event.",
+            )
         }
     }
 
@@ -189,12 +200,18 @@ class MainActivity : ComponentActivity() {
                             request.radiusMetres,
                             request.startsAt,
                             request.endsAt,
+                            request.visibility,
+                            request.requiresSignIn,
                         )
                     },
                     onOpenEvent = viewModel::openEvent,
                     onUpdateEvent = viewModel::updateSelectedEvent,
                     onDeleteEvent = viewModel::deleteSelectedEvent,
                     onJoinEvent = viewModel::joinSelectedEvent,
+                    onInviteToEvent = viewModel::inviteToSelectedEvent,
+                    onAcceptEventInvitation = viewModel::acceptEventInvitation,
+                    onDeclineEventInvitation = viewModel::declineEventInvitation,
+                    onRevokeEventInvitation = viewModel::revokeEventInvitation,
                     onLeaveEvent = viewModel::leaveSelectedEvent,
                     onPromoteEventMember = viewModel::promoteEventMember,
                     onRemoveEventMember = viewModel::removeEventMember,
@@ -202,6 +219,8 @@ class MainActivity : ComponentActivity() {
                     onShowEventAnnouncements = viewModel::showEventAnnouncements,
                     onPublishEventAnnouncement = viewModel::publishEventAnnouncement,
                     onRequestEventGpsEntry = ::requestEventGpsEntry,
+                    onRequestEventAdminAccess = ::requestEventAdminAccess,
+                    onApproveEventAdminAccess = viewModel::approveEventAdminAccess,
                     onScanEventQr = ::requestEventQrScan,
                     onShowEventQr = viewModel::showEventCheckInQr,
                     onHideEventQr = viewModel::hideEventCheckInQr,
@@ -223,7 +242,14 @@ class MainActivity : ComponentActivity() {
             intent.removeExtra(ACCOUNT_SETUP_ERROR)
             viewModel.showError(message)
         }
-        if (authAccount.uid.isNotBlank()) loadAccountProfile()
+        if (authAccount.uid.isNotBlank()) {
+            loadAccountProfile()
+        } else if (!authAccount.isAnonymous) {
+            AuthManager.ensureGuestSession {
+                authAccount = AuthManager.account
+                viewModel.accountChanged(authAccount.uid)
+            }
+        }
     }
 
     private fun localIdentity(): LocalIdentityStore {
@@ -277,11 +303,11 @@ class MainActivity : ComponentActivity() {
                             ContactProfile(displayName = profile.displayName, username = profile.username),
                         )
                         AuthManager.sendVerificationEmail { }
-                        recreate()
+                        restartForAccountChange()
                     } catch (error: Exception) {
                         intent.putExtra(ACCOUNT_SETUP_ERROR,
                             error.localizedMessage ?: "Account created, but username setup failed. Try another.")
-                        recreate()
+                        restartForAccountChange()
                     }
                 }
             },
@@ -291,7 +317,6 @@ class MainActivity : ComponentActivity() {
 
     private fun signOut() {
         viewModel.stopChat()
-        viewModel.accountChanged("")
         AuthManager.signOut()
         authAccount = AuthAccount()
         accountProfile = null
@@ -299,8 +324,13 @@ class MainActivity : ComponentActivity() {
             runCatching {
                 CredentialManager.create(this@MainActivity).clearCredentialState(ClearCredentialStateRequest())
             }
-            recreate()
+            restartForAccountChange()
         }
+    }
+
+    private fun restartForAccountChange() {
+        viewModelStore.clear()
+        recreate()
     }
 
     companion object {
@@ -311,11 +341,7 @@ class MainActivity : ComponentActivity() {
         AuthManager.createEmailAccount(email, password,
             onSuccess = {
                 authAccount = AuthManager.account
-                viewModel.accountChanged(authAccount.uid)
-                AuthManager.sendVerificationEmail { sent ->
-                    viewModel.showNotice(if (sent) "Account created. Check your email to enable email lookup."
-                        else "Account created. Verify your email to enable email lookup.")
-                }
+                AuthManager.sendVerificationEmail { restartForAccountChange() }
             },
             onError = viewModel::showError,
         )
@@ -323,7 +349,7 @@ class MainActivity : ComponentActivity() {
 
     private fun signInWithEmail(email: String, password: String) {
         AuthManager.signInWithEmail(email, password,
-            onSuccess = { recreate() },
+            onSuccess = ::restartForAccountChange,
             onError = viewModel::showError,
         )
     }
@@ -349,7 +375,7 @@ class MainActivity : ComponentActivity() {
                 }
                 val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
                 AuthManager.signInWithGoogleToken(token,
-                    onSuccess = { recreate() },
+                    onSuccess = ::restartForAccountChange,
                     onError = viewModel::showError,
                 )
             } catch (_: GetCredentialCancellationException) {
@@ -386,10 +412,25 @@ class MainActivity : ComponentActivity() {
     private fun requestEventGpsEntry() {
         pendingEventGpsEntry = true
         pendingEventQrScan = false
+        pendingEventAdminAccess = false
         val missingNearby = NearbyPermissions.missing(this)
         if (missingNearby.isEmpty()) {
             viewModel.startChat()
             requestEventLocationPermission()
+        } else {
+            nearbyPermissionLauncher.launch(missingNearby.toTypedArray())
+        }
+    }
+
+    private fun requestEventAdminAccess() {
+        pendingEventGpsEntry = false
+        pendingEventQrScan = false
+        pendingEventAdminAccess = true
+        val missingNearby = NearbyPermissions.missing(this)
+        if (missingNearby.isEmpty()) {
+            viewModel.startChat()
+            pendingEventAdminAccess = false
+            viewModel.requestEventAdminAccess()
         } else {
             nearbyPermissionLauncher.launch(missingNearby.toTypedArray())
         }
@@ -406,7 +447,9 @@ class MainActivity : ComponentActivity() {
             try {
                 val location = VenueManager.getFreshLocation(applicationContext)
                 if (location == null) {
-                    viewModel.showError("A current location was not available. Use the venue check-in QR.")
+                    viewModel.showError(
+                        "A current location was not available. Use admin approval for a private event or the venue QR for a public event.",
+                    )
                 } else {
                     viewModel.enterEventWithGps(
                         location.latitude,
@@ -415,7 +458,9 @@ class MainActivity : ComponentActivity() {
                     )
                 }
             } catch (_: Exception) {
-                viewModel.showError("Location could not be checked. Use the venue check-in QR.")
+                viewModel.showError(
+                    "Location could not be checked. Use admin approval for a private event or the venue QR for a public event.",
+                )
             } finally {
                 pendingEventGpsEntry = false
             }
@@ -425,6 +470,7 @@ class MainActivity : ComponentActivity() {
     private fun requestEventQrScan() {
         pendingEventQrScan = true
         pendingEventGpsEntry = false
+        pendingEventAdminAccess = false
         val missingNearby = NearbyPermissions.missing(this)
         if (missingNearby.isEmpty()) {
             viewModel.startChat()

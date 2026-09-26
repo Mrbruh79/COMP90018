@@ -25,10 +25,15 @@ data class EventUiState(
     val selectedEventId: String? = null,
     val membership: EventMembership? = null,
     val members: List<EventMembership> = emptyList(),
+    val invitations: List<EventInvitation> = emptyList(),
+    val eventInvitations: List<EventInvitation> = emptyList(),
+    val accessRequests: List<EventAccessRequest> = emptyList(),
     val announcements: List<EventAnnouncement> = emptyList(),
     val chatMessages: List<EventChatMessage> = emptyList(),
     val activeEventId: String? = null,
     val checkInQrPayload: String? = null,
+    val waitingForAdminAccess: Boolean = false,
+    val currentUserId: String = "",
     val loading: Boolean = false,
     val notice: String? = null,
     val error: String? = null,
@@ -54,18 +59,40 @@ class EventCoordinator(
     private var eventMutationInFlight = false
     private val tombstoneCleanupInFlight = mutableSetOf<String>()
     private var eventObserver: AutoCloseable? = null
+    private var invitationObserver: AutoCloseable? = null
+    private var pendingAccessRequest: EventAccessRequest? = null
 
     init {
         scope.launch {
             runCatching {
-                requireUserId()
+                val userId = requireUserId()
+                _uiState.update { it.copy(currentUserId = userId) }
                 startEventObserver()
+                startInvitationObserver()
             }.onFailure { failure ->
                 _uiState.update { state ->
                     state.copy(error = failure.readableMessage("Could not connect to events"))
                 }
             }
         }
+    }
+
+    @Synchronized
+    private fun startInvitationObserver() {
+        if (invitationObserver != null) return
+        invitationObserver = remoteRepository.observeInvitations(
+            onInvitations = { invitations ->
+                _uiState.update { state ->
+                    state.copy(
+                        invitations = invitations.filter { it.status == EventInvitationStatus.PENDING }
+                            .sortedBy(EventInvitation::startsAt),
+                    )
+                }
+            },
+            onError = { failure ->
+                _uiState.update { it.copy(notice = failure.readableMessage("Invitations will refresh when online")) }
+            },
+        )
     }
 
     @Synchronized
@@ -108,6 +135,25 @@ class EventCoordinator(
         )
     }
 
+    fun accountChanged() {
+        eventObserver?.close()
+        invitationObserver?.close()
+        eventObserver = null
+        invitationObserver = null
+        cachedUserId = null
+        scope.launch {
+            runCatching {
+                val userId = requireUserId()
+                _uiState.update { it.copy(currentUserId = userId) }
+                startEventObserver()
+                startInvitationObserver()
+                refreshEvents()
+            }.onFailure { failure ->
+                _uiState.update { it.copy(error = failure.readableMessage("Could not refresh events")) }
+            }
+        }
+    }
+
     fun showList() {
         _uiState.update {
             it.copy(
@@ -115,9 +161,12 @@ class EventCoordinator(
                 selectedEventId = null,
                 membership = null,
                 members = emptyList(),
+                eventInvitations = emptyList(),
+                accessRequests = emptyList(),
                 announcements = emptyList(),
                 chatMessages = emptyList(),
                 checkInQrPayload = null,
+                waitingForAdminAccess = false,
                 error = null,
             )
         }
@@ -164,7 +213,16 @@ class EventCoordinator(
             }
                 .onSuccess { remoteEvents ->
                     remoteEvents.forEach(eventStore::saveEvent)
-                    _uiState.update { it.copy(events = eventStore.getEvents(), loading = false) }
+                    val invitations = runCatching { remoteRepository.listInvitations() }.getOrDefault(emptyList())
+                    _uiState.update {
+                        it.copy(
+                            events = eventStore.getEvents(),
+                            invitations = invitations.filter { invitation ->
+                                invitation.status == EventInvitationStatus.PENDING
+                            },
+                            loading = false,
+                        )
+                    }
                 }
                 .onFailure { failure ->
                     _uiState.update {
@@ -187,6 +245,8 @@ class EventCoordinator(
         radiusMetres: Double,
         startsAt: Long,
         endsAt: Long,
+        visibility: EventVisibility,
+        requiresSignIn: Boolean,
     ) {
         if (createRequestInFlight) return
         val cleanTitle = title.trim().take(80)
@@ -197,6 +257,10 @@ class EventCoordinator(
         }
         if (endsAt <= startsAt || endsAt <= clock()) {
             _uiState.update { it.copy(error = "Choose an end time after the start time.") }
+            return
+        }
+        if (!remoteRepository.hasSignedInAccount()) {
+            _uiState.update { it.copy(error = "Sign in with Email or Google to create an event.") }
             return
         }
         createRequestInFlight = true
@@ -218,7 +282,13 @@ class EventCoordinator(
                         endsAt = endsAt,
                         createdBy = userId,
                         adminIds = setOf(userId),
+                        memberIds = setOf(userId),
                         adminPublicKeys = mapOf(userId to EventCheckInCodec.encodePublicKey(keys.public)),
+                        visibility = visibility,
+                        requiresSignIn = visibility == EventVisibility.PUBLIC && requiresSignIn,
+                        privateMeshSecret = if (visibility == EventVisibility.PRIVATE) {
+                            EventSecrets.newMeshSecret()
+                        } else "",
                         createdAt = clock(),
                     )
                     val membership = EventMembership(
@@ -286,6 +356,9 @@ class EventCoordinator(
             radiusMetres = request.radiusMetres,
             startsAt = request.startsAt,
             endsAt = request.endsAt,
+            visibility = event.visibility,
+            requiresSignIn = event.visibility == EventVisibility.PUBLIC && request.requiresSignIn,
+            privateMeshSecret = event.privateMeshSecret,
             updatedAt = maxOf(clock(), event.updatedAt + 1),
         )
         val unsigned = EventMutation(updated, membership.userId)
@@ -382,11 +455,22 @@ class EventCoordinator(
             _uiState.update { it.copy(membership = eventStore.getMembership(event.id, userId)) }
             refreshMembers(event.id)
             refreshAnnouncements(event.id)
+            if (event.visibility == EventVisibility.PRIVATE && event.isAdmin(userId)) {
+                refreshEventInvitations(event.id)
+            }
         }
     }
 
     fun joinSelectedEvent() {
         val event = _uiState.value.selectedEvent ?: return
+        if (event.visibility == EventVisibility.PRIVATE) {
+            _uiState.update { it.copy(error = "Private events can only be joined by accepting an invitation.") }
+            return
+        }
+        if (event.requiresSignIn && !remoteRepository.hasSignedInAccount()) {
+            _uiState.update { it.copy(error = "Sign in with Email or Google to join this protected event.") }
+            return
+        }
         if (event.isDeleted) {
             _uiState.update { it.copy(error = "This event has been deleted by its admin.") }
             return
@@ -411,6 +495,129 @@ class EventCoordinator(
             }.onFailure { failure ->
                 _uiState.update { it.copy(loading = false, error = failure.readableMessage("Could not join event")) }
             }
+        }
+    }
+
+    fun inviteToSelectedEvent(identifier: String) {
+        val state = _uiState.value
+        val event = state.selectedEvent ?: return
+        val membership = state.membership ?: return
+        if (event.visibility != EventVisibility.PRIVATE || !membership.isAdmin || !event.isAdmin(membership.userId)) {
+            _uiState.update { it.copy(error = "Only a private-event admin can send invitations.") }
+            return
+        }
+        if (identifier.isBlank()) return
+        _uiState.update { it.copy(loading = true, error = null) }
+        scope.launch {
+            runCatching {
+                val invitee = remoteRepository.findInvitee(identifier)
+                    ?: throw IllegalArgumentException("No CommonGround account matched that exact username or verified email.")
+                if (invitee.uid in event.memberIds) {
+                    throw IllegalArgumentException("That account is already an event member.")
+                }
+                val invitation = EventInvitation(
+                    id = "${event.id}_${invitee.uid}",
+                    eventId = event.id,
+                    eventTitle = event.title,
+                    inviterUid = membership.userId,
+                    inviterName = membership.displayName,
+                    recipientUid = invitee.uid,
+                    recipientName = invitee.displayName,
+                    recipientUsername = invitee.username,
+                    startsAt = event.startsAt,
+                    endsAt = event.endsAt,
+                    createdAt = clock(),
+                    expiresAt = event.endsAt,
+                )
+                remoteRepository.invite(invitation)
+                invitation
+            }.onSuccess { invitation ->
+                _uiState.update {
+                    it.copy(
+                        eventInvitations = (it.eventInvitations.filterNot { old -> old.id == invitation.id } + invitation)
+                            .sortedBy(EventInvitation::recipientName),
+                        loading = false,
+                        notice = "Invitation sent to @${invitation.recipientUsername}.",
+                    )
+                }
+            }.onFailure { failure ->
+                _uiState.update { it.copy(loading = false, error = failure.readableMessage("Invitation could not be sent")) }
+            }
+        }
+    }
+
+    fun acceptInvitation(invitationId: String) {
+        val invitation = _uiState.value.invitations.firstOrNull { it.id == invitationId } ?: return
+        if (!invitation.isPending) {
+            _uiState.update { it.copy(error = "This invitation is no longer available.") }
+            return
+        }
+        _uiState.update { it.copy(loading = true, error = null) }
+        scope.launch {
+            runCatching {
+                val userId = requireUserId()
+                require(userId == invitation.recipientUid)
+                val membership = EventMembership(
+                    eventId = invitation.eventId,
+                    userId = userId,
+                    displayName = identityStore.getDisplayName(),
+                    role = EventRole.ATTENDEE,
+                    joinedAt = clock(),
+                )
+                remoteRepository.acceptInvitation(invitation, membership)
+                eventStore.saveMembership(membership)
+                remoteRepository.listEvents().forEach(eventStore::saveEvent)
+                membership
+            }.onSuccess {
+                _uiState.update { state ->
+                    state.copy(
+                        events = eventStore.getEvents(),
+                        invitations = state.invitations.filterNot { it.id == invitationId },
+                        loading = false,
+                        notice = "Private event invitation accepted.",
+                    )
+                }
+            }.onFailure { failure ->
+                _uiState.update { it.copy(loading = false, error = failure.readableMessage("Invitation could not be accepted")) }
+            }
+        }
+    }
+
+    fun declineInvitation(invitationId: String) {
+        val invitation = _uiState.value.invitations.firstOrNull { it.id == invitationId } ?: return
+        scope.launch {
+            runCatching { remoteRepository.declineInvitation(invitation) }
+                .onSuccess {
+                    _uiState.update { state ->
+                        state.copy(
+                            invitations = state.invitations.filterNot { it.id == invitationId },
+                            notice = "Invitation declined.",
+                        )
+                    }
+                }
+                .onFailure { failure ->
+                    _uiState.update { it.copy(error = failure.readableMessage("Invitation could not be declined")) }
+                }
+        }
+    }
+
+    fun revokeInvitation(invitationId: String) {
+        val invitation = _uiState.value.eventInvitations.firstOrNull { it.id == invitationId } ?: return
+        scope.launch {
+            runCatching { remoteRepository.revokeInvitation(invitation) }
+                .onSuccess {
+                    _uiState.update { state ->
+                        state.copy(
+                            eventInvitations = state.eventInvitations.map {
+                                if (it.id == invitationId) it.copy(status = EventInvitationStatus.REVOKED) else it
+                            },
+                            notice = "Invitation revoked.",
+                        )
+                    }
+                }
+                .onFailure { failure ->
+                    _uiState.update { it.copy(error = failure.readableMessage("Invitation could not be revoked")) }
+                }
         }
     }
 
@@ -483,7 +690,10 @@ class EventCoordinator(
         scope.launch {
             runCatching { remoteRepository.blockMember(event.id, userId, blockedAt) }
                 .onSuccess {
-                    val updatedEvent = event.copy(adminIds = event.adminIds - userId)
+                    val updatedEvent = event.copy(
+                        adminIds = event.adminIds - userId,
+                        memberIds = event.memberIds - userId,
+                    )
                     eventStore.saveEvent(updatedEvent)
                     _uiState.update {
                         it.copy(
@@ -578,13 +788,25 @@ class EventCoordinator(
             clock(),
         )) {
             is EventEntryDecision.Allowed -> activateOnSite(event, requireNotNull(membership), decision.method)
-            is EventEntryDecision.NeedsQr -> _uiState.update { it.copy(notice = decision.reason) }
+            is EventEntryDecision.NeedsQr -> _uiState.update {
+                if (event.visibility == EventVisibility.PRIVATE) {
+                    it.copy(notice = "GPS is not accurate enough. Ask an on-site event admin for access.")
+                } else it.copy(notice = decision.reason)
+            }
             is EventEntryDecision.Denied -> _uiState.update { it.copy(error = decision.reason) }
         }
     }
 
     fun enterWithQr(payload: String) {
         val event = _uiState.value.selectedEvent ?: return
+        if (event.visibility == EventVisibility.PRIVATE) {
+            _uiState.update { it.copy(error = "Private events do not use QR check-in.") }
+            return
+        }
+        if (event.requiresSignIn && !remoteRepository.hasSignedInAccount()) {
+            _uiState.update { it.copy(error = "Sign in with Email or Google to join this protected event.") }
+            return
+        }
         val credential = event.adminPublicKeys.entries.firstNotNullOfOrNull { (adminId, encodedKey) ->
             runCatching {
                 EventCheckInCodec.verify(
@@ -632,6 +854,7 @@ class EventCoordinator(
 
     fun createVenueCheckInQr(): String? {
         val event = _uiState.value.selectedEvent ?: return null
+        if (event.visibility == EventVisibility.PRIVATE) return null
         val membership = _uiState.value.membership ?: return null
         if (!membership.isAdmin || !event.isAdmin(membership.userId) || !event.isActive(clock())) return null
         val keys = adminKeyStore.get(membership.userId) ?: return null
@@ -683,10 +906,116 @@ class EventCoordinator(
         }
     }
 
-    fun onEventPeerAvailable(peerId: String, eventId: String) {
-        if (_uiState.value.activeEventId != eventId) return
+    fun requestAdminOnSiteAccess() {
+        val state = _uiState.value
+        val event = state.selectedEvent ?: return
+        val membership = state.membership ?: return
+        if (event.visibility != EventVisibility.PRIVATE || !event.isActive(clock()) || !membership.canParticipate) {
+            _uiState.update { it.copy(error = "Manual access is only available to accepted members during a private event.") }
+            return
+        }
+        val request = EventAccessRequest(
+            eventId = event.id,
+            userId = membership.userId,
+            peerId = identityStore.getPeerId(),
+            displayName = membership.displayName,
+            requestedAt = clock(),
+        )
+        pendingAccessRequest = request
+        nearbyController.setActiveEvent(
+            eventId = event.id,
+            meshSecret = event.privateMeshSecret,
+            userId = membership.userId,
+            accessGranted = false,
+        )
+        nearbyController.sendEventAccessRequest(request)
+        _uiState.update {
+            it.copy(waitingForAdminAccess = true, notice = "Waiting for a nearby event admin to approve access.")
+        }
+    }
+
+    fun approveOnSiteAccess(requestId: String) {
+        val state = _uiState.value
+        val event = state.selectedEvent ?: return
+        val membership = state.membership ?: return
+        val request = state.accessRequests.firstOrNull { it.id == requestId } ?: return
+        if (!membership.isAdmin || !event.isAdmin(membership.userId) || request.userId !in event.memberIds) {
+            _uiState.update { it.copy(error = "This access request cannot be approved.") }
+            return
+        }
+        val target = state.members.firstOrNull { it.userId == request.userId }
+        if (target != null && !target.canParticipate) {
+            _uiState.update { it.copy(error = "This member has left or been removed.") }
+            return
+        }
+        val keys = adminKeyStore.get(membership.userId)
+        if (keys == null) {
+            _uiState.update { it.copy(error = "This device does not have the admin signing key.") }
+            return
+        }
+        val issuedAt = clock()
+        val unsigned = EventAccessGrant(
+            requestId = request.id,
+            eventId = event.id,
+            userId = request.userId,
+            peerId = request.peerId,
+            adminId = membership.userId,
+            issuedAt = issuedAt,
+            expiresAt = issuedAt + ACCESS_GRANT_LIFETIME_MILLIS,
+        )
+        val grant = unsigned.copy(signature = EventAccessGrantSigner.sign(unsigned, keys.private))
+        nearbyController.sendEventAccessGrant(grant)
+        _uiState.update {
+            it.copy(
+                accessRequests = it.accessRequests.filterNot { access -> access.id == requestId },
+                notice = "On-site access approved for ${request.displayName}.",
+            )
+        }
+    }
+
+    fun onEventPeerAvailable(peerId: String, eventId: String, userId: String, accessGranted: Boolean) {
+        val state = _uiState.value
+        pendingAccessRequest?.takeIf { it.eventId == eventId }?.let(nearbyController::sendEventAccessRequest)
+        if (state.activeEventId != eventId || !accessGranted) return
+        val event = state.events.firstOrNull { it.id == eventId } ?: return
+        if (event.visibility == EventVisibility.PRIVATE && userId !in event.memberIds) return
         nearbyController.synchronizeEventHistory(peerId, eventStore.getRecentChatMessages(eventId, 50))
         nearbyController.synchronizeEventAnnouncements(peerId, eventStore.getAnnouncements(eventId, 100))
+    }
+
+    fun onEventAccessRequestReceived(request: EventAccessRequest) {
+        val state = _uiState.value
+        val event = state.events.firstOrNull { it.id == request.eventId } ?: return
+        val membership = state.membership ?: return
+        if (state.activeEventId != event.id || event.visibility != EventVisibility.PRIVATE ||
+            !membership.isAdmin || !event.isAdmin(membership.userId) || request.userId !in event.memberIds ||
+            request.requestedAt !in (clock() - ACCESS_REQUEST_MAX_AGE_MILLIS)..(clock() + EventAccessPolicy.MAX_CLOCK_SKEW_MILLIS)
+        ) return
+        _uiState.update { current ->
+            current.copy(
+                accessRequests = (current.accessRequests.filterNot { it.id == request.id } + request)
+                    .sortedBy(EventAccessRequest::requestedAt),
+            )
+        }
+    }
+
+    fun onEventAccessGrantReceived(grant: EventAccessGrant) {
+        val request = pendingAccessRequest ?: return
+        val state = _uiState.value
+        val event = state.selectedEvent ?: return
+        val membership = state.membership ?: return
+        if (grant.requestId != request.id || grant.eventId != event.id || grant.userId != membership.userId ||
+            grant.peerId != identityStore.getPeerId() || grant.adminId !in event.adminIds ||
+            clock() !in grant.issuedAt..grant.expiresAt ||
+            grant.expiresAt - grant.issuedAt > ACCESS_GRANT_LIFETIME_MILLIS
+        ) return
+        val publicKey = event.adminPublicKeys[grant.adminId]
+            ?.let { runCatching { EventCheckInCodec.decodePublicKey(it) }.getOrNull() }
+            ?: return
+        if (!EventAccessGrantSigner.verify(grant, publicKey)) return
+        pendingAccessRequest = null
+        _uiState.update { it.copy(waitingForAdminAccess = false) }
+        activateOnSite(event, membership, EventAccessMethod.ADMIN_APPROVAL)
     }
 
     fun onEventChatMessageReceived(message: EventChatMessage) {
@@ -724,15 +1053,22 @@ class EventCoordinator(
 
     fun onEventMutationReceived(mutation: EventMutation) {
         val existing = eventStore.getEvent(mutation.event.id) ?: return
-        if (mutation.event.createdBy != existing.createdBy) return
-        if (mutation.adminId !in existing.adminIds || mutation.event.updatedAt <= existing.updatedAt) return
-        if (mutation.event.deletedAt != null && mutation.adminId != existing.createdBy) return
+        val normalizedMutation = mutation.copy(
+            event = mutation.event.copy(
+                memberIds = existing.memberIds,
+                visibility = existing.visibility,
+                privateMeshSecret = existing.privateMeshSecret,
+            ),
+        )
+        if (normalizedMutation.event.createdBy != existing.createdBy) return
+        if (normalizedMutation.adminId !in existing.adminIds || normalizedMutation.event.updatedAt <= existing.updatedAt) return
+        if (normalizedMutation.event.deletedAt != null && normalizedMutation.adminId != existing.createdBy) return
         val publicKey = existing.adminPublicKeys[mutation.adminId]
             ?.let { runCatching { EventCheckInCodec.decodePublicKey(it) }.getOrNull() }
             ?: return
-        if (!EventMutationSigner.verify(mutation, publicKey)) return
-        if (mutation.event.isDeleted) {
-            eventStore.purgeEvent(mutation.event.id)
+        if (!EventMutationSigner.verify(normalizedMutation, publicKey)) return
+        if (normalizedMutation.event.isDeleted) {
+            eventStore.purgeEvent(normalizedMutation.event.id)
             nearbyController.setActiveEvent(null)
             _uiState.update {
                 EventUiState(
@@ -742,7 +1078,7 @@ class EventCoordinator(
             }
             return
         }
-        eventStore.saveEvent(mutation.event)
+        eventStore.saveEvent(normalizedMutation.event)
         _uiState.update { state ->
             state.copy(
                 events = eventStore.getEvents(),
@@ -757,6 +1093,7 @@ class EventCoordinator(
 
     fun close() {
         eventObserver?.close()
+        invitationObserver?.close()
         eventStore.close()
     }
 
@@ -786,7 +1123,12 @@ class EventCoordinator(
     ) {
         val checkedIn = membership.copy(accessMethod = method, checkedInAt = clock())
         eventStore.saveMembership(checkedIn)
-        nearbyController.setActiveEvent(event.id)
+        nearbyController.setActiveEvent(
+            eventId = event.id,
+            meshSecret = event.privateMeshSecret,
+            userId = checkedIn.userId,
+            accessGranted = true,
+        )
         _uiState.update {
             it.copy(
                 page = EventPage.ON_SITE_CHAT,
@@ -828,6 +1170,19 @@ class EventCoordinator(
         }
     }
 
+    private fun refreshEventInvitations(eventId: String) {
+        scope.launch {
+            runCatching { remoteRepository.listEventInvitations(eventId) }
+                .onSuccess { invitations ->
+                    _uiState.update { state ->
+                        if (state.selectedEventId == eventId) {
+                            state.copy(eventInvitations = invitations.sortedBy(EventInvitation::recipientName))
+                        } else state
+                    }
+                }
+        }
+    }
+
     private fun refreshMembers(eventId: String) {
         scope.launch {
             runCatching { remoteRepository.listMembers(eventId) }
@@ -838,7 +1193,10 @@ class EventCoordinator(
                     if (localMembership != null) {
                         eventStore.saveMembership(localMembership)
                         if (localMembership.isAdmin) registerLocalAdminKey(eventId, localMembership.userId)
-                    } else if (cachedMembership?.canParticipate == true) {
+                    } else if (
+                        cachedMembership?.canParticipate == true &&
+                        eventStore.getEvent(eventId)?.visibility == EventVisibility.PUBLIC
+                    ) {
                         runCatching { remoteRepository.joinEvent(cachedMembership) }
                     }
                     _uiState.update { state ->
@@ -865,10 +1223,23 @@ class EventCoordinator(
             }
     }
 
-    private suspend fun requireUserId(): String = cachedUserId ?: remoteRepository
-        .requireUserId()
-        .also { cachedUserId = it }
+    private suspend fun requireUserId(): String {
+        // Firebase can replace an anonymous user with a different account UID during sign-in.
+        // Always re-read the active UID so an EventCoordinator retained across Activity
+        // recreation never creates an event using the previous guest identity.
+        val userId = remoteRepository.requireUserId()
+        if (cachedUserId != userId) {
+            cachedUserId = userId
+            _uiState.update { it.copy(currentUserId = userId) }
+        }
+        return userId
+    }
 
     private fun Throwable.readableMessage(prefix: String): String =
         "$prefix: ${localizedMessage?.takeIf(String::isNotBlank) ?: "unknown error"}"
+
+    private companion object {
+        const val ACCESS_GRANT_LIFETIME_MILLIS = 10 * 60 * 1_000L
+        const val ACCESS_REQUEST_MAX_AGE_MILLIS = 10 * 60 * 1_000L
+    }
 }

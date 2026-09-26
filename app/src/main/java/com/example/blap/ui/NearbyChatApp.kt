@@ -162,6 +162,10 @@ fun NearbyChatApp(
     onUpdateEvent: (EventCreateRequest) -> Unit,
     onDeleteEvent: () -> Unit,
     onJoinEvent: () -> Unit,
+    onInviteToEvent: (String) -> Unit,
+    onAcceptEventInvitation: (String) -> Unit,
+    onDeclineEventInvitation: (String) -> Unit,
+    onRevokeEventInvitation: (String) -> Unit,
     onLeaveEvent: () -> Unit,
     onPromoteEventMember: (String) -> Unit,
     onRemoveEventMember: (String) -> Unit,
@@ -169,6 +173,8 @@ fun NearbyChatApp(
     onShowEventAnnouncements: () -> Unit,
     onPublishEventAnnouncement: (String) -> Unit,
     onRequestEventGpsEntry: () -> Unit,
+    onRequestEventAdminAccess: () -> Unit,
+    onApproveEventAdminAccess: (String) -> Unit,
     onScanEventQr: () -> Unit,
     onShowEventQr: () -> Unit,
     onHideEventQr: () -> Unit,
@@ -197,7 +203,7 @@ fun NearbyChatApp(
         onDismissEventMessage()
     }
 
-    if (authAccount.uid.isBlank() || accountProfile == null) {
+    if (!authAccount.isAnonymous && (authAccount.uid.isBlank() || accountProfile == null)) {
         Scaffold(snackbarHost = { SnackbarHost(snackbar) }) { padding ->
             AccountGate(
                 modifier = Modifier.padding(padding),
@@ -213,6 +219,8 @@ fun NearbyChatApp(
         }
         return
     }
+    val visibleAccountProfile = accountProfile
+        ?: PublicAccountProfile(username = "", displayName = uiState.displayName)
 
     Box(
         Modifier
@@ -342,7 +350,7 @@ fun NearbyChatApp(
                     )
 
                     ChatScreen.SHOWING_MY_CARD -> MyCardScreen(
-                        profile = uiState.profile().copy(username = accountProfile.username),
+                        profile = uiState.profile().copy(username = visibleAccountProfile.username),
                         peerId = uiState.myPeerId,
                         onEdit = onEditProfile,
                     )
@@ -356,7 +364,7 @@ fun NearbyChatApp(
 
                     ChatScreen.SETTINGS -> SettingsScreen(
                         authAccount = authAccount,
-                        accountProfile = accountProfile.copy(displayName = uiState.displayName),
+                        accountProfile = visibleAccountProfile.copy(displayName = uiState.displayName),
                         onSignOut = onSignOut,
                         onCreateEmailAccount = onCreateEmailAccount,
                         onSignInWithEmail = onSignInWithEmail,
@@ -376,7 +384,7 @@ fun NearbyChatApp(
 
                     ChatScreen.DISCOVERY_SETTINGS -> DiscoverySettingsScreen(
                         authAccount = authAccount,
-                        accountProfile = accountProfile,
+                        accountProfile = visibleAccountProfile,
                         lookupPhoneNumber = (uiState.profileDraft ?: uiState.profile()).lookupPhoneNumber,
                         enabled = (uiState.profileDraft ?: uiState.profile()).discoverableByPhone,
                         savedLookupPhoneNumber = uiState.profileLookupPhoneNumber,
@@ -397,6 +405,10 @@ fun NearbyChatApp(
                         onUpdate = onUpdateEvent,
                         onDeleteEvent = onDeleteEvent,
                         onJoin = onJoinEvent,
+                        onInvite = onInviteToEvent,
+                        onAcceptInvitation = onAcceptEventInvitation,
+                        onDeclineInvitation = onDeclineEventInvitation,
+                        onRevokeInvitation = onRevokeEventInvitation,
                         onLeave = onLeaveEvent,
                         onPromoteMember = onPromoteEventMember,
                         onRemoveMember = onRemoveEventMember,
@@ -404,6 +416,8 @@ fun NearbyChatApp(
                         onShowAnnouncements = onShowEventAnnouncements,
                         onPublishAnnouncement = onPublishEventAnnouncement,
                         onRequestGpsEntry = onRequestEventGpsEntry,
+                        onRequestAdminAccess = onRequestEventAdminAccess,
+                        onApproveAdminAccess = onApproveEventAdminAccess,
                         onScanCheckInQr = onScanEventQr,
                         onShowCheckInQr = onShowEventQr,
                         onHideCheckInQr = onHideEventQr,
@@ -1848,9 +1862,12 @@ private fun SettingsScreen(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(accountProfile.displayName, style = MaterialTheme.typography.titleLarge)
-                    Text("@${accountProfile.username}")
+                    if (accountProfile.username.isNotBlank()) Text("@${accountProfile.username}")
+                    else Text("Guest profile", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (authAccount.email.isNotBlank()) Text(authAccount.email)
-                    TextButton(onClick = onSignOut) { Text("Sign out") }
+                    if (!authAccount.isAnonymous) {
+                        TextButton(onClick = onSignOut) { Text("Sign out") }
+                    }
                 }
             }
         }
@@ -1891,13 +1908,15 @@ private fun SettingsScreen(
                 onClick = onEditProfile,
             )
         }
-        item {
-            SettingsCard(
-                title = "Find me",
-                detail = "Username, sign-in email and optional phone lookup",
-                action = "Open",
-                onClick = onShowDiscoverySettings,
-            )
+        if (!authAccount.isAnonymous) {
+            item {
+                SettingsCard(
+                    title = "Find me",
+                    detail = "Username, sign-in email and optional phone lookup",
+                    action = "Open",
+                    onClick = onShowDiscoverySettings,
+                )
+            }
         }
         item {
             SettingsCard(
@@ -1922,7 +1941,7 @@ private fun SettingsScreen(
         }
         item {
             Text(
-                "Direct and private group chats can sync online with an account. Nearby messaging remains available without Internet while signed in.",
+                "Open public events and nearby messaging work as a guest. Sign in for protected or private events and online chat sync.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp),
             )

@@ -20,6 +20,17 @@ class NearbyEventDiscoveryTest {
     }
 
     @Test
+    fun privateEventServiceAlsoDependsOnItsSecret() {
+        val first = NearbyChatManager.eventServiceId("event-1", "secret-one")
+        val same = NearbyChatManager.eventServiceId("event-1", "secret-one")
+        val differentSecret = NearbyChatManager.eventServiceId("event-1", "secret-two")
+
+        assertTrue(first == same)
+        assertNotEquals(first, differentSecret)
+        assertFalse(first.contains("secret-one"))
+    }
+
+    @Test
     fun eventEndpointNamesExposeOnlyTheStablePeerId() {
         val endpointName = "${NearbyChatManager.EVENT_ENDPOINT_PREFIX}peer-123"
 

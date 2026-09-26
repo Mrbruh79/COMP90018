@@ -20,6 +20,9 @@ import com.example.blap.event.EventAnnouncement
 import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventChatMessage
 import com.example.blap.event.EventMutation
+import com.example.blap.event.EventAccessGrant
+import com.example.blap.event.EventAccessRequest
+import com.example.blap.event.EventVisibility
 import com.example.blap.event.EventCoordinator
 import com.example.blap.event.EventRemoteRepository
 import com.example.blap.event.EventStore
@@ -121,6 +124,7 @@ class ChatViewModel(
             publishAccountNow()
             syncCloudPendingNow()
         }
+        eventCoordinator?.accountChanged()
     }
 
     fun applyAccountProfile(username: String, displayName: String) {
@@ -281,6 +285,8 @@ class ChatViewModel(
         radiusMetres: Double,
         startsAt: Long,
         endsAt: Long,
+        visibility: EventVisibility,
+        requiresSignIn: Boolean,
     ) = eventCoordinator?.createEvent(
         title,
         description,
@@ -290,12 +296,18 @@ class ChatViewModel(
         radiusMetres,
         startsAt,
         endsAt,
+        visibility,
+        requiresSignIn,
     ) ?: Unit
 
     fun openEvent(eventId: String) = eventCoordinator?.openEvent(eventId) ?: Unit
     fun updateSelectedEvent(request: EventCreateRequest) = eventCoordinator?.updateSelectedEvent(request) ?: Unit
     fun deleteSelectedEvent() = eventCoordinator?.deleteSelectedEvent() ?: Unit
     fun joinSelectedEvent() = eventCoordinator?.joinSelectedEvent() ?: Unit
+    fun inviteToSelectedEvent(identifier: String) = eventCoordinator?.inviteToSelectedEvent(identifier) ?: Unit
+    fun acceptEventInvitation(invitationId: String) = eventCoordinator?.acceptInvitation(invitationId) ?: Unit
+    fun declineEventInvitation(invitationId: String) = eventCoordinator?.declineInvitation(invitationId) ?: Unit
+    fun revokeEventInvitation(invitationId: String) = eventCoordinator?.revokeInvitation(invitationId) ?: Unit
     fun leaveSelectedEvent() = eventCoordinator?.leaveSelectedEvent() ?: Unit
     fun promoteEventMember(userId: String) = eventCoordinator?.promoteMemberToCoAdmin(userId) ?: Unit
     fun removeEventMember(userId: String) = eventCoordinator?.blockMember(userId) ?: Unit
@@ -306,6 +318,8 @@ class ChatViewModel(
         eventCoordinator?.enterWithGps(latitude, longitude, accuracyMetres) ?: Unit
 
     fun enterEventWithQr(payload: String) = eventCoordinator?.enterWithQr(payload) ?: Unit
+    fun requestEventAdminAccess() = eventCoordinator?.requestAdminOnSiteAccess() ?: Unit
+    fun approveEventAdminAccess(requestId: String) = eventCoordinator?.approveOnSiteAccess(requestId) ?: Unit
     fun createEventCheckInQr(): String? = eventCoordinator?.createVenueCheckInQr()
     fun showEventCheckInQr() = eventCoordinator?.showVenueCheckInQr() ?: Unit
     fun hideEventCheckInQr() = eventCoordinator?.hideVenueCheckInQr() ?: Unit
@@ -1127,8 +1141,8 @@ class ChatViewModel(
         setMessageStatus(peerId, messageId, MessageStatus.DELIVERED)
     }
 
-    override fun onEventPeerAvailable(peerId: String, eventId: String) {
-        eventCoordinator?.onEventPeerAvailable(peerId, eventId)
+    override fun onEventPeerAvailable(peerId: String, eventId: String, userId: String, accessGranted: Boolean) {
+        eventCoordinator?.onEventPeerAvailable(peerId, eventId, userId, accessGranted)
     }
 
     override fun onEventChatMessageReceived(message: EventChatMessage) {
@@ -1141,6 +1155,14 @@ class ChatViewModel(
 
     override fun onEventMutationReceived(mutation: EventMutation) {
         eventCoordinator?.onEventMutationReceived(mutation)
+    }
+
+    override fun onEventAccessRequestReceived(request: EventAccessRequest) {
+        eventCoordinator?.onEventAccessRequestReceived(request)
+    }
+
+    override fun onEventAccessGrantReceived(grant: EventAccessGrant) {
+        eventCoordinator?.onEventAccessGrantReceived(grant)
     }
 
     override fun onDisconnected(peerId: String) {

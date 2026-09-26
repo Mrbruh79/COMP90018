@@ -48,6 +48,27 @@ class EventSecurityTest {
 
         assertTrue(EventMutationSigner.verify(signed, keys.public))
         assertFalse(EventMutationSigner.verify(signed.copy(event = event.copy(title = "Tampered")), keys.public))
+        assertFalse(EventMutationSigner.verify(signed.copy(event = event.copy(requiresSignIn = true)), keys.public))
         assertFalse(EventMutationSigner.verify(signed.copy(event = event.copy(deletedAt = 201L)), keys.public))
+    }
+
+    @Test
+    fun accessGrantSignatureIsBoundToTheMemberAndPeer() {
+        val keys = EventCheckInCodec.generateAdminKeyPair()
+        val grant = EventAccessGrant(
+            id = "grant-1",
+            requestId = "request-1",
+            eventId = "event-1",
+            userId = "member-1",
+            peerId = "member-peer",
+            adminId = "admin-1",
+            issuedAt = 1_000L,
+            expiresAt = 6_000L,
+        )
+        val signed = grant.copy(signature = EventAccessGrantSigner.sign(grant, keys.private))
+
+        assertTrue(EventAccessGrantSigner.verify(signed, keys.public))
+        assertFalse(EventAccessGrantSigner.verify(signed.copy(userId = "attacker"), keys.public))
+        assertFalse(EventAccessGrantSigner.verify(signed.copy(peerId = "attacker-peer"), keys.public))
     }
 }

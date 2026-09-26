@@ -1,6 +1,8 @@
 package com.example.blap.event
 
 import java.util.UUID
+import java.security.SecureRandom
+import java.util.Base64
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -15,6 +17,19 @@ enum class EventRole {
 enum class EventAccessMethod {
     GPS,
     VENUE_QR,
+    ADMIN_APPROVAL,
+}
+
+enum class EventVisibility {
+    PUBLIC,
+    PRIVATE,
+}
+
+enum class EventInvitationStatus {
+    PENDING,
+    ACCEPTED,
+    DECLINED,
+    REVOKED,
 }
 
 data class CommunityEvent(
@@ -29,7 +44,11 @@ data class CommunityEvent(
     val endsAt: Long,
     val createdBy: String,
     val adminIds: Set<String> = setOf(createdBy),
+    val memberIds: Set<String> = adminIds,
     val adminPublicKeys: Map<String, String> = emptyMap(),
+    val visibility: EventVisibility = EventVisibility.PUBLIC,
+    val requiresSignIn: Boolean = false,
+    val privateMeshSecret: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
     val deletedAt: Long? = null,
@@ -43,6 +62,11 @@ data class CommunityEvent(
         require(endsAt > startsAt) { "Event must end after it starts." }
         require(createdBy.isNotBlank()) { "Event creator cannot be blank." }
         require(createdBy in adminIds) { "The event creator must remain an admin." }
+        require(createdBy in memberIds) { "The event creator must remain a member." }
+        require(adminIds.all(memberIds::contains)) { "Every event admin must remain a member." }
+        require(visibility != EventVisibility.PRIVATE || privateMeshSecret.isNotBlank()) {
+            "Private events require a mesh secret."
+        }
     }
 
     fun isAdmin(userId: String): Boolean = userId in adminIds
@@ -58,6 +82,60 @@ data class CommunityEvent(
         const val MAX_RADIUS_METRES = 5_000.0
     }
 }
+
+object EventSecrets {
+    private val random = SecureRandom()
+
+    fun newMeshSecret(): String = ByteArray(32)
+        .also(random::nextBytes)
+        .let { Base64.getUrlEncoder().withoutPadding().encodeToString(it) }
+}
+
+data class EventInvitation(
+    val id: String,
+    val eventId: String,
+    val eventTitle: String,
+    val inviterUid: String,
+    val inviterName: String,
+    val recipientUid: String,
+    val recipientName: String,
+    val recipientUsername: String,
+    val startsAt: Long,
+    val endsAt: Long,
+    val createdAt: Long = System.currentTimeMillis(),
+    val expiresAt: Long = endsAt,
+    val status: EventInvitationStatus = EventInvitationStatus.PENDING,
+) {
+    val isPending: Boolean
+        get() = status == EventInvitationStatus.PENDING && System.currentTimeMillis() <= expiresAt
+}
+
+data class EventInvitee(
+    val uid: String,
+    val displayName: String,
+    val username: String,
+)
+
+data class EventAccessRequest(
+    val id: String = UUID.randomUUID().toString(),
+    val eventId: String,
+    val userId: String,
+    val peerId: String,
+    val displayName: String,
+    val requestedAt: Long = System.currentTimeMillis(),
+)
+
+data class EventAccessGrant(
+    val id: String = UUID.randomUUID().toString(),
+    val requestId: String,
+    val eventId: String,
+    val userId: String,
+    val peerId: String,
+    val adminId: String,
+    val issuedAt: Long,
+    val expiresAt: Long,
+    val signature: String = "",
+)
 
 data class EventMutation(
     val event: CommunityEvent,
@@ -113,6 +191,8 @@ data class EventCreateRequest(
     val radiusMetres: Double,
     val startsAt: Long,
     val endsAt: Long,
+    val visibility: EventVisibility = EventVisibility.PUBLIC,
+    val requiresSignIn: Boolean = false,
 )
 
 sealed interface EventEntryDecision {

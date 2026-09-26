@@ -103,7 +103,7 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     context,
     "community_events$scope.db",
     null,
-    3,
+    5,
 ), EventStore {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -120,7 +120,11 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
                 ends_at INTEGER NOT NULL,
                 created_by TEXT NOT NULL,
                 admin_ids TEXT NOT NULL,
+                member_ids TEXT NOT NULL,
                 admin_public_keys TEXT NOT NULL,
+                visibility INTEGER NOT NULL,
+                requires_sign_in INTEGER NOT NULL,
+                private_mesh_secret TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 deleted_at INTEGER
@@ -184,6 +188,15 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             db.execSQL("UPDATE events SET updated_at = created_at WHERE updated_at = 0")
             db.execSQL("ALTER TABLE events ADD COLUMN deleted_at INTEGER")
         }
+        if (oldVersion < 4) {
+            db.execSQL("ALTER TABLE events ADD COLUMN member_ids TEXT NOT NULL DEFAULT ''")
+            db.execSQL("UPDATE events SET member_ids = admin_ids WHERE member_ids = ''")
+            db.execSQL("ALTER TABLE events ADD COLUMN visibility INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE events ADD COLUMN private_mesh_secret TEXT NOT NULL DEFAULT ''")
+        }
+        if (oldVersion < 5) {
+            db.execSQL("ALTER TABLE events ADD COLUMN requires_sign_in INTEGER NOT NULL DEFAULT 0")
+        }
     }
 
     @Synchronized
@@ -205,7 +218,11 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             put("ends_at", event.endsAt)
             put("created_by", event.createdBy)
             put("admin_ids", encodeSet(event.adminIds))
+            put("member_ids", encodeSet(event.memberIds))
             put("admin_public_keys", encodeMap(event.adminPublicKeys))
+            put("visibility", event.visibility.ordinal)
+            put("requires_sign_in", if (event.requiresSignIn) 1 else 0)
+            put("private_mesh_secret", event.privateMeshSecret)
             put("created_at", event.createdAt)
             put("updated_at", event.updatedAt)
             putNullableLong("deleted_at", event.deletedAt)
@@ -443,10 +460,14 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
         endsAt = cursor.getLong(8),
         createdBy = cursor.getString(9),
         adminIds = decodeSet(cursor.getString(10)),
-        adminPublicKeys = decodeMap(cursor.getString(11)),
-        createdAt = cursor.getLong(12),
-        updatedAt = cursor.getLong(13),
-        deletedAt = cursor.nullableLong(14),
+        memberIds = decodeSet(cursor.getString(11)),
+        adminPublicKeys = decodeMap(cursor.getString(12)),
+        visibility = EventVisibility.entries[cursor.getInt(13)],
+        requiresSignIn = cursor.getInt(14) != 0,
+        privateMeshSecret = cursor.getString(15),
+        createdAt = cursor.getLong(16),
+        updatedAt = cursor.getLong(17),
+        deletedAt = cursor.nullableLong(18),
     )
 
     private fun readAnnouncement(cursor: android.database.Cursor) = EventAnnouncement(
@@ -496,8 +517,8 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
         val EVENT_COLUMNS = arrayOf(
             "event_id", "title", "description", "venue_name", "latitude", "longitude", "radius_metres",
-            "starts_at", "ends_at", "created_by", "admin_ids", "admin_public_keys", "created_at",
-            "updated_at", "deleted_at",
+            "starts_at", "ends_at", "created_by", "admin_ids", "member_ids", "admin_public_keys",
+            "visibility", "requires_sign_in", "private_mesh_secret", "created_at", "updated_at", "deleted_at",
         )
         val MEMBERSHIP_COLUMNS = arrayOf(
             "event_id", "user_id", "display_name", "role", "joined_at", "blocked_at", "left_at",

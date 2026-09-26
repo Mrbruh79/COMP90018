@@ -11,6 +11,7 @@ data class AuthAccount(
     val emailVerified: Boolean = false,
     val hasPassword: Boolean = false,
     val hasGoogle: Boolean = false,
+    val isAnonymous: Boolean = false,
 )
 
 object AuthManager {
@@ -32,8 +33,17 @@ object AuthManager {
                 emailVerified = user?.isEmailVerified == true,
                 hasPassword = EmailAuthProvider.PROVIDER_ID in providers,
                 hasGoogle = GoogleAuthProvider.PROVIDER_ID in providers,
+                isAnonymous = user?.isAnonymous == true,
             )
         }
+
+    fun ensureGuestSession(onComplete: () -> Unit) {
+        if (auth.currentUser != null) {
+            onComplete()
+            return
+        }
+        auth.signInAnonymously().addOnCompleteListener { onComplete() }
+    }
 
     fun createEmailAccount(
         email: String,
