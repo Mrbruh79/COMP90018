@@ -27,6 +27,7 @@ import com.example.blap.event.EventUiState
 import com.example.blap.event.FirebaseEventRemoteRepository
 import com.example.blap.event.LocalEventAdminKeyStore
 import com.example.blap.event.SqliteEventStore
+import com.example.blap.auth.AuthManager
 
 class ChatViewModel(
     private val nearbyChatController: NearbyChatController,
@@ -36,14 +37,20 @@ class ChatViewModel(
     eventStore: EventStore? = null,
     eventRemoteRepository: EventRemoteRepository? = null,
     eventAdminKeyStore: EventAdminKeyStore? = null,
-) : ViewModel(), NearbyChatController.Listener {
+    private val cloudChatController: CloudChatController? = null,
+    initialAccountId: String = "",
+) : ViewModel(), NearbyChatController.Listener, CloudChatController.Listener {
     private val workScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val connectedPeers = ConcurrentHashMap<String, ConnectedPeer>()
+    private val cloudUploadsInFlight = ConcurrentHashMap.newKeySet<String>()
     private val localPeerId = identityStore.getPeerId()
     private var localPhoneHash = PhoneIdentity.hash(identityStore.getPhoneNumber()).orEmpty()
     private val initialProfile = identityStore.getProfile()
     private var profileReturnScreen = ChatScreen.SHOWING_MY_CARD
     private var requestedEndpointId: String? = null
+    private var scannedPeerId: String? = null
+    private var scannedPhoneHash: String? = null
+    private var scannedEmail: String? = null
     private val eventCoordinator = if (
         eventStore != null && eventRemoteRepository != null && eventAdminKeyStore != null
     ) {
@@ -61,18 +68,22 @@ class ChatViewModel(
 
     private val _uiState = MutableStateFlow(
         ChatUiState(
+            myPeerId = localPeerId,
             screen = if (initialProfile.displayName.isNotBlank() &&
-                PhoneIdentity.normalize(initialProfile.phoneNumber) != null
+                (initialProfile.phoneNumber.isBlank() || PhoneIdentity.normalize(initialProfile.phoneNumber) != null)
             ) ChatScreen.CHATS else ChatScreen.WELCOME,
             displayName = initialProfile.displayName,
             phoneNumber = initialProfile.phoneNumber,
             profileEmail = initialProfile.email,
+            profileGoogleEmail = initialProfile.googleAccountEmail,
+            profileDiscoverableByPhone = initialProfile.discoverableByPhone,
             profileBio = initialProfile.bio,
             profileWebsite = initialProfile.websiteUrl,
             profileInstagram = initialProfile.instagramUrl,
             profileX = initialProfile.xUrl,
             profileLinkedin = initialProfile.linkedinUrl,
             profileGithub = initialProfile.githubUrl,
+            onlineAccountId = initialAccountId,
         ),
     )
     val uiState: StateFlow<ChatUiState> = _uiState.asStateFlow()
@@ -83,6 +94,11 @@ class ChatViewModel(
             chatStore.savePeer(MeshGroup.ID, MeshGroup.NAME)
             reloadConversationsNow()
             reloadSavedContactsNow()
+            if (initialAccountId.isNotBlank()) {
+                cloudChatController?.start(initialAccountId, this@ChatViewModel)
+                publishAccountNow()
+                syncCloudPendingNow()
+            }
         }
     }
 
@@ -92,6 +108,25 @@ class ChatViewModel(
 
     fun updatePhoneNumber(phoneNumber: String) {
         _uiState.update { it.copy(phoneNumber = phoneNumber.take(MAX_PHONE_LENGTH), phoneError = null) }
+    }
+
+    fun accountChanged(accountId: String) {
+        val previous = _uiState.value.onlineAccountId
+        if (previous != accountId) {
+            cloudChatController?.stop()
+            _uiState.update { it.copy(onlineAccountId = accountId) }
+            if (accountId.isNotBlank()) cloudChatController?.start(accountId, this)
+        }
+        if (accountId.isNotBlank()) workScope.launch {
+            publishAccountNow()
+            syncCloudPendingNow()
+        }
+    }
+
+    private suspend fun publishAccountNow() {
+        if (_uiState.value.onlineAccountId.isBlank() || _uiState.value.displayName.isBlank()) return
+        runCatching { cloudChatController?.publishAccount(currentProfile(), localPeerId) }
+            .onFailure { onCloudError(it.localizedMessage ?: "Could not publish your account details.") }
     }
 
     fun startChat() {
@@ -119,13 +154,15 @@ class ChatViewModel(
             is IdentityCheck.Valid -> {
                 saveIdentity(check.name, check.phone)
                 showConversationList()
+                workScope.launch { publishAccountNow() }
             }
         }
     }
 
     private fun checkIdentity(): IdentityCheck {
         val name = _uiState.value.displayName.trim()
-        val phone = PhoneIdentity.normalize(_uiState.value.phoneNumber)
+        val rawPhone = _uiState.value.phoneNumber
+        val phone = if (rawPhone.isBlank()) "" else PhoneIdentity.normalizeInternational(rawPhone)
         if (name.isBlank() || phone == null) {
             return IdentityCheck.Invalid(
                 nameError = "Please enter a display name".takeIf { name.isBlank() },
@@ -137,7 +174,7 @@ class ChatViewModel(
 
     private fun saveIdentity(name: String, phone: String) {
         identityStore.saveProfile(currentProfile().copy(displayName = name, phoneNumber = phone))
-        localPhoneHash = requireNotNull(PhoneIdentity.hash(phone))
+        localPhoneHash = PhoneIdentity.hash(phone).orEmpty()
         _uiState.update {
             it.copy(
                 displayName = name,
@@ -260,6 +297,9 @@ class ChatViewModel(
     }
 
     fun beginAddContact() {
+        scannedPeerId = null
+        scannedPhoneHash = null
+        scannedEmail = null
         _uiState.update {
             it.copy(
                 screen = ChatScreen.EDITING_CONTACT,
@@ -267,6 +307,7 @@ class ChatViewModel(
                 contactNameDraft = "",
                 contactPhoneDraft = "",
                 contactEmailDraft = "",
+                contactGoogleEmailDraft = "",
                 contactBioDraft = "",
                 contactWebsiteDraft = "",
                 contactInstagramDraft = "",
@@ -280,6 +321,9 @@ class ChatViewModel(
     }
 
     fun openContact(contactId: String) {
+        scannedPeerId = null
+        scannedPhoneHash = null
+        scannedEmail = null
         val contact = _uiState.value.savedContacts.firstOrNull { it.id == contactId } ?: return
         _uiState.update {
             it.copy(
@@ -288,6 +332,7 @@ class ChatViewModel(
                 contactNameDraft = contact.name,
                 contactPhoneDraft = contact.phoneNumber,
                 contactEmailDraft = contact.email,
+                contactGoogleEmailDraft = contact.googleAccountEmail,
                 contactBioDraft = contact.bio,
                 contactWebsiteDraft = contact.websiteUrl,
                 contactInstagramDraft = contact.instagramUrl,
@@ -302,9 +347,11 @@ class ChatViewModel(
 
     fun messageContact(contactId: String) {
         val contact = _uiState.value.savedContacts.firstOrNull { it.id == contactId } ?: return
-        val peerId = contact.linkedPeerId
-        if (peerId == null) {
-            showError("Connect to this person nearby once to start a direct chat.")
+        val peerId = contact.linkedPeerId ?: ContactIdentity.localPeerId(
+            contact.phoneHash, contact.email, contact.googleAccountEmail,
+        ) ?: return
+        if (contact.linkedPeerId == null && _uiState.value.onlineAccountId.isBlank()) {
+            _uiState.update { it.copy(notice = "Sign in with Email or Google, or pair by QR/Nearby, to message this contact.") }
             return
         }
         workScope.launch {
@@ -320,6 +367,7 @@ class ChatViewModel(
                 contactNameDraft = profile.displayName.take(MAX_NAME_LENGTH),
                 contactPhoneDraft = profile.phoneNumber.take(MAX_PHONE_LENGTH),
                 contactEmailDraft = profile.email.take(MAX_EMAIL_LENGTH),
+                contactGoogleEmailDraft = profile.googleAccountEmail.take(MAX_EMAIL_LENGTH),
                 contactBioDraft = profile.bio.take(MAX_BIO_LENGTH),
                 contactWebsiteDraft = profile.websiteUrl.take(MAX_URL_LENGTH),
                 contactInstagramDraft = profile.instagramUrl.take(MAX_URL_LENGTH),
@@ -331,13 +379,17 @@ class ChatViewModel(
     }
 
     fun importScannedContactCard(payload: String) {
-        val profile = ContactCardCodec.decode(payload)
-        if (profile == null) {
+        val card = ContactCardCodec.decodeCard(payload)
+        if (card == null) {
             showError("That QR code is not a BLAP contact card.")
             return
         }
         beginAddContact()
-        updateContactDraft(profile)
+        updateContactDraft(card.profile)
+        scannedPeerId = card.peerId.takeIf(String::isNotBlank)
+        scannedPhoneHash = PhoneIdentity.hash(card.profile.phoneNumber)
+        scannedEmail = ContactIdentity.normalizeEmail(card.profile.email)
+            ?: ContactIdentity.normalizeEmail(card.profile.googleAccountEmail)
         _uiState.update { it.copy(contactSourceDraft = ContactSource.QR) }
     }
 
@@ -352,18 +404,34 @@ class ChatViewModel(
     fun saveContact() {
         val state = _uiState.value
         val name = state.contactNameDraft.trim()
-        val normalizedPhone = PhoneIdentity.normalize(state.contactPhoneDraft)
-        val phoneHash = PhoneIdentity.hash(state.contactPhoneDraft)
-        if (name.isBlank() || normalizedPhone == null || phoneHash == null) {
-            _uiState.update { it.copy(error = "Enter a contact name and valid phone number.") }
+        val normalizedPhone = if (state.contactPhoneDraft.isBlank()) "" else
+            PhoneIdentity.normalizeInternational(state.contactPhoneDraft)
+        val email = if (state.contactEmailDraft.isBlank()) "" else
+            ContactIdentity.normalizeEmail(state.contactEmailDraft)
+        val googleEmail = if (state.contactGoogleEmailDraft.isBlank()) "" else
+            ContactIdentity.normalizeEmail(state.contactGoogleEmailDraft)
+        if (name.isBlank() || normalizedPhone == null || email == null || googleEmail == null ||
+            (normalizedPhone.isBlank() && email.isBlank() && googleEmail.isBlank() && scannedPeerId == null)
+        ) {
+            _uiState.update { it.copy(error = "Enter a name and at least one valid phone or email address.") }
             return
         }
+        val phoneHash = PhoneIdentity.hash(normalizedPhone).orEmpty()
         workScope.launch {
-            val linkedPeerId = chatStore.getKnownContacts()
-                .firstOrNull { it.phoneHash == phoneHash }
+            val linkedPeerId = scannedPeerId?.takeIf {
+                (phoneHash.isNotBlank() && scannedPhoneHash == phoneHash) ||
+                    (scannedEmail != null && (scannedEmail == email || scannedEmail == googleEmail)) ||
+                    (phoneHash.isBlank() && email.isBlank() && googleEmail.isBlank())
+            } ?: chatStore.getKnownContacts()
+                .firstOrNull { phoneHash.isNotBlank() && it.phoneHash == phoneHash }
                 ?.peerId
             val existing = state.selectedContactId?.let { id ->
                 state.savedContacts.firstOrNull { it.id == id }
+            }
+            val retainedPeerId = existing?.linkedPeerId?.takeIf {
+                (phoneHash.isNotBlank() && existing.phoneHash == phoneHash) ||
+                    (email.isNotBlank() && existing.email == email) ||
+                    (googleEmail.isNotBlank() && existing.googleAccountEmail == googleEmail)
             }
             chatStore.saveContact(
                 SavedContact(
@@ -371,10 +439,14 @@ class ChatViewModel(
                     name = name,
                     phoneNumber = normalizedPhone,
                     phoneHash = phoneHash,
-                    linkedPeerId = if (existing?.phoneHash == phoneHash) {
-                        existing.linkedPeerId ?: linkedPeerId
-                    } else linkedPeerId,
-                    email = state.contactEmailDraft.trim(),
+                    linkedPeerId = retainedPeerId ?: linkedPeerId,
+                    email = email,
+                    googleAccountEmail = googleEmail,
+                    cloudUserId = existing?.cloudUserId.orEmpty().takeIf {
+                        (phoneHash.isNotBlank() && existing?.phoneHash == phoneHash) ||
+                            (email.isNotBlank() && existing?.email == email) ||
+                            (googleEmail.isNotBlank() && existing?.googleAccountEmail == googleEmail)
+                    }.orEmpty(),
                     bio = state.contactBioDraft.trim(),
                     websiteUrl = ProfileUrl.normalize(state.contactWebsiteDraft),
                     instagramUrl = ProfileUrl.normalize(state.contactInstagramDraft),
@@ -385,6 +457,12 @@ class ChatViewModel(
                 ),
             )
             reloadSavedContactsNow()
+            val syntheticPeerId = ContactIdentity.localPeerId(phoneHash, email, googleEmail)
+            val actualPeerId = retainedPeerId ?: linkedPeerId
+            if (actualPeerId != null && syntheticPeerId != null) {
+                chatStore.moveConversation(syntheticPeerId, actualPeerId)
+            }
+            syncCloudPendingNow()
             reloadConversationsNow()
             _uiState.update {
                 it.copy(
@@ -413,12 +491,21 @@ class ChatViewModel(
             val meshByHash = chatStore.getKnownContacts()
                 .filter { it.phoneHash.isNotBlank() }
                 .associateBy(GroupMember::phoneHash)
-            val existingHashes = chatStore.getSavedContacts().map(SavedContact::phoneHash).toMutableSet()
+            val existingContacts = chatStore.getSavedContacts()
+            val existingHashes = existingContacts.map(SavedContact::phoneHash).filter(String::isNotBlank).toMutableSet()
+            val existingEmails = existingContacts.flatMap { listOf(it.email, it.googleAccountEmail) }
+                .filter(String::isNotBlank).toMutableSet()
             var imported = 0
             contacts.forEach { contact ->
-                val normalized = PhoneIdentity.normalize(contact.phoneNumber) ?: return@forEach
-                val hash = PhoneIdentity.hash(normalized) ?: return@forEach
-                if (hash in existingHashes) return@forEach
+                val normalized = if (contact.phoneNumber.isBlank()) "" else
+                    PhoneIdentity.normalize(contact.phoneNumber) ?: return@forEach
+                val hash = PhoneIdentity.hash(normalized).orEmpty()
+                val email = if (contact.email.isBlank()) "" else
+                    ContactIdentity.normalizeEmail(contact.email) ?: return@forEach
+                if (hash.isBlank() && email.isBlank()) return@forEach
+                if ((hash.isNotBlank() && hash in existingHashes) ||
+                    (hash.isBlank() && email in existingEmails)
+                ) return@forEach
                 chatStore.saveContact(
                     SavedContact(
                         id = UUID.randomUUID().toString(),
@@ -426,10 +513,12 @@ class ChatViewModel(
                         phoneNumber = normalized,
                         phoneHash = hash,
                         linkedPeerId = meshByHash[hash]?.peerId,
+                        email = email,
                         source = ContactSource.DEVICE,
                     ),
                 )
-                existingHashes += hash
+                if (hash.isNotBlank()) existingHashes += hash
+                if (email.isNotBlank()) existingEmails += email
                 imported++
             }
             reloadSavedContactsNow()
@@ -492,14 +581,20 @@ class ChatViewModel(
                 return@launch
             }
             val selected = state.groupContacts.filter { it.peerId in state.selectedGroupMemberIds }
+            if (selected.size > 7) {
+                showError("Private groups can have up to eight members, including you.")
+                return@launch
+            }
             val group = current.copy(
                 name = name,
                 createdAt = System.currentTimeMillis(),
+                cloudSynced = false,
                 members = listOf(GroupMember(localPeerId, state.displayName, localPhoneHash)) +
                     selected.map { GroupMember(it.peerId, it.name, it.phoneHash) },
             )
             chatStore.saveGroup(group)
             nearbyChatController.publishGroup(group)
+            workScope.launch { uploadGroup(group) }
             reloadConversationsNow()
             _uiState.update { it.copy(screen = ChatScreen.CONVERSATION) }
         }
@@ -512,6 +607,13 @@ class ChatViewModel(
             if (group.ownerId != localPeerId) {
                 showError("Only the group owner can delete this group from the mesh.")
                 return@launch
+            }
+            if (group.cloudSynced && group.ownerAccountId.isNotBlank() &&
+                group.ownerAccountId == _uiState.value.onlineAccountId) {
+                workScope.launch {
+                    runCatching { cloudChatController?.deleteGroup(groupId) }
+                        .onFailure { onCloudError(it.localizedMessage ?: "Could not remove the online group.") }
+                }
             }
             chatStore.deleteGroup(groupId)
             reloadConversationsNow()
@@ -533,6 +635,7 @@ class ChatViewModel(
             displayName = profile.displayName.take(MAX_NAME_LENGTH),
             phoneNumber = profile.phoneNumber.take(MAX_PHONE_LENGTH),
             email = profile.email.take(MAX_EMAIL_LENGTH),
+            googleAccountEmail = profile.googleAccountEmail.take(MAX_EMAIL_LENGTH),
             bio = profile.bio.take(MAX_BIO_LENGTH),
             websiteUrl = profile.websiteUrl.take(MAX_URL_LENGTH),
             instagramUrl = profile.instagramUrl.take(MAX_URL_LENGTH),
@@ -552,6 +655,8 @@ class ChatViewModel(
                 displayName = profile.displayName.take(MAX_NAME_LENGTH),
                 phoneNumber = profile.phoneNumber.take(MAX_PHONE_LENGTH),
                 profileEmail = profile.email.take(MAX_EMAIL_LENGTH),
+                profileGoogleEmail = profile.googleAccountEmail.take(MAX_EMAIL_LENGTH),
+                profileDiscoverableByPhone = profile.discoverableByPhone,
                 profileBio = profile.bio.take(MAX_BIO_LENGTH),
                 profileWebsite = profile.websiteUrl.take(MAX_URL_LENGTH),
                 profileInstagram = profile.instagramUrl.take(MAX_URL_LENGTH),
@@ -565,15 +670,21 @@ class ChatViewModel(
     fun saveProfile() {
         val wasActive = _uiState.value.nearbyActive
         val profile = _uiState.value.profileDraft ?: currentProfile()
-        val normalizedPhone = PhoneIdentity.normalize(profile.phoneNumber)
-        if (profile.displayName.trim().isBlank() || normalizedPhone == null) {
-            showError("Enter your name and a valid phone number, including country code.")
+        val normalizedPhone = if (profile.phoneNumber.isBlank()) "" else
+            PhoneIdentity.normalizeInternational(profile.phoneNumber)
+        val email = if (profile.email.isBlank()) "" else ContactIdentity.normalizeEmail(profile.email)
+        val googleEmail = if (profile.googleAccountEmail.isBlank()) "" else
+            ContactIdentity.normalizeEmail(profile.googleAccountEmail)
+        if (profile.displayName.trim().isBlank() || normalizedPhone == null || email == null || googleEmail == null) {
+            showError("Enter your name and check any phone or email addresses you added.")
             return
         }
         val saved = profile.copy(
             displayName = profile.displayName.trim(),
             phoneNumber = normalizedPhone,
-            email = profile.email.trim(),
+            email = email,
+            googleAccountEmail = googleEmail,
+            discoverableByPhone = profile.discoverableByPhone && normalizedPhone.isNotBlank(),
             bio = profile.bio.trim(),
             websiteUrl = ProfileUrl.normalize(profile.websiteUrl),
             instagramUrl = ProfileUrl.normalize(profile.instagramUrl),
@@ -600,6 +711,7 @@ class ChatViewModel(
             if (_uiState.value.nearbyActive) nearbyChatController.startDiscovery()
         }
         _uiState.update { it.copy(screen = profileReturnScreen, profileDraft = null, notice = "Profile saved.") }
+        workScope.launch { publishAccountNow() }
     }
 
     fun showSettings() {
@@ -637,6 +749,10 @@ class ChatViewModel(
             _uiState.update { it.copy(error = "Enter a group name and choose at least one contact.") }
             return
         }
+        if (selectedContacts.size > 7) {
+            showError("Private groups can have up to eight members, including you.")
+            return
+        }
 
         val group = PrivateGroup(
             id = UUID.randomUUID().toString(),
@@ -646,10 +762,12 @@ class ChatViewModel(
             members = listOf(GroupMember(localPeerId, state.displayName, localPhoneHash)) + selectedContacts.map {
                 GroupMember(it.peerId, it.name, it.phoneHash)
             },
+            ownerAccountId = state.onlineAccountId,
         )
         workScope.launch {
             chatStore.saveGroup(group)
             nearbyChatController.publishGroup(group)
+            workScope.launch { uploadGroup(group) }
             reloadConversationsNow()
             _uiState.update {
                 it.copy(
@@ -707,6 +825,7 @@ class ChatViewModel(
             senderId = localPeerId,
             senderName = _uiState.value.displayName,
             senderPhoneHash = localPhoneHash,
+            senderAccountId = _uiState.value.onlineAccountId,
         )
         _uiState.update { state ->
             state.copy(
@@ -719,6 +838,7 @@ class ChatViewModel(
         workScope.launch {
             chatStore.saveMessage(message)
             reloadConversationsNow()
+            workScope.launch { uploadCloudMessage(message) }
             if (conversation.type != ConversationType.DIRECT && connectedPeers.isNotEmpty()) {
                 sendStoredMessage(message)
             }
@@ -741,6 +861,10 @@ class ChatViewModel(
 
     fun showError(message: String) {
         _uiState.update { it.copy(error = message) }
+    }
+
+    fun showNotice(message: String) {
+        _uiState.update { it.copy(notice = message) }
     }
 
     fun updateVenueStatus(message: String, checking: Boolean = false) {
@@ -806,16 +930,23 @@ class ChatViewModel(
         workScope.launch {
             chatStore.savePeer(peer.peerId, peer.name, peer.phoneHash)
             chatStore.linkContact(peer.phoneHash, peer.peerId)
+            if (peer.phoneHash.isNotBlank()) {
+                movePhoneConversationToPeer(peer.phoneHash, peer.peerId)
+            }
             reloadConversationsNow()
             reloadSavedContactsNow()
             if (_uiState.value.selectedPeerId == peer.peerId) reloadMessagesNow(peer.peerId)
             chatStore.getPendingMessages(peer.peerId).forEach(::sendStoredMessage)
             synchronizeGroupsWith(peer.peerId)
+            syncCloudPendingNow()
         }
     }
 
     override fun onGroupReceived(group: PrivateGroup) {
-        if (group.members.none { it.peerId == localPeerId || it.phoneHash == localPhoneHash }) return
+        if (group.members.none {
+                it.peerId == localPeerId || (localPhoneHash.isNotBlank() && it.phoneHash == localPhoneHash)
+            }
+        ) return
         workScope.launch {
             chatStore.saveGroup(group)
             reloadConversationsNow()
@@ -826,8 +957,12 @@ class ChatViewModel(
         if (peer.peerId == localPeerId) return
         workScope.launch {
             chatStore.saveMeshPeer(peer.peerId, peer.name, peer.phoneHash)
-            chatStore.linkContact(peer.phoneHash, peer.peerId)
+            if (peer.phoneHash.isNotBlank()) {
+                chatStore.linkContact(peer.phoneHash, peer.peerId)
+                movePhoneConversationToPeer(peer.phoneHash, peer.peerId)
+            }
             reloadSavedContactsNow()
+            reloadConversationsNow()
             if (_uiState.value.screen == ChatScreen.CREATING_GROUP) {
                 reloadGroupContactsNow()
             }
@@ -939,7 +1074,212 @@ class ChatViewModel(
         showError(message)
     }
 
+    override fun onDirectMessage(otherUid: String, message: CloudChatMessage) {
+        workScope.launch {
+            val contact = chatStore.getSavedContacts().firstOrNull { it.cloudUserId == otherUid }
+            val account = runCatching { cloudChatController?.getAccount(otherUid) }.getOrNull()
+            val peerId = contact?.linkedPeerId ?: contact?.let {
+                ContactIdentity.localPeerId(it.phoneHash, it.email, it.googleAccountEmail)
+            } ?: account?.peerId?.takeIf(String::isNotBlank) ?: "account:$otherUid"
+            chatStore.savePeer(peerId, contact?.name ?: account?.name ?: "Online contact", contact?.phoneHash.orEmpty())
+            val inserted = chatStore.saveMessage(
+                message.toLocalMessage(peerId, _uiState.value.onlineAccountId),
+            )
+            if (inserted) {
+                reloadSavedContactsNow()
+                reloadConversationsNow()
+                if (_uiState.value.selectedPeerId == peerId) reloadMessagesNow(peerId)
+            }
+        }
+    }
+
+    override fun onPrivateGroup(group: CloudPrivateGroup) {
+        workScope.launch {
+            val localUid = _uiState.value.onlineAccountId
+            if (group.members.none { it.uid == localUid }) return@launch
+            val contacts = chatStore.getSavedContacts().filter { it.cloudUserId.isNotBlank() }
+                .associateBy(SavedContact::cloudUserId)
+            val members = group.members.map { member ->
+                val contact = contacts[member.uid]
+                GroupMember(
+                    peerId = if (member.uid == localUid) localPeerId else
+                        contact?.linkedPeerId ?: contact?.let {
+                            ContactIdentity.localPeerId(it.phoneHash, it.email, it.googleAccountEmail)
+                        } ?: member.peerId.ifBlank { "account:${member.uid}" },
+                    name = contact?.name ?: member.name.ifBlank { "Online contact" },
+                    phoneHash = contact?.phoneHash.orEmpty(),
+                )
+            }
+            val ownerId = members.getOrNull(group.members.indexOfFirst { it.uid == group.ownerUid })?.peerId
+                ?: return@launch
+            chatStore.saveGroup(PrivateGroup(group.id, group.name, ownerId, group.revision, members,
+                cloudSynced = true, ownerAccountId = group.ownerUid))
+            reloadConversationsNow()
+            syncCloudPendingNow()
+        }
+    }
+
+    override fun onGroupMessage(groupId: String, message: CloudChatMessage) {
+        workScope.launch {
+            val inserted = chatStore.saveMessage(message.toLocalMessage(groupId, _uiState.value.onlineAccountId))
+            if (inserted) {
+                reloadConversationsNow()
+                if (_uiState.value.selectedPeerId == groupId) reloadMessagesNow(groupId)
+            }
+        }
+    }
+
+    override fun onCloudError(message: String) {
+        _uiState.update { it.copy(notice = "Online chat: $message") }
+    }
+
+    private fun CloudChatMessage.toLocalMessage(conversationId: String, localUid: String): ChatMessage =
+        ChatMessage(
+            id = id,
+            peerId = conversationId,
+            text = text,
+            author = if (senderUid == localUid) MessageAuthor.ME else MessageAuthor.PEER,
+            sentAt = sentAt,
+            status = if (senderUid == localUid) MessageStatus.SENT else MessageStatus.DELIVERED,
+            senderId = senderPeerId,
+            senderName = senderName,
+            senderAccountId = senderUid,
+            cloudSynced = true,
+        )
+
+    private fun movePhoneConversationToPeer(phoneHash: String, peerId: String) {
+        val oldId = "phone:$phoneHash"
+        chatStore.moveConversation(oldId, peerId)
+        _uiState.update { state ->
+            if (state.selectedPeerId == oldId) state.copy(selectedPeerId = peerId) else state
+        }
+        if (_uiState.value.selectedPeerId == peerId) reloadMessagesNow(peerId)
+    }
+
+    private fun syncCloudPendingNow() {
+        val uid = _uiState.value.onlineAccountId
+        if (uid.isBlank() || cloudChatController == null) return
+        chatStore.getCloudPendingGroups().filter {
+            it.ownerId == localPeerId && it.ownerAccountId == uid
+        }.forEach { group ->
+            workScope.launch { uploadGroup(group) }
+        }
+        chatStore.getCloudPendingMessages().filter { it.senderAccountId == uid }.forEach { message ->
+            workScope.launch { uploadCloudMessage(message) }
+        }
+    }
+
+    private suspend fun uploadGroup(group: PrivateGroup): Boolean {
+        val controller = cloudChatController ?: return false
+        val localUid = _uiState.value.onlineAccountId
+        if (localUid.isBlank() || group.ownerId != localPeerId || group.ownerAccountId != localUid) return false
+        if (group.members.none { it.peerId == localPeerId }) return false
+        val contacts = chatStore.getSavedContacts()
+        val members = group.members.map { member ->
+            if (member.peerId == localPeerId) CloudGroupMember(localUid, localPeerId, member.name)
+            else {
+                val contact = contacts.firstOrNull {
+                    it.linkedPeerId == member.peerId ||
+                        ContactIdentity.localPeerId(it.phoneHash, it.email, it.googleAccountEmail) == member.peerId ||
+                        (member.phoneHash.isNotBlank() && it.phoneHash == member.phoneHash)
+                }
+                val account = resolveAccount(controller, contact, member.peerId) ?: return false
+                CloudGroupMember(account.uid, member.peerId, member.name)
+            }
+        }
+        return runCatching {
+            controller.saveGroup(CloudPrivateGroup(group.id, group.name, localUid, group.createdAt, members))
+            chatStore.markGroupCloudSynced(group.id, group.createdAt)
+            true
+        }.getOrElse {
+            onCloudError(it.localizedMessage ?: "Could not upload the private group.")
+            false
+        }
+    }
+
+    private suspend fun uploadCloudMessage(message: ChatMessage) {
+        val controller = cloudChatController ?: return
+        val localUid = _uiState.value.onlineAccountId
+        if (localUid.isBlank() || message.senderAccountId != localUid ||
+            message.cloudSynced || !cloudUploadsInFlight.add(message.id)
+        ) return
+        try {
+            val cloudMessage = CloudChatMessage(
+                message.id, localUid, localPeerId, _uiState.value.displayName,
+                message.text, message.sentAt,
+            )
+            val group = chatStore.getGroups().firstOrNull { it.id == message.peerId }
+            if (group != null) {
+                if (group.ownerId == localPeerId && !group.cloudSynced && !uploadGroup(group)) return
+                controller.sendGroup(group.id, cloudMessage)
+            } else if (message.peerId != MeshGroup.ID) {
+                val contact = chatStore.getSavedContacts().firstOrNull {
+                    it.linkedPeerId == message.peerId ||
+                        ContactIdentity.localPeerId(it.phoneHash, it.email, it.googleAccountEmail) == message.peerId
+                }
+                val account = resolveAccount(controller, contact, message.peerId) ?: return
+                controller.sendDirect(account.uid, cloudMessage)
+            } else return
+            chatStore.markCloudSynced(message.id)
+            setMessageStatus(message.peerId, message.id, MessageStatus.SENT)
+        } catch (error: Exception) {
+            onCloudError(error.localizedMessage ?: "A message will retry when online.")
+        } finally {
+            cloudUploadsInFlight.remove(message.id)
+        }
+    }
+
+    private suspend fun resolveAccount(
+        controller: CloudChatController,
+        contact: SavedContact?,
+        peerId: String,
+    ): CloudAccount? {
+        if (!contact?.cloudUserId.isNullOrBlank()) {
+            controller.getAccount(contact.cloudUserId)?.let { return it }
+        }
+        val pairedPeerId = contact?.linkedPeerId ?: peerId.takeUnless {
+            it.startsWith("phone:") || it.startsWith("email:") || it.startsWith("account:")
+        }
+        val lookups = listOfNotNull(
+            pairedPeerId?.takeIf(String::isNotBlank)?.let { "peer" to it },
+            contact?.email?.takeIf(String::isNotBlank)?.let { "email" to it },
+            contact?.googleAccountEmail?.takeIf(String::isNotBlank)?.let { "email" to it },
+            contact?.phoneNumber?.takeIf(String::isNotBlank)?.let { "phone" to it },
+        ).distinct()
+        var matchedByPhone = false
+        var account: CloudAccount? = null
+        for ((type, value) in lookups) {
+            val candidates = when (type) {
+                "peer" -> controller.findAccounts(peerId = value)
+                "email" -> controller.findAccounts(email = value)
+                else -> controller.findAccounts(phoneNumber = value)
+            }
+            if (candidates.size > 1) {
+                onCloudError("Several accounts match this contact. Use a QR card to choose the right person.")
+                return null
+            }
+            if (candidates.size == 1) {
+                account = candidates.single()
+                matchedByPhone = type == "phone"
+                break
+            }
+        }
+        if (account == null) {
+            onCloudError("No online account found for this contact. They can share a QR card or enable phone lookup.")
+            return null
+        }
+        if (contact != null && contact.cloudUserId != account.uid) {
+            chatStore.saveContact(contact.copy(cloudUserId = account.uid))
+            reloadSavedContactsNow()
+        }
+        if (matchedByPhone) {
+            onCloudError("This number match is not verified. Confirm the person with their QR card.")
+        }
+        return account
+    }
+
     override fun onCleared() {
+        cloudChatController?.stop()
         nearbyChatController.close()
         workScope.cancel()
         chatStore.close()
@@ -1061,13 +1401,18 @@ class ChatViewModel(
         }
         chatStore.getSavedContacts().forEach { contact ->
             val linkedPeerId = contact.linkedPeerId
-                ?: knownContacts.values.firstOrNull { it.phoneHash == contact.phoneHash }?.peerId
-            contactsByHash[contact.phoneHash] = GroupContact(
-                peerId = linkedPeerId ?: "phone:${contact.phoneHash}",
+                ?: knownContacts.values.firstOrNull {
+                    contact.phoneHash.isNotBlank() && it.phoneHash == contact.phoneHash
+                }?.peerId
+            val contactKey = contact.phoneHash.ifBlank { "contact:${contact.id}" }
+            contactsByHash[contactKey] = GroupContact(
+                peerId = linkedPeerId ?: if (contact.phoneHash.isNotBlank()) "phone:${contact.phoneHash}"
+                    else "contact:${contact.id}",
                 name = contact.name,
                 connected = linkedPeerId?.let(connectedPeers::containsKey) == true,
                 phoneNumber = contact.phoneNumber,
                 phoneHash = contact.phoneHash,
+                email = contact.email.ifBlank { contact.googleAccountEmail },
                 availableOnMesh = linkedPeerId != null,
             )
         }
@@ -1078,6 +1423,7 @@ class ChatViewModel(
                 connected = contact.connected,
                 phoneNumber = contact.phoneNumber,
                 phoneHash = contact.phoneHash,
+                email = contact.email,
                 availableOnMesh = contact.availableOnMesh,
             )
         }.sortedBy { it.name.lowercase() }
@@ -1102,6 +1448,8 @@ class ChatViewModel(
             displayName = it.displayName,
             phoneNumber = it.phoneNumber,
             email = it.profileEmail,
+            googleAccountEmail = it.profileGoogleEmail,
+            discoverableByPhone = it.profileDiscoverableByPhone,
             bio = it.profileBio,
             websiteUrl = it.profileWebsite,
             instagramUrl = it.profileInstagram,
@@ -1149,6 +1497,8 @@ class ChatViewModel(
                     eventStore = SqliteEventStore(appContext),
                     eventRemoteRepository = FirebaseEventRemoteRepository(),
                     eventAdminKeyStore = LocalEventAdminKeyStore(appContext),
+                    cloudChatController = FirebaseCloudChatController(),
+                    initialAccountId = AuthManager.onlineUserId,
                 ) as T
             }
         }

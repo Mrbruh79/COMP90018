@@ -17,6 +17,8 @@ interface ChatStore {
     fun getKnownContacts(): List<GroupMember>
     fun saveGroup(group: PrivateGroup)
     fun getGroups(): List<PrivateGroup>
+    fun getCloudPendingGroups(): List<PrivateGroup> = emptyList()
+    fun markGroupCloudSynced(groupId: String, revision: Long) = Unit
     fun deleteGroup(groupId: String) = Unit
     fun isGroupMember(groupId: String, peerId: String, phoneHash: String = ""): Boolean
     fun saveMessage(message: ChatMessage): Boolean
@@ -24,6 +26,9 @@ interface ChatStore {
     fun getConversations(): List<ConversationSummary>
     fun getMessages(peerId: String): List<ChatMessage>
     fun getPendingMessages(peerId: String): List<ChatMessage>
+    fun getCloudPendingMessages(): List<ChatMessage> = emptyList()
+    fun markCloudSynced(messageId: String) = Unit
+    fun moveConversation(fromPeerId: String, toPeerId: String) = Unit
     fun close()
 }
 
@@ -31,7 +36,7 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
     context,
     "nearby_chat.db",
     null,
-    6,
+    10,
 ), ChatStore {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -55,7 +60,9 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
                 status INTEGER NOT NULL,
                 sender_id TEXT NOT NULL DEFAULT '',
                 sender_name TEXT NOT NULL DEFAULT '',
-                sender_phone_hash TEXT NOT NULL DEFAULT ''
+                sender_phone_hash TEXT NOT NULL DEFAULT '',
+                sender_account_id TEXT NOT NULL DEFAULT '',
+                cloud_synced INTEGER NOT NULL DEFAULT 0
             )
             """.trimIndent(),
         )
@@ -95,6 +102,54 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
             addColumnIfMissing(db, "app_contacts", "source", "source INTEGER NOT NULL DEFAULT 0")
             addColumnIfMissing(db, "app_contacts", "updated_at", "updated_at INTEGER NOT NULL DEFAULT 0")
         }
+        if (oldVersion < 7) {
+            addColumnIfMissing(db, "messages", "cloud_synced", "cloud_synced INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 8) {
+            addColumnIfMissing(db, "chat_groups", "cloud_synced", "cloud_synced INTEGER NOT NULL DEFAULT 0")
+        }
+        if (oldVersion < 9) {
+            db.execSQL(
+                """
+                CREATE TABLE app_contacts_new (
+                    contact_id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    phone_number TEXT NOT NULL,
+                    phone_hash TEXT NOT NULL DEFAULT '',
+                    linked_peer_id TEXT,
+                    email TEXT NOT NULL DEFAULT '',
+                    google_account_email TEXT NOT NULL DEFAULT '',
+                    cloud_user_id TEXT NOT NULL DEFAULT '',
+                    bio TEXT NOT NULL DEFAULT '',
+                    website_url TEXT NOT NULL DEFAULT '',
+                    instagram_url TEXT NOT NULL DEFAULT '',
+                    x_url TEXT NOT NULL DEFAULT '',
+                    linkedin_url TEXT NOT NULL DEFAULT '',
+                    github_url TEXT NOT NULL DEFAULT '',
+                    source INTEGER NOT NULL DEFAULT 0,
+                    updated_at INTEGER NOT NULL DEFAULT 0
+                )
+                """.trimIndent(),
+            )
+            db.execSQL(
+                """
+                INSERT INTO app_contacts_new (
+                    contact_id, name, phone_number, phone_hash, linked_peer_id, email,
+                    bio, website_url, instagram_url, x_url, linkedin_url, github_url, source, updated_at
+                ) SELECT contact_id, name, phone_number, phone_hash, linked_peer_id, email,
+                    bio, website_url, instagram_url, x_url, linkedin_url, github_url, source, updated_at
+                  FROM app_contacts
+                """.trimIndent(),
+            )
+            db.execSQL("DROP TABLE app_contacts")
+            db.execSQL("ALTER TABLE app_contacts_new RENAME TO app_contacts")
+            db.execSQL("CREATE UNIQUE INDEX app_contacts_phone_hash ON app_contacts(phone_hash) WHERE phone_hash <> ''")
+        }
+        if (oldVersion < 10) {
+            addColumnIfMissing(db, "messages", "sender_account_id", "sender_account_id TEXT NOT NULL DEFAULT ''")
+            addColumnIfMissing(db, "app_contacts", "cloud_user_id", "cloud_user_id TEXT NOT NULL DEFAULT ''")
+            addColumnIfMissing(db, "chat_groups", "owner_account_id", "owner_account_id TEXT NOT NULL DEFAULT ''")
+        }
     }
 
     @Synchronized
@@ -133,6 +188,8 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
             put("phone_hash", contact.phoneHash)
             put("linked_peer_id", contact.linkedPeerId)
             put("email", contact.email)
+            put("google_account_email", contact.googleAccountEmail)
+            put("cloud_user_id", contact.cloudUserId)
             put("bio", contact.bio)
             put("website_url", contact.websiteUrl)
             put("instagram_url", contact.instagramUrl)
@@ -157,7 +214,7 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
             "app_contacts",
             arrayOf(
                 "contact_id", "name", "phone_number", "phone_hash", "linked_peer_id",
-                "email", "bio", "website_url", "instagram_url", "x_url", "linkedin_url",
+                "email", "google_account_email", "cloud_user_id", "bio", "website_url", "instagram_url", "x_url", "linkedin_url",
                 "github_url", "source", "updated_at",
             ),
             null,
@@ -174,14 +231,16 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
                     phoneHash = cursor.getString(3),
                     linkedPeerId = cursor.getString(4),
                     email = cursor.getString(5),
-                    bio = cursor.getString(6),
-                    websiteUrl = cursor.getString(7),
-                    instagramUrl = cursor.getString(8),
-                    xUrl = cursor.getString(9),
-                    linkedinUrl = cursor.getString(10),
-                    githubUrl = cursor.getString(11),
-                    source = ContactSource.entries[cursor.getInt(12).coerceIn(0, ContactSource.entries.lastIndex)],
-                    updatedAt = cursor.getLong(13),
+                    googleAccountEmail = cursor.getString(6),
+                    cloudUserId = cursor.getString(7),
+                    bio = cursor.getString(8),
+                    websiteUrl = cursor.getString(9),
+                    instagramUrl = cursor.getString(10),
+                    xUrl = cursor.getString(11),
+                    linkedinUrl = cursor.getString(12),
+                    githubUrl = cursor.getString(13),
+                    source = ContactSource.entries[cursor.getInt(14).coerceIn(0, ContactSource.entries.lastIndex)],
+                    updatedAt = cursor.getLong(15),
                 )
             }
         }
@@ -229,6 +288,8 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
                 put("name", group.name)
                 put("owner_id", group.ownerId)
                 put("created_at", group.createdAt)
+                put("cloud_synced", if (group.cloudSynced) 1 else 0)
+                put("owner_account_id", group.ownerAccountId)
             }
             insertWithOnConflict("chat_groups", null, groupValues, SQLiteDatabase.CONFLICT_REPLACE)
             delete("group_members", "group_id = ?", arrayOf(group.id))
@@ -249,7 +310,7 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
         val groups = mutableListOf<PrivateGroup>()
         readableDatabase.query(
             "chat_groups",
-            arrayOf("group_id", "name", "owner_id", "created_at"),
+            arrayOf("group_id", "name", "owner_id", "created_at", "cloud_synced", "owner_account_id"),
             null,
             null,
             null,
@@ -264,10 +325,23 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
                     ownerId = cursor.getString(2),
                     createdAt = cursor.getLong(3),
                     members = getGroupMembers(groupId),
+                    cloudSynced = cursor.getInt(4) != 0,
+                    ownerAccountId = cursor.getString(5),
                 )
             }
         }
         return groups
+    }
+
+    @Synchronized
+    override fun getCloudPendingGroups(): List<PrivateGroup> = getGroups().filterNot(PrivateGroup::cloudSynced)
+
+    @Synchronized
+    override fun markGroupCloudSynced(groupId: String, revision: Long) {
+        writableDatabase.update(
+            "chat_groups", ContentValues().apply { put("cloud_synced", 1) },
+            "group_id = ? AND created_at = ?", arrayOf(groupId, revision.toString()),
+        )
     }
 
     @Synchronized
@@ -299,6 +373,8 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
             put("sender_id", message.senderId)
             put("sender_name", message.senderName)
             put("sender_phone_hash", message.senderPhoneHash)
+            put("sender_account_id", message.senderAccountId)
+            put("cloud_synced", if (message.cloudSynced) 1 else 0)
         }
         val row = writableDatabase.insertWithOnConflict(
             "messages",
@@ -396,6 +472,36 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
         return messages
     }
 
+    @Synchronized
+    override fun getCloudPendingMessages(): List<ChatMessage> {
+        val messages = mutableListOf<ChatMessage>()
+        readableDatabase.query(
+            "messages", MESSAGE_COLUMNS,
+            "author = ? AND cloud_synced = 0 AND peer_id != ?",
+            arrayOf(MessageAuthor.ME.ordinal.toString(), MeshGroup.ID),
+            null, null, "sent_at ASC, rowid ASC",
+        ).use { cursor -> while (cursor.moveToNext()) messages += readMessage(cursor) }
+        return messages
+    }
+
+    @Synchronized
+    override fun markCloudSynced(messageId: String) {
+        writableDatabase.update(
+            "messages", ContentValues().apply { put("cloud_synced", 1) },
+            "message_id = ?", arrayOf(messageId),
+        )
+    }
+
+    @Synchronized
+    override fun moveConversation(fromPeerId: String, toPeerId: String) {
+        if (fromPeerId == toPeerId) return
+        writableDatabase.transaction {
+            update("messages", ContentValues().apply { put("peer_id", toPeerId) },
+                "peer_id = ?", arrayOf(fromPeerId))
+            delete("peers", "peer_id = ?", arrayOf(fromPeerId))
+        }
+    }
+
     private fun readMessage(cursor: Cursor): ChatMessage {
         val authorIndex = cursor.getInt(3).coerceIn(0, MessageAuthor.entries.lastIndex)
         val statusIndex = cursor.getInt(5).coerceIn(0, MessageStatus.entries.lastIndex)
@@ -409,6 +515,8 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
             senderId = cursor.getString(6),
             senderName = cursor.getString(7),
             senderPhoneHash = cursor.getString(8),
+            cloudSynced = cursor.getInt(9) != 0,
+            senderAccountId = cursor.getString(10),
         )
     }
 
@@ -437,7 +545,9 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
                 group_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 owner_id TEXT NOT NULL,
-                created_at INTEGER NOT NULL
+                created_at INTEGER NOT NULL,
+                cloud_synced INTEGER NOT NULL DEFAULT 0,
+                owner_account_id TEXT NOT NULL DEFAULT ''
             )
             """.trimIndent(),
         )
@@ -475,9 +585,11 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
                 contact_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 phone_number TEXT NOT NULL,
-                phone_hash TEXT NOT NULL UNIQUE,
+                phone_hash TEXT NOT NULL DEFAULT '',
                 linked_peer_id TEXT,
                 email TEXT NOT NULL DEFAULT '',
+                google_account_email TEXT NOT NULL DEFAULT '',
+                cloud_user_id TEXT NOT NULL DEFAULT '',
                 bio TEXT NOT NULL DEFAULT '',
                 website_url TEXT NOT NULL DEFAULT '',
                 instagram_url TEXT NOT NULL DEFAULT '',
@@ -489,6 +601,7 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
             )
             """.trimIndent(),
         )
+        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS app_contacts_phone_hash ON app_contacts(phone_hash) WHERE phone_hash <> ''")
     }
 
     private fun addColumnIfMissing(
@@ -522,6 +635,8 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
             "sender_id",
             "sender_name",
             "sender_phone_hash",
+            "cloud_synced",
+            "sender_account_id",
         )
     }
 }

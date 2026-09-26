@@ -1,9 +1,224 @@
 rules_version = '2';
 
+// Assumed data model for the existing Standard-edition default database:
+// accountSettings/{uid}: private uid, verified email, optional opted-in phone hash,
+// peerId and discoverableByPhone flag. Only the owner reads this document.
+// accountCards/{uid}: uid, short display name and app peerId. No raw contact details.
+// {emailLookup|phoneLookup|peerLookup}/{key}/accounts/{uid}: uid-only lookup entry.
+// directChatsV2/{id}: two memberIds. privateChatsV2/{id}: ownerUid, name,
+// revision, memberIds and matching member cards. Their messages carry senderUid,
+// senderPeerId, senderName, text and sentAt. Legacy phone chat paths are closed.
+// venues, events, event members and announcements retain their existing models.
 service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() {
       return request.auth != null;
+    }
+
+    function accountSignedIn() {
+      return signedIn() && request.auth.token.get('email', '') is string
+        && request.auth.token.get('email', '').size() > 0;
+    }
+
+    function isOwner(uid) {
+      return accountSignedIn() && request.auth.uid == uid;
+    }
+
+    function uidUnchanged(uid) {
+      return request.resource.data.uid == uid && uid == request.auth.uid;
+    }
+
+    function uidNotModified() {
+      return request.resource.data.uid == resource.data.uid;
+    }
+
+    function validUid(value) {
+      return value is string && value.size() > 0 && value.size() <= 128;
+    }
+
+    function validPeerId(value) {
+      return value is string && value.matches('^[^/]{1,100}$');
+    }
+
+    function validAccountSettings(data, uid) {
+      return data.keys().hasAll(['uid', 'email', 'phoneHash', 'peerId', 'discoverableByPhone'])
+        && data.keys().hasOnly(['uid', 'email', 'phoneHash', 'peerId', 'discoverableByPhone'])
+        && data.uid == uid && validUid(data.uid)
+        && data.email is string && data.email.size() <= 120
+        && data.email == (request.auth.token.get('email_verified', false) == true
+          ? request.auth.token.get('email', '').lower() : '')
+        && data.phoneHash is string
+        && data.phoneHash.matches('^([0-9a-f]{64})?$')
+        && data.discoverableByPhone is bool
+        && (data.discoverableByPhone ? data.phoneHash.size() == 64 : data.phoneHash == '')
+        && validPeerId(data.peerId);
+    }
+
+    function validAccountCard(data, uid) {
+      return data.keys().hasAll(['uid', 'name', 'peerId'])
+        && data.keys().hasOnly(['uid', 'name', 'peerId'])
+        && data.uid == uid && validUid(data.uid)
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 24
+        && validPeerId(data.peerId)
+        && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.peerId == data.peerId;
+    }
+
+    function validLookup(data, uid) {
+      return data.keys().hasAll(['uid']) && data.keys().hasOnly(['uid'])
+        && data.uid == uid && validUid(data.uid);
+    }
+
+    function validDirect(data) {
+      return data.keys().hasAll(['memberIds']) && data.keys().hasOnly(['memberIds'])
+        && data.memberIds is list && data.memberIds.size() == 2
+        && validUid(data.memberIds[0]) && validUid(data.memberIds[1])
+        && data.memberIds[0] != data.memberIds[1]
+        && data.memberIds[0] < data.memberIds[1];
+    }
+
+    function validGroupMember(member, uid) {
+      return member is map && member.keys().hasAll(['uid', 'peerId', 'name'])
+        && member.keys().hasOnly(['uid', 'peerId', 'name'])
+        && member.uid == uid && validUid(member.uid)
+        && validPeerId(member.peerId)
+        && member.name is string && member.name.size() > 0 && member.name.size() <= 24;
+    }
+
+    function validGroupSlot(data, index) {
+      return data.memberIds.size() <= index
+        || (validUid(data.memberIds[index])
+          && validGroupMember(data.members[index], data.memberIds[index]));
+    }
+
+    function validGroup(data) {
+      return data.keys().hasAll(['name', 'ownerUid', 'revision', 'memberIds', 'members'])
+        && data.keys().hasOnly(['name', 'ownerUid', 'revision', 'memberIds', 'members'])
+        && data.name is string && data.name.size() > 0 && data.name.size() <= 40
+        && validUid(data.ownerUid)
+        && data.revision is int && data.revision >= 0
+        && data.memberIds is list && data.memberIds.size() >= 2 && data.memberIds.size() <= 8
+        && data.memberIds.toSet().size() == data.memberIds.size()
+        && data.ownerUid in data.memberIds
+        && data.members is list && data.members.size() == data.memberIds.size()
+        && validGroupSlot(data, 0) && validGroupSlot(data, 1)
+        && validGroupSlot(data, 2) && validGroupSlot(data, 3)
+        && validGroupSlot(data, 4) && validGroupSlot(data, 5)
+        && validGroupSlot(data, 6) && validGroupSlot(data, 7);
+    }
+
+    function validChatMessage(data) {
+      return data.keys().hasAll(['senderUid', 'senderPeerId', 'senderName', 'text', 'sentAt'])
+        && data.keys().hasOnly(['senderUid', 'senderPeerId', 'senderName', 'text', 'sentAt'])
+        && data.senderUid == request.auth.uid && validUid(data.senderUid)
+        && validPeerId(data.senderPeerId)
+        && get(/databases/$(database)/documents/accountSettings/$(request.auth.uid)).data.peerId == data.senderPeerId
+        && data.senderName is string && data.senderName.size() > 0 && data.senderName.size() <= 24
+        && data.text is string && data.text.size() > 0 && data.text.size() <= 1000
+        && data.sentAt is int && data.sentAt >= 0;
+    }
+
+    match /accountSettings/{uid} {
+      allow get: if isOwner(uid);
+      allow list: if false;
+      allow create: if isOwner(uid) && uidUnchanged(uid)
+        && validAccountSettings(request.resource.data, uid);
+      allow update: if isOwner(uid) && uidNotModified()
+        && validAccountSettings(request.resource.data, uid);
+      allow delete: if false;
+    }
+
+    match /accountCards/{uid} {
+      allow get: if accountSignedIn();
+      allow list: if false;
+      allow create: if isOwner(uid) && uidUnchanged(uid)
+        && validAccountCard(request.resource.data, uid);
+      allow update: if isOwner(uid) && uidNotModified()
+        && validAccountCard(request.resource.data, uid);
+      allow delete: if false;
+    }
+
+    match /emailLookup/{email}/accounts/{uid} {
+      allow read: if accountSignedIn();
+      allow create: if isOwner(uid) && validLookup(request.resource.data, uid)
+        && request.auth.token.get('email_verified', false) == true
+        && request.auth.token.get('email', '').lower() == email
+        && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.email == email;
+      allow update: if isOwner(uid) && validLookup(request.resource.data, uid)
+        && request.resource.data == resource.data
+        && request.auth.token.get('email_verified', false) == true
+        && request.auth.token.get('email', '').lower() == email
+        && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.email == email;
+      allow delete: if isOwner(uid);
+    }
+
+    match /phoneLookup/{hash}/accounts/{uid} {
+      allow read: if accountSignedIn();
+      allow create: if isOwner(uid) && validLookup(request.resource.data, uid)
+        && hash.matches('^[0-9a-f]{64}$')
+        && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.phoneHash == hash
+        && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.discoverableByPhone == true;
+      allow update: if isOwner(uid) && validLookup(request.resource.data, uid)
+        && request.resource.data == resource.data
+        && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.phoneHash == hash
+        && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.discoverableByPhone == true;
+      allow delete: if isOwner(uid);
+    }
+
+    match /peerLookup/{peerId}/accounts/{uid} {
+      allow read: if accountSignedIn();
+      allow create: if isOwner(uid) && validLookup(request.resource.data, uid)
+        && validPeerId(peerId)
+        && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.peerId == peerId;
+      allow update: if isOwner(uid) && validLookup(request.resource.data, uid)
+        && request.resource.data == resource.data
+        && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.peerId == peerId;
+      allow delete: if isOwner(uid);
+    }
+
+    match /directChatsV2/{chatId} {
+      allow read: if accountSignedIn() && request.auth.uid in resource.data.memberIds;
+      allow create: if accountSignedIn() && validDirect(request.resource.data)
+        && request.auth.uid in request.resource.data.memberIds;
+      allow update: if accountSignedIn() && request.auth.uid in resource.data.memberIds
+        && validDirect(request.resource.data) && request.resource.data == resource.data;
+      allow delete: if false;
+
+      match /messages/{messageId} {
+        allow read: if accountSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/directChatsV2/$(chatId)).data.memberIds;
+        allow create: if accountSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/directChatsV2/$(chatId)).data.memberIds
+          && validChatMessage(request.resource.data);
+        allow update: if accountSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/directChatsV2/$(chatId)).data.memberIds
+          && validChatMessage(request.resource.data)
+          && request.resource.data == resource.data;
+        allow delete: if false;
+      }
+    }
+
+    match /privateChatsV2/{chatId} {
+      allow read: if accountSignedIn() && request.auth.uid in resource.data.memberIds;
+      allow create: if accountSignedIn() && validGroup(request.resource.data)
+        && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if accountSignedIn() && validGroup(request.resource.data)
+        && resource.data.ownerUid == request.auth.uid
+        && request.resource.data.ownerUid == resource.data.ownerUid
+        && request.resource.data.revision >= resource.data.revision;
+      allow delete: if accountSignedIn() && resource.data.ownerUid == request.auth.uid;
+
+      match /messages/{messageId} {
+        allow read: if accountSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/privateChatsV2/$(chatId)).data.memberIds;
+        allow create: if accountSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/privateChatsV2/$(chatId)).data.memberIds
+          && validChatMessage(request.resource.data);
+        allow update: if accountSignedIn()
+          && request.auth.uid in get(/databases/$(database)/documents/privateChatsV2/$(chatId)).data.memberIds
+          && validChatMessage(request.resource.data)
+          && request.resource.data == resource.data;
+        allow delete: if false;
+      }
     }
 
     function eventData(eventId) {

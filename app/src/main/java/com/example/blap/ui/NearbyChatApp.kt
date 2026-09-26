@@ -42,6 +42,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -74,6 +75,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.blap.chat.ChatScreen
@@ -90,6 +92,7 @@ import com.example.blap.chat.MessageStatus
 import com.example.blap.chat.NearbyDevice
 import com.example.blap.chat.ProfileUrl
 import com.example.blap.chat.SavedContact
+import com.example.blap.auth.AuthAccount
 import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventUiState
 import com.google.zxing.BarcodeFormat
@@ -104,7 +107,10 @@ fun NearbyChatApp(
     eventUiState: EventUiState,
     deniedPermissions: List<String>,
     onNameChanged: (String) -> Unit,
-    onPhoneChanged: (String) -> Unit,
+    authAccount: AuthAccount,
+    onCreateEmailAccount: (String, String) -> Unit,
+    onSignInWithEmail: (String, String) -> Unit,
+    onSignInWithGoogle: () -> Unit,
     onStartChat: () -> Unit,
     onCompleteSetup: () -> Unit,
     onStopChat: () -> Unit,
@@ -214,13 +220,14 @@ fun NearbyChatApp(
                 if (uiState.screen in TOP_LEVEL_SCREENS) Header(uiState)
                 when (uiState.screen) {
                     ChatScreen.WELCOME -> WelcomeScreen(
+                        authAccount = authAccount,
+                        onCreateEmailAccount = onCreateEmailAccount,
+                        onSignInWithEmail = onSignInWithEmail,
+                        onSignInWithGoogle = onSignInWithGoogle,
                         name = uiState.displayName,
-                        phoneNumber = uiState.phoneNumber,
                         nameError = uiState.nameError,
-                        phoneError = uiState.phoneError,
                         deniedPermissions = deniedPermissions,
                         onNameChanged = onNameChanged,
-                        onPhoneChanged = onPhoneChanged,
                         onStart = onCompleteSetup,
                         onOpenSettings = onOpenSettings,
                     )
@@ -240,6 +247,8 @@ fun NearbyChatApp(
                         onStartNearby = onStartChat,
                         onStopNearby = onStopChat,
                         onOpenSettings = onOpenSettings,
+                        showAccountPrompt = !authAccount.hasPassword && !authAccount.hasGoogle,
+                        onOpenAccount = onShowSettingsScreen,
                     )
 
                     ChatScreen.CONNECTING -> ConnectingScreen(
@@ -280,6 +289,7 @@ fun NearbyChatApp(
 
                     ChatScreen.MANAGING_CONTACTS -> ContactsScreen(
                         contacts = uiState.savedContacts,
+                        onlineReady = authAccount.uid.isNotBlank(),
                         search = uiState.contactSearch,
                         onSearchChanged = onContactSearchChanged,
                         onAdd = onBeginAddContact,
@@ -301,6 +311,7 @@ fun NearbyChatApp(
 
                     ChatScreen.SHOWING_MY_CARD -> MyCardScreen(
                         profile = uiState.profile(),
+                        peerId = uiState.myPeerId,
                         onEdit = onEditProfile,
                     )
 
@@ -312,6 +323,10 @@ fun NearbyChatApp(
                     )
 
                     ChatScreen.SETTINGS -> SettingsScreen(
+                        authAccount = authAccount,
+                        onCreateEmailAccount = onCreateEmailAccount,
+                        onSignInWithEmail = onSignInWithEmail,
+                        onSignInWithGoogle = onSignInWithGoogle,
                         contactCount = uiState.savedContacts.size,
                         connectionCount = uiState.directConnectionCount,
                         onEditProfile = onEditProfile,
@@ -382,6 +397,8 @@ private fun ChatUiState.profile() = ContactProfile(
     displayName = displayName,
     phoneNumber = phoneNumber,
     email = profileEmail,
+    googleAccountEmail = profileGoogleEmail,
+    discoverableByPhone = profileDiscoverableByPhone,
     bio = profileBio,
     websiteUrl = profileWebsite,
     instagramUrl = profileInstagram,
@@ -394,6 +411,7 @@ private fun ChatUiState.contactDraftProfile() = ContactProfile(
     displayName = contactNameDraft,
     phoneNumber = contactPhoneDraft,
     email = contactEmailDraft,
+    googleAccountEmail = contactGoogleEmailDraft,
     bio = contactBioDraft,
     websiteUrl = contactWebsiteDraft,
     instagramUrl = contactInstagramDraft,
@@ -500,20 +518,21 @@ private fun NearbyPill(state: ChatUiState) {
 
 @Composable
 private fun WelcomeScreen(
+    authAccount: AuthAccount,
+    onCreateEmailAccount: (String, String) -> Unit,
+    onSignInWithEmail: (String, String) -> Unit,
+    onSignInWithGoogle: () -> Unit,
     name: String,
-    phoneNumber: String,
     nameError: String?,
-    phoneError: String?,
     deniedPermissions: List<String>,
     onNameChanged: (String) -> Unit,
-    onPhoneChanged: (String) -> Unit,
     onStart: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
     Column(Modifier.fillMaxSize()) {
-        Text("Set up your profile", style = MaterialTheme.typography.headlineSmall)
+        Text("Join CommonGround", style = MaterialTheme.typography.headlineSmall)
         Text(
-            "Your display name will be shown to nearby users. Phone number shown only when you connect.",
+            "Sign in with Email or Google, or continue with nearby messaging.",
             modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -524,6 +543,13 @@ private fun WelcomeScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            AccountAccess(
+                authAccount = authAccount,
+                onCreateEmailAccount = onCreateEmailAccount,
+                onSignInWithEmail = onSignInWithEmail,
+                onSignInWithGoogle = onSignInWithGoogle,
+            )
+            Text("Your nearby profile", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
                 value = name,
                 onValueChange = onNameChanged,
@@ -539,27 +565,7 @@ private fun WelcomeScreen(
                 } else {
                     null
                 },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-            )
-            OutlinedTextField(
-                value = phoneNumber,
-                onValueChange = onPhoneChanged,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                isError = phoneError != null,
-                label = { Text("Phone Number") },
-                supportingText = {
-                    Text(phoneError ?: "Use your country code for seamless contact sync")
-                },
-                trailingIcon = if (phoneError != null) {
-                    { Icon(painterResource(R.drawable.ic_error), contentDescription = null) }
-                } else {
-                    null
-                },
-                keyboardOptions = KeyboardOptions(
-                    keyboardType = KeyboardType.Phone,
-                    imeAction = ImeAction.Done,
-                ),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                 keyboardActions = KeyboardActions(onDone = { onStart() }),
             )
 
@@ -587,7 +593,7 @@ private fun WelcomeScreen(
                 .padding(top = 24.dp)
                 .height(56.dp),
         ) {
-            Text("Continue")
+            Text("Continue to chats")
         }
     }
 }
@@ -608,6 +614,8 @@ private fun ConversationList(
     onStartNearby: () -> Unit,
     onStopNearby: () -> Unit,
     onOpenSettings: () -> Unit,
+    showAccountPrompt: Boolean,
+    onOpenAccount: () -> Unit,
 ) {
     val filteredConversations = conversations.filter {
         search.isBlank() || it.name.contains(search, ignoreCase = true) ||
@@ -618,6 +626,23 @@ private fun ConversationList(
         verticalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(bottom = 20.dp),
     ) {
+        if (showAccountPrompt && search.isBlank()) {
+            item {
+                Card(
+                    modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenAccount),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    shape = RoundedCornerShape(16.dp),
+                ) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("Sign in or link an account", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            "Choose Email or Google in Settings. Nearby chat works without sign-in.",
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
+                }
+            }
+        }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onManageContacts) { Text("New message") }
@@ -902,7 +927,8 @@ private fun CreateGroupScreen(
                                     when {
                                         contact.connected -> "Connected now"
                                         contact.availableOnMesh -> "Recognized on the mesh"
-                                        else -> "Will match by phone number when they join"
+                                        contact.phoneNumber.isNotBlank() -> "Will match by phone number when they join"
+                                        else -> "Saved by email. Pair nearby for mesh chat"
                                     },
                                     color = if (contact.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -943,6 +969,7 @@ private fun CreateGroupScreen(
 @Composable
 private fun ContactsScreen(
     contacts: List<SavedContact>,
+    onlineReady: Boolean,
     search: String,
     onSearchChanged: (String) -> Unit,
     onAdd: () -> Unit,
@@ -956,6 +983,7 @@ private fun ContactsScreen(
             contact.name,
             contact.phoneNumber,
             contact.email,
+            contact.googleAccountEmail,
             contact.instagramUrl,
             contact.linkedinUrl,
         ).any { it.contains(search, ignoreCase = true) }
@@ -1027,10 +1055,22 @@ private fun ContactsScreen(
                                     .weight(1f),
                             ) {
                                 Text(contact.name, style = MaterialTheme.typography.titleMedium)
-                                Text(contact.email.ifBlank { contact.phoneNumber }, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 Text(
-                                    if (contact.linkedPeerId != null) "Recognized on mesh" else "Waiting to match",
-                                    color = if (contact.linkedPeerId != null) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    contact.email.ifBlank { contact.googleAccountEmail.ifBlank { contact.phoneNumber } },
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    when {
+                                        contact.cloudUserId.isNotBlank() -> "Online account found. Confirm a number match by QR."
+                                        contact.linkedPeerId != null -> "Recognized on mesh"
+                                        onlineReady && (contact.email.isNotBlank() || contact.googleAccountEmail.isNotBlank()) ->
+                                            "Can look up a verified account email online"
+                                        onlineReady && contact.phoneNumber.isNotBlank() ->
+                                            "Can look up this number online. Match is unverified"
+                                        else -> "Saved locally. Sign in or pair by QR or Nearby to chat"
+                                    },
+                                    color = if (contact.linkedPeerId != null || contact.cloudUserId.isNotBlank()) MaterialTheme.colorScheme.primary
+                                        else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                             TextButton(onClick = { onMessage(contact.id) }) { Text("Message") }
@@ -1065,6 +1105,8 @@ private fun ContactEditorScreen(
         onBack = onBack,
         saveLabel = if (isExisting) "Save changes" else "Save contact",
         onDelete = if (isExisting) onDelete else null,
+        isContact = true,
+        allowQrOnly = source == ContactSource.QR,
     )
 }
 
@@ -1096,6 +1138,8 @@ private fun ProfileForm(
     onBack: () -> Unit,
     saveLabel: String,
     onDelete: (() -> Unit)? = null,
+    isContact: Boolean = false,
+    allowQrOnly: Boolean = false,
 ) {
     var confirmingDelete by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
@@ -1125,14 +1169,42 @@ private fun ProfileForm(
                 }
             }
             item {
-                ProfileTextField("Phone number", profile.phoneNumber, KeyboardType.Phone) {
-                    onChanged(profile.copy(phoneNumber = it))
+                ProfileTextField("Phone number (optional)", profile.phoneNumber, KeyboardType.Phone) {
+                    onChanged(profile.copy(
+                        phoneNumber = it,
+                        discoverableByPhone = profile.discoverableByPhone && it.isNotBlank(),
+                    ))
                 }
+            }
+            if (!isContact) item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(
+                        checked = profile.discoverableByPhone,
+                        onCheckedChange = { onChanged(profile.copy(discoverableByPhone = it)) },
+                        enabled = profile.phoneNumber.isNotBlank(),
+                    )
+                    Text("Let people find my account by this number")
+                }
+                Text(
+                    "The number is not verified. Anyone could enter a number they do not own. Share your QR card to confirm your identity.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             item {
                 ProfileTextField("Email", profile.email, KeyboardType.Email) {
                     onChanged(profile.copy(email = it))
                 }
+            }
+            item {
+                ProfileTextField("Google account email", profile.googleAccountEmail, KeyboardType.Email) {
+                    onChanged(profile.copy(googleAccountEmail = it))
+                }
+            }
+            item {
+                Text(
+                    "A Google account is added by its email address. A saved address does not prove the account belongs to that person.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             item {
                 OutlinedTextField(
@@ -1181,7 +1253,9 @@ private fun ProfileForm(
         }
         Button(
             onClick = onSave,
-            enabled = profile.displayName.isNotBlank() && profile.phoneNumber.isNotBlank(),
+            enabled = profile.displayName.isNotBlank() &&
+                (!isContact || profile.phoneNumber.isNotBlank() || profile.email.isNotBlank() ||
+                    profile.googleAccountEmail.isNotBlank() || allowQrOnly),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp),
@@ -1246,8 +1320,8 @@ private fun ProfileTextField(
 }
 
 @Composable
-private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
-    val payload = remember(profile) { ContactCardCodec.encode(profile) }
+private fun MyCardScreen(profile: ContactProfile, peerId: String, onEdit: () -> Unit) {
+    val payload = remember(profile, peerId) { ContactCardCodec.encode(profile, peerId) }
     val bitmap = remember(payload) { createQrBitmap(payload) }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1326,6 +1400,7 @@ private fun MyCardScreen(profile: ContactProfile, onEdit: () -> Unit) {
                     }
                     val items = listOf(
                         ProfileItem("Email", profile.email, openable = false),
+                        ProfileItem("Google account", profile.googleAccountEmail, openable = false),
                         ProfileItem("Website", profile.websiteUrl, ProfileUrl.isOpenable(profile.websiteUrl)),
                         ProfileItem("Instagram", profile.instagramUrl, ProfileUrl.isOpenable(profile.instagramUrl)),
                         ProfileItem("X / Twitter", profile.xUrl, ProfileUrl.isOpenable(profile.xUrl)),
@@ -1395,7 +1470,91 @@ internal fun createQrBitmap(payload: String, size: Int = 900): Bitmap {
 }
 
 @Composable
+private fun AccountAccess(
+    authAccount: AuthAccount,
+    onCreateEmailAccount: (String, String) -> Unit,
+    onSignInWithEmail: (String, String) -> Unit,
+    onSignInWithGoogle: () -> Unit,
+) {
+    var accountEmail by rememberSaveable { mutableStateOf("") }
+    var accountPassword by remember { mutableStateOf("") }
+    var selectedMethod by rememberSaveable { mutableStateOf(0) }
+    LaunchedEffect(authAccount) { accountPassword = "" }
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        shape = RoundedCornerShape(18.dp),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Sign in or link an account", style = MaterialTheme.typography.titleMedium)
+            if (authAccount.email.isNotBlank()) {
+                Text(authAccount.email, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                listOf("Email", "Google").forEachIndexed { index, label ->
+                    FilterChip(
+                        selected = selectedMethod == index,
+                        onClick = { selectedMethod = index },
+                        label = { Text(label) },
+                    )
+                }
+            }
+            when (selectedMethod) {
+                0 -> {
+                    if (authAccount.hasPassword) {
+                        Text("Email and password connected", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        OutlinedTextField(
+                            value = accountEmail,
+                            onValueChange = { accountEmail = it.take(120) },
+                            label = { Text("Email") },
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        OutlinedTextField(
+                            value = accountPassword,
+                            onValueChange = { accountPassword = it },
+                            label = { Text("Password") },
+                            visualTransformation = PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            TextButton(onClick = { onCreateEmailAccount(accountEmail, accountPassword) }) {
+                                Text(if (authAccount.hasGoogle) "Add email sign-in" else "Create account")
+                            }
+                            if (!authAccount.hasGoogle) {
+                                TextButton(onClick = { onSignInWithEmail(accountEmail, accountPassword) }) {
+                                    Text("Sign in")
+                                }
+                            }
+                        }
+                    }
+                }
+                1 -> {
+                    if (authAccount.hasGoogle) {
+                        Text("Google connected", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        OutlinedButton(onClick = onSignInWithGoogle) { Text("Continue with Google") }
+                    }
+                }
+            }
+            Text(
+                "Nearby chat works without sign-in. Phone numbers can be kept on contact cards, but are not used to sign in.",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
 private fun SettingsScreen(
+    authAccount: AuthAccount,
+    onCreateEmailAccount: (String, String) -> Unit,
+    onSignInWithEmail: (String, String) -> Unit,
+    onSignInWithGoogle: () -> Unit,
     contactCount: Int,
     connectionCount: Int,
     onEditProfile: () -> Unit,
@@ -1412,6 +1571,14 @@ private fun SettingsScreen(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(bottom = 18.dp),
     ) {
+        item {
+            AccountAccess(
+                authAccount = authAccount,
+                onCreateEmailAccount = onCreateEmailAccount,
+                onSignInWithEmail = onSignInWithEmail,
+                onSignInWithGoogle = onSignInWithGoogle,
+            )
+        }
         item {
             SettingsCard(
                 title = "Nearby messaging",
@@ -1464,7 +1631,7 @@ private fun SettingsScreen(
         }
         item {
             Text(
-                "BLAP exchanges chat data over nearby mesh links. Contact cards are shared only when you display or scan their QR code.",
+                "Direct and private group chats sync online after phone verification. Nearby messaging remains available without Internet.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp),
             )

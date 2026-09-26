@@ -3,6 +3,12 @@ package com.example.blap.chat
 import java.security.MessageDigest
 
 object PhoneIdentity {
+    fun normalizeInternational(number: String): String? {
+        val value = number.trim()
+        if (!value.startsWith("+") && !value.startsWith("00")) return null
+        return normalize(value)
+    }
+
     fun normalize(number: String): String? {
         val allDigits = number.filter(Char::isDigit)
         val digits = if (number.trim().startsWith("00")) allDigits.drop(2) else allDigits

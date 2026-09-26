@@ -45,6 +45,8 @@ class LocalIdentityStore(context: Context) : IdentityStore {
         displayName = getDisplayName(),
         phoneNumber = getPhoneNumber(),
         email = preferences.getString("email", "").orEmpty(),
+        googleAccountEmail = preferences.getString("google_account_email", "").orEmpty(),
+        discoverableByPhone = preferences.getBoolean("discoverable_by_phone", false),
         bio = preferences.getString("bio", "").orEmpty(),
         websiteUrl = preferences.getString("website", "").orEmpty(),
         instagramUrl = preferences.getString("instagram", "").orEmpty(),
@@ -58,6 +60,8 @@ class LocalIdentityStore(context: Context) : IdentityStore {
             putString("display_name", profile.displayName)
             putString("phone_number", profile.phoneNumber)
             putString("email", profile.email)
+            putString("google_account_email", profile.googleAccountEmail)
+            putBoolean("discoverable_by_phone", profile.discoverableByPhone)
             putString("bio", profile.bio)
             putString("website", profile.websiteUrl)
             putString("instagram", profile.instagramUrl)

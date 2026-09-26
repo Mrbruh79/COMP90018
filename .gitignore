@@ -8,3 +8,6 @@
 .externalNativeBuild
 .cxx
 local.properties
+rules-tests/node_modules/
+firebase-debug.log
+firestore-debug.log

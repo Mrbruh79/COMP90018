@@ -18,5 +18,6 @@ class PhoneIdentityTest {
     @Test
     fun invalidPhoneNumberIsRejected() {
         assertNull(PhoneIdentity.normalize("123"))
+        assertNull(PhoneIdentity.normalizeInternational("0412345678"))
     }
 }

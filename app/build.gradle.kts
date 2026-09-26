@@ -40,6 +40,9 @@ android {
 dependencies {
     implementation(libs.firebase.auth)
     implementation(libs.firebase.firestore)
+    implementation(libs.androidx.credentials)
+    implementation(libs.androidx.credentials.play.services.auth)
+    implementation(libs.google.id)
     val composeBom = platform(libs.androidx.compose.bom)
 
     coreLibraryDesugaring(libs.desugar.jdk.libs)

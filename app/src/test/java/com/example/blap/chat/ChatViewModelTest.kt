@@ -64,6 +64,19 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun nearbyProfileCanBeCreatedWithoutPhoneNumber() {
+        val identity = FakeIdentityStore()
+        identity.savePhoneNumber("")
+        val viewModel = makeViewModel(FakeNearbyChatController(), identityStore = identity)
+        viewModel.updateDisplayName("Alex")
+
+        viewModel.completeSetup()
+
+        assertEquals(ChatScreen.CHATS, viewModel.uiState.value.screen)
+        assertEquals("", identity.getPhoneNumber())
+    }
+
+    @Test
     fun startChatAdvertisesAndDiscovers() {
         val controller = FakeNearbyChatController()
         val identity = FakeIdentityStore()
@@ -604,11 +617,169 @@ class ChatViewModelTest {
         assertFalse(viewModel.uiState.value.nearbyActive)
     }
 
+    @Test
+    fun phoneOnlyContactCanSendOnlineWithoutNearbyPairing() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-id", phone = "+12025550198")
+        val nearby = FakeNearbyChatController()
+        val viewModel = makeViewModel(nearby, store, cloud = cloud)
+        viewModel.importDeviceContacts(listOf(DeviceContact("Bob", "+12025550198")))
+        viewModel.accountChanged("alice-uid")
+        viewModel.messageContact(viewModel.uiState.value.savedContacts.single().id)
+
+        viewModel.sendMessage("Hello online")
+
+        assertEquals("bob-uid", cloud.directMessages.single().first)
+        assertEquals("Hello online", cloud.directMessages.single().second.text)
+        assertTrue(nearby.sentMessages.isEmpty())
+        assertTrue(store.getCloudPendingMessages().isEmpty())
+    }
+
+    @Test
+    fun numberLookupStillWorksWhenSavedEmailHasNoOnlineMatch() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-id", phone = "+12025550198")
+        val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.beginAddContact()
+        viewModel.updateContactDraft(ContactProfile(
+            displayName = "Bob", email = "old@example.com", phoneNumber = "+12025550198",
+        ))
+        viewModel.saveContact()
+        viewModel.accountChanged("alice-uid")
+        viewModel.messageContact(store.getSavedContacts().single().id)
+
+        viewModel.sendMessage("Hello from my contact card")
+
+        assertEquals("bob-uid", cloud.directMessages.single().first)
+        assertEquals("bob-uid", store.getSavedContacts().single().cloudUserId)
+        assertTrue(viewModel.uiState.value.notice.orEmpty().contains("not verified"))
+    }
+
+    @Test
+    fun cloudAndNearbyCopiesOfOneDirectMessageAreStoredOnce() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-id", phone = "+12025550198")
+        val nearby = FakeNearbyChatController()
+        val viewModel = makeViewModel(nearby, store, cloud = cloud)
+        viewModel.accountChanged("alice-uid")
+        val message = CloudChatMessage("same-id", "bob-uid", "bob-id", "Bob", "Hi", 100L)
+
+        cloud.listener?.onDirectMessage("bob-uid", message)
+        nearby.listener?.onConnected(ConnectedPeer("bob-id", "bob-endpoint", "Bob", requireNotNull(PhoneIdentity.hash("+12025550198"))))
+        nearby.listener?.onMessageReceived(
+            IncomingNearbyMessage("same-id", "bob-id", "bob-id", "Bob", requireNotNull(PhoneIdentity.hash("+12025550198")), "Hi", 100L),
+        )
+
+        assertEquals(1, store.getMessages("bob-id").size)
+        assertEquals("Hi", store.getMessages("bob-id").single().text)
+    }
+
+    @Test
+    fun phoneOnlyPrivateGroupUploadsAndReceivesOnline() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-id", phone = "+12025550198")
+        val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.updateDisplayName("Alice")
+        viewModel.accountChanged("alice-uid")
+        viewModel.importDeviceContacts(listOf(DeviceContact("Bob", "+12025550198")))
+        viewModel.beginCreateGroup()
+        viewModel.updateGroupName("Friends")
+        viewModel.toggleGroupMember(viewModel.uiState.value.groupContacts.single().peerId)
+
+        viewModel.createPrivateGroup()
+        viewModel.sendMessage("Group hello")
+
+        assertEquals(setOf("alice-uid", "bob-uid"),
+            cloud.groups.single().members.map(CloudGroupMember::uid).toSet())
+        assertEquals("Group hello", cloud.groupMessages.single().second.text)
+    }
+
+    @Test
+    fun queuedPhoneOnlyMessageUploadsWhenContactAppearsOnline() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.accountChanged("alice-uid")
+        viewModel.importDeviceContacts(listOf(DeviceContact("Bob", "+12025550198")))
+        viewModel.messageContact(viewModel.uiState.value.savedContacts.single().id)
+        viewModel.sendMessage("Saved while offline")
+        assertTrue(cloud.directMessages.isEmpty())
+
+        cloud.addAccount("bob-uid", "Bob", "bob-id", phone = "+12025550198")
+        viewModel.accountChanged("alice-uid")
+
+        assertEquals("Saved while offline", cloud.directMessages.single().second.text)
+        assertTrue(store.getCloudPendingMessages().isEmpty())
+    }
+
+    @Test
+    fun scannedCardPairsPeerIdWithoutNearbyConnection() {
+        val store = FakeChatStore()
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        val peerId = "20aecc56-8f17-44b1-ac58-338417b7d320"
+        viewModel.importScannedContactCard(
+            ContactCardCodec.encode(ContactProfile("Bob", "+12025550198"), peerId),
+        )
+        viewModel.saveContact()
+
+        assertEquals(peerId, store.getSavedContacts().single().linkedPeerId)
+    }
+
+    @Test
+    fun multipleEmailOnlyContactsCanBeSavedAndSelectedForGroups() {
+        val store = FakeChatStore()
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        listOf("alex@example.com", "sam@example.com").forEach { email ->
+            viewModel.beginAddContact()
+            viewModel.updateContactDraft(ContactProfile(displayName = email.substringBefore('@'), email = email))
+            viewModel.saveContact()
+        }
+
+        assertEquals(2, store.getSavedContacts().size)
+        assertTrue(store.getSavedContacts().all { it.phoneNumber.isBlank() && it.phoneHash.isBlank() })
+        viewModel.beginCreateGroup()
+        assertEquals(2, viewModel.uiState.value.groupContacts.map { it.peerId }.distinct().size)
+    }
+
+    @Test
+    fun googleAccountEmailCanBeSavedWithoutPhone() {
+        val store = FakeChatStore()
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        viewModel.beginAddContact()
+        viewModel.updateContactDraft(ContactProfile(displayName = "Ari", googleAccountEmail = "Ari@Example.com"))
+        viewModel.saveContact()
+
+        assertEquals("ari@example.com", store.getSavedContacts().single().googleAccountEmail)
+    }
+
+    @Test
+    fun pairedEmailOnlyContactWithoutOnlineAccountStaysPending() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        val peerId = "20aecc56-8f17-44b1-ac58-338417b7d320"
+        viewModel.importScannedContactCard(
+            ContactCardCodec.encode(ContactProfile(displayName = "Bob", email = "bob@example.com"), peerId),
+        )
+        viewModel.saveContact()
+        viewModel.accountChanged("alice-uid")
+        viewModel.messageContact(store.getSavedContacts().single().id)
+        viewModel.sendMessage("Saved locally")
+
+        assertEquals(peerId, store.getSavedContacts().single().linkedPeerId)
+        assertTrue(cloud.directMessages.isEmpty())
+    }
+
     private fun makeViewModel(
         controller: FakeNearbyChatController,
         store: FakeChatStore = FakeChatStore(),
         identityStore: FakeIdentityStore = FakeIdentityStore(),
-    ) = ChatViewModel(controller, store, identityStore, Dispatchers.Unconfined)
+        cloud: FakeCloudChatController? = null,
+    ) = ChatViewModel(controller, store, identityStore, Dispatchers.Unconfined, cloudChatController = cloud)
 
     private class FakeIdentityStore : IdentityStore {
         val expectedPeerId = "local-peer"
@@ -646,8 +817,10 @@ class ChatViewModelTest {
         }
 
         override fun saveContact(contact: SavedContact) {
-            contacts.entries.removeAll { it.value.id == contact.id }
-            contacts[contact.phoneHash] = contact
+            if (contact.phoneHash.isNotBlank()) {
+                contacts.entries.removeAll { it.key != contact.id && it.value.phoneHash == contact.phoneHash }
+            }
+            contacts[contact.id] = contact
         }
 
         override fun getSavedContacts(): List<SavedContact> = contacts.values.toList()
@@ -657,8 +830,8 @@ class ChatViewModelTest {
         }
 
         override fun linkContact(phoneHash: String, peerId: String) {
-            val contact = contacts[phoneHash] ?: return
-            contacts[phoneHash] = contact.copy(linkedPeerId = peerId)
+            val contact = contacts.values.firstOrNull { it.phoneHash == phoneHash } ?: return
+            contacts[contact.id] = contact.copy(linkedPeerId = peerId)
         }
 
         override fun getKnownContacts(): List<GroupMember> = peers
@@ -670,6 +843,13 @@ class ChatViewModelTest {
         }
 
         override fun getGroups(): List<PrivateGroup> = groups.values.toList()
+
+        override fun getCloudPendingGroups(): List<PrivateGroup> = groups.values.filterNot(PrivateGroup::cloudSynced)
+
+        override fun markGroupCloudSynced(groupId: String, revision: Long) {
+            val group = groups[groupId] ?: return
+            if (group.createdAt == revision) groups[groupId] = group.copy(cloudSynced = true)
+        }
 
         override fun isGroupMember(groupId: String, peerId: String, phoneHash: String): Boolean =
             groups[groupId]?.members?.any {
@@ -719,6 +899,22 @@ class ChatViewModelTest {
             getMessages(peerId).filter {
                 it.author == MessageAuthor.ME && it.status != MessageStatus.DELIVERED
             }
+
+        override fun getCloudPendingMessages(): List<ChatMessage> = messages.values.filter {
+            it.author == MessageAuthor.ME && !it.cloudSynced
+        }
+
+        override fun markCloudSynced(messageId: String) {
+            messages[messageId]?.let { messages[messageId] = it.copy(cloudSynced = true) }
+        }
+
+        override fun moveConversation(fromPeerId: String, toPeerId: String) {
+            if (fromPeerId == toPeerId) return
+            messages.replaceAll { _, message ->
+                if (message.peerId == fromPeerId) message.copy(peerId = toPeerId) else message
+            }
+            peers.remove(fromPeerId)
+        }
 
         override fun close() = Unit
     }
@@ -770,5 +966,54 @@ class ChatViewModelTest {
             stopped = true
         }
         override fun close() = Unit
+    }
+
+    private class FakeCloudChatController : CloudChatController {
+        var listener: CloudChatController.Listener? = null
+        val directMessages = mutableListOf<Pair<String, CloudChatMessage>>()
+        val groups = mutableListOf<CloudPrivateGroup>()
+        val groupMessages = mutableListOf<Pair<String, CloudChatMessage>>()
+        private val accounts = mutableMapOf<String, CloudAccount>()
+        private val phones = mutableMapOf<String, String>()
+        private val emails = mutableMapOf<String, String>()
+
+        fun addAccount(uid: String, name: String, peerId: String, phone: String = "", email: String = "") {
+            accounts[uid] = CloudAccount(uid, name, peerId)
+            if (phone.isNotBlank()) phones[phone] = uid
+            if (email.isNotBlank()) emails[email.lowercase()] = uid
+        }
+
+        override fun start(accountUid: String, listener: CloudChatController.Listener) {
+            this.listener = listener
+        }
+
+        override fun stop() {
+            listener = null
+        }
+
+        override suspend fun publishAccount(profile: ContactProfile, peerId: String) = Unit
+
+        override suspend fun getAccount(uid: String): CloudAccount? = accounts[uid]
+
+        override suspend fun findAccounts(phoneNumber: String, email: String, peerId: String): List<CloudAccount> =
+            accounts.values.filter { account ->
+                (phoneNumber.isNotBlank() && phones[phoneNumber] == account.uid) ||
+                    (email.isNotBlank() && emails[email.lowercase()] == account.uid) ||
+                    (peerId.isNotBlank() && account.peerId == peerId)
+            }
+
+        override suspend fun sendDirect(otherUid: String, message: CloudChatMessage) {
+            directMessages += otherUid to message
+        }
+
+        override suspend fun saveGroup(group: CloudPrivateGroup) {
+            groups += group
+        }
+
+        override suspend fun deleteGroup(groupId: String) = Unit
+
+        override suspend fun sendGroup(groupId: String, message: CloudChatMessage) {
+            groupMessages += groupId to message
+        }
     }
 }

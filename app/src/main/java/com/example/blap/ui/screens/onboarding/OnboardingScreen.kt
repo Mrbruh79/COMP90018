@@ -87,7 +87,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit, modifier: Modifier = Modifier) {
                     .padding(horizontal = 28.dp)
                     .height(56.dp),
             ) {
-                Text("Get started")
+                Text("Continue to setup")
             }
         }
     }
@@ -154,7 +154,7 @@ private val FEATURES = listOf(
     Feature(
         R.drawable.ic_feature_cloud_sync,
         "Opt-in cloud sync",
-        "Chat history lives on your device. Signed-in users can manually back up their logs to the cloud whenever they choose.",
+        "Verify your number to sync direct and private group chats online. Nearby chat still works offline.",
     ),
 )
 

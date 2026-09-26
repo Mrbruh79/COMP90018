@@ -12,6 +12,11 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.credentials.CredentialManager
+import androidx.credentials.CustomCredential
+import androidx.credentials.GetCredentialRequest
+import androidx.credentials.exceptions.GetCredentialCancellationException
+import androidx.credentials.exceptions.NoCredentialException
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -21,10 +26,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.example.blap.auth.AuthManager
+import com.example.blap.auth.AuthAccount
 import com.example.blap.chat.ChatViewModel
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import com.google.android.libraries.identity.googleid.GetSignInWithGoogleOption
+import com.google.android.libraries.identity.googleid.GoogleIdTokenCredential
 import com.example.blap.ui.NearbyChatApp
 import com.example.blap.ui.screens.onboarding.OnboardingPreferences
 import com.example.blap.ui.screens.onboarding.OnboardingScreen
@@ -41,6 +49,7 @@ class MainActivity : ComponentActivity() {
     private var deniedPermissions by mutableStateOf<List<String>>(emptyList())
     private var pendingEventGpsEntry = false
     private var pendingEventQrScan = false
+    private var authAccount by mutableStateOf(AuthAccount())
 
     private val nearbyPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -83,6 +92,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
+        authAccount = AuthManager.account
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -112,7 +122,10 @@ class MainActivity : ComponentActivity() {
                     eventUiState = eventUiState,
                     deniedPermissions = deniedPermissions.map(NearbyPermissions::displayName),
                     onNameChanged = viewModel::updateDisplayName,
-                    onPhoneChanged = viewModel::updatePhoneNumber,
+                    authAccount = authAccount,
+                    onCreateEmailAccount = ::createEmailAccount,
+                    onSignInWithEmail = ::signInWithEmail,
+                    onSignInWithGoogle = ::signInWithGoogle,
                     onStartChat = ::requestNearbyPermissionsAndStart,
                     onCompleteSetup = viewModel::completeSetup,
                     onStopChat = viewModel::stopChat,
@@ -187,9 +200,78 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun createEmailAccount(email: String, password: String) {
+        AuthManager.createEmailAccount(email, password,
+            onSuccess = {
+                authAccount = AuthManager.account
+                viewModel.accountChanged(authAccount.uid)
+                AuthManager.sendVerificationEmail { sent ->
+                    viewModel.showNotice(if (sent) "Account created. Check your email to enable email lookup."
+                        else "Account created. Verify your email to enable email lookup.")
+                }
+            },
+            onError = viewModel::showError,
+        )
+    }
+
+    private fun signInWithEmail(email: String, password: String) {
+        AuthManager.signInWithEmail(email, password,
+            onSuccess = {
+                authAccount = AuthManager.account
+                viewModel.accountChanged(authAccount.uid)
+                viewModel.showNotice("Signed in with email.")
+            },
+            onError = viewModel::showError,
+        )
+    }
+
+    private fun signInWithGoogle() {
+        val resourceId = resources.getIdentifier("default_web_client_id", "string", packageName)
+        if (resourceId == 0) {
+            viewModel.showError("Google sign-in needs an updated Firebase config with a Web OAuth client.")
+            return
+        }
+        val clientId = getString(resourceId)
+        lifecycleScope.launch {
+            try {
+                val option = GetSignInWithGoogleOption.Builder(clientId).build()
+                val request = GetCredentialRequest.Builder().addCredentialOption(option).build()
+                val result = CredentialManager.create(this@MainActivity).getCredential(this@MainActivity, request)
+                val credential = result.credential
+                if (credential !is CustomCredential ||
+                    credential.type != GoogleIdTokenCredential.TYPE_GOOGLE_ID_TOKEN_CREDENTIAL
+                ) {
+                    viewModel.showError("Google did not return a sign-in token.")
+                    return@launch
+                }
+                val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
+                AuthManager.signInWithGoogleToken(token,
+                    onSuccess = {
+                        authAccount = AuthManager.account
+                        viewModel.accountChanged(authAccount.uid)
+                        viewModel.showNotice("Signed in with Google.")
+                    },
+                    onError = viewModel::showError,
+                )
+            } catch (_: GetCredentialCancellationException) {
+                viewModel.showNotice("Google sign-in cancelled.")
+            } catch (_: NoCredentialException) {
+                viewModel.showError("No Google account is available. Add one in device Settings, then try again.")
+            } catch (error: Exception) {
+                viewModel.showError(error.localizedMessage ?: "Google sign-in was cancelled or failed.")
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         if (deniedPermissions.isNotEmpty()) deniedPermissions = NearbyPermissions.missing(this)
+        if (authAccount.uid.isNotBlank() && !authAccount.emailVerified) {
+            AuthManager.refreshAccount {
+                authAccount = AuthManager.account
+                viewModel.accountChanged(authAccount.uid)
+            }
+        }
     }
 
     private fun requestNearbyPermissionsAndStart() {

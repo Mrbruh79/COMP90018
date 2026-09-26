@@ -547,7 +547,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
             if (packet.hopsRemaining !in 0..MAX_HOPS) return
             if (!rememberId(seenAcknowledgements, acknowledgementId(packet))) return
             if (packet.recipientId == localPeerId) {
-                listener?.onMessageDelivered(MeshGroup.ID, packet.messageId)
+                listener?.onMessageDelivered(packet.conversationId, packet.messageId)
             }
             if (packet.hopsRemaining > 0) {
                 sendPacketToMany(

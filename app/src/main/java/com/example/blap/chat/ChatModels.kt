@@ -26,6 +26,8 @@ data class ContactProfile(
     val displayName: String = "",
     val phoneNumber: String = "",
     val email: String = "",
+    val googleAccountEmail: String = "",
+    val discoverableByPhone: Boolean = false,
     val bio: String = "",
     val websiteUrl: String = "",
     val instagramUrl: String = "",
@@ -73,6 +75,8 @@ data class ChatMessage(
     val senderId: String = "",
     val senderName: String = "",
     val senderPhoneHash: String = "",
+    val senderAccountId: String = "",
+    val cloudSynced: Boolean = false,
 )
 
 data class ConversationSummary(
@@ -98,6 +102,8 @@ data class SavedContact(
     val phoneHash: String,
     val linkedPeerId: String? = null,
     val email: String = "",
+    val googleAccountEmail: String = "",
+    val cloudUserId: String = "",
     val bio: String = "",
     val websiteUrl: String = "",
     val instagramUrl: String = "",
@@ -111,6 +117,7 @@ data class SavedContact(
 data class DeviceContact(
     val name: String,
     val phoneNumber: String,
+    val email: String = "",
 )
 
 data class PrivateGroup(
@@ -119,6 +126,8 @@ data class PrivateGroup(
     val ownerId: String,
     val createdAt: Long,
     val members: List<GroupMember>,
+    val cloudSynced: Boolean = false,
+    val ownerAccountId: String = "",
 )
 
 data class GroupContact(
@@ -127,6 +136,7 @@ data class GroupContact(
     val connected: Boolean,
     val phoneNumber: String = "",
     val phoneHash: String = "",
+    val email: String = "",
     val availableOnMesh: Boolean = false,
 )
 
@@ -160,6 +170,7 @@ data class StoredGroupMessage(
 
 data class ChatUiState(
     val displayName: String = "",
+    val myPeerId: String = "",
     val phoneNumber: String = "",
     val screen: ChatScreen = ChatScreen.WELCOME,
     val nearbyActive: Boolean = false,
@@ -183,6 +194,7 @@ data class ChatUiState(
     val contactNameDraft: String = "",
     val contactPhoneDraft: String = "",
     val contactEmailDraft: String = "",
+    val contactGoogleEmailDraft: String = "",
     val contactBioDraft: String = "",
     val contactWebsiteDraft: String = "",
     val contactInstagramDraft: String = "",
@@ -191,6 +203,8 @@ data class ChatUiState(
     val contactGithubDraft: String = "",
     val contactSourceDraft: ContactSource = ContactSource.MANUAL,
     val profileEmail: String = "",
+    val profileGoogleEmail: String = "",
+    val profileDiscoverableByPhone: Boolean = false,
     val profileBio: String = "",
     val profileWebsite: String = "",
     val profileInstagram: String = "",
@@ -202,6 +216,7 @@ data class ChatUiState(
     val error: String? = null,
     val nameError: String? = null,
     val phoneError: String? = null,
+    val onlineAccountId: String = "",
 )
 
 object MeshGroup {
