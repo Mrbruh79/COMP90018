@@ -25,6 +25,9 @@ interface ChatStore {
     fun updateMessageStatus(messageId: String, status: MessageStatus)
     fun getConversations(): List<ConversationSummary>
     fun getMessages(peerId: String): List<ChatMessage>
+    fun hasCloudPeerMessage(peerId: String): Boolean = getMessages(peerId).any {
+        it.author == MessageAuthor.PEER && it.senderAccountId.isNotBlank()
+    }
     fun getPendingMessages(peerId: String): List<ChatMessage>
     fun getCloudPendingMessages(): List<ChatMessage> = emptyList()
     fun markCloudSynced(messageId: String) = Unit
@@ -32,9 +35,9 @@ interface ChatStore {
     fun close()
 }
 
-class SqliteChatStore(context: Context) : SQLiteOpenHelper(
+class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     context,
-    "nearby_chat.db",
+    "nearby_chat$scope.db",
     null,
     10,
 ), ChatStore {
@@ -454,6 +457,12 @@ class SqliteChatStore(context: Context) : SQLiteOpenHelper(
         }
         return messages
     }
+
+    @Synchronized
+    override fun hasCloudPeerMessage(peerId: String): Boolean = readableDatabase.rawQuery(
+        "SELECT 1 FROM messages WHERE peer_id = ? AND author = ? AND sender_account_id != '' LIMIT 1",
+        arrayOf(peerId, MessageAuthor.PEER.ordinal.toString()),
+    ).use { it.moveToFirst() }
 
     @Synchronized
     override fun getPendingMessages(peerId: String): List<ChatMessage> {

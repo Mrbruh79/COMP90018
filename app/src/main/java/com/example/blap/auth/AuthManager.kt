@@ -143,13 +143,8 @@ object AuthManager {
 
     fun ensureSignedIn(onComplete: (success: Boolean) -> Unit) {
         val existingUser = auth.currentUser
-        if (existingUser != null) {
-            onComplete(true)
-            return
-        }
-        auth.signInAnonymously()
-            .addOnCompleteListener { task ->
-                onComplete(task.isSuccessful)
-            }
+        onComplete(existingUser != null && !existingUser.isAnonymous)
     }
+
+    fun signOut() = auth.signOut()
 }

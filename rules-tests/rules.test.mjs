@@ -16,8 +16,9 @@ const settingsFor = (uid, phoneHash = '', discoverableByPhone = false) => ({
 async function publishAccount(uid, phoneHash = '', discoverableByPhone = false) {
   const db = client(uid);
   const batch = writeBatch(db);
+  batch.set(doc(db, `usernames/${uid}`), { uid });
   batch.set(doc(db, `accountSettings/${uid}`), settingsFor(uid, phoneHash, discoverableByPhone));
-  batch.set(doc(db, `accountCards/${uid}`), { uid, name: uid, peerId: `${uid}-peer` });
+  batch.set(doc(db, `accountCards/${uid}`), { uid, name: uid, peerId: `${uid}-peer`, username: uid });
   batch.set(doc(db, `emailLookup/${emailFor(uid)}/accounts/${uid}`), { uid });
   batch.set(doc(db, `peerLookup/${uid}-peer/accounts/${uid}`), { uid });
   if (phoneHash) batch.set(doc(db, `phoneLookup/${phoneHash}/accounts/${uid}`), { uid });
@@ -63,14 +64,29 @@ test('account owner cannot claim a different verified email or another uid', asy
   await assertFails(setDoc(doc(client('alice', false), 'emailLookup/alice@example.com/accounts/alice'), { uid: 'alice' }));
   await publishAccount('alice');
   await assertFails(setDoc(doc(alice, 'accountCards/alice'), {
-    uid: 'bob', name: 'Spoofed', peerId: 'alice-peer',
+    uid: 'bob', name: 'Spoofed', peerId: 'alice-peer', username: 'alice',
   }));
   await assertFails(setDoc(doc(alice, 'accountCards/alice'), {
-    uid: 'alice', name: 'A'.repeat(1_000_000), peerId: 'alice-peer',
+    uid: 'alice', name: 'A'.repeat(1_000_000), peerId: 'alice-peer', username: 'alice',
   }));
   await assertFails(setDoc(doc(alice, 'accountCards/alice'), {
-    uid: 'alice', name: 'Alice', peerId: 'alice-peer', admin: true,
+    uid: 'alice', name: 'Alice', peerId: 'alice-peer', username: 'alice', admin: true,
   }));
+});
+
+test('usernames are unique and cannot be reassigned or changed on an account card', async () => {
+  await publishAccount('alice');
+  const alice = client('alice');
+  const bob = client('bob');
+  await assertFails(setDoc(doc(bob, 'usernames/alice'), { uid: 'bob' }));
+  await assertFails(setDoc(doc(bob, 'usernames/Bob'), { uid: 'bob' }));
+  await assertFails(setDoc(doc(bob, 'usernames/bob'), { uid: 'alice' }));
+  await assertFails(setDoc(doc(alice, 'usernames/alice'), { uid: 'bob' }));
+  await assertFails(setDoc(doc(alice, 'accountCards/alice'), {
+    uid: 'alice', name: 'Alice', peerId: 'alice-peer', username: 'another',
+  }));
+  await assertSucceeds(getDoc(doc(bob, 'usernames/alice')));
+  await assertFails(getDocs(collection(bob, 'usernames')));
 });
 
 test('phone lookup is opt-in, unverified, and limited to the chosen hash', async () => {
@@ -87,6 +103,21 @@ test('phone lookup is opt-in, unverified, and limited to the chosen hash', async
   await assertSucceeds(batch.commit());
   const result = await getDocs(collection(bob, `phoneLookup/${hash}/accounts`));
   if (!result.empty) throw new Error('Phone alias should have been removed');
+});
+
+test('enabling phone lookup after account creation publishes a readable exact alias', async () => {
+  const hash = 'c'.repeat(64);
+  await publishAccount('alice');
+  const alice = client('alice');
+  const bob = client('bob');
+  const batch = writeBatch(alice);
+  batch.set(doc(alice, 'accountSettings/alice'), settingsFor('alice', hash, true));
+  batch.set(doc(alice, 'phoneLookup/' + hash + '/accounts/alice'), { uid: 'alice' });
+  await assertSucceeds(batch.commit());
+  const matches = await getDocs(collection(bob, `phoneLookup/${hash}/accounts`));
+  if (matches.docs.map(match => match.id).join(',') !== 'alice') {
+    throw new Error('The opted-in phone alias was not found');
+  }
 });
 
 test('direct chats are limited to two account UIDs, with immutable sender data', async () => {
@@ -108,6 +139,11 @@ test('direct chats are limited to two account UIDs, with immutable sender data',
   };
   await assertSucceeds(setDoc(doc(alice, 'directChatsV2/chat-1/messages/m1'), message));
   await assertSucceeds(getDoc(doc(bob, 'directChatsV2/chat-1/messages/m1')));
+  await assertSucceeds(setDoc(doc(bob, 'directChatsV2/chat-1'), { memberIds: ['alice', 'bob'] }));
+  await assertSucceeds(setDoc(doc(bob, 'directChatsV2/chat-1/messages/reply'), {
+    senderUid: 'bob', senderPeerId: 'bob-peer', senderName: 'Bob', text: 'Reply', sentAt: 101,
+  }));
+  await assertSucceeds(getDoc(doc(alice, 'directChatsV2/chat-1/messages/reply')));
   await assertSucceeds(setDoc(doc(alice, 'directChatsV2/chat-1/messages/m1'), message));
   await assertFails(setDoc(doc(bob, 'directChatsV2/chat-1/messages/m2'), message));
   await assertFails(setDoc(doc(carol, 'directChatsV2/chat-1/messages/m3'), {

@@ -637,6 +637,44 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun manuallyEnteredNationalZeroMatchesTheSameOnlineAccount() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-id", phone = "+61412345678")
+        val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.beginAddContact()
+        viewModel.updateContactDraft(ContactProfile(displayName = "Bob", phoneNumber = "+61 0412 345 678"))
+        viewModel.saveContact()
+        viewModel.accountChanged("alice-uid")
+        val contact = store.getSavedContacts().single()
+        assertEquals("+61412345678", contact.phoneNumber)
+
+        viewModel.messageContact(contact.id)
+        viewModel.sendMessage("Hello Bob")
+
+        assertEquals("bob-uid", cloud.directMessages.single().first)
+    }
+
+    @Test
+    fun sharedCardPhoneAndOnlineLookupPhoneStaySeparate() {
+        val viewModel = makeViewModel(FakeNearbyChatController())
+        viewModel.updateDisplayName("Alice")
+        viewModel.completeSetup()
+        viewModel.showDiscoverySettings()
+        viewModel.updateDiscoveryPhone("+12025550198")
+        viewModel.updateDiscoveryEnabled(true)
+        viewModel.saveDiscoverySettings()
+        viewModel.editProfile()
+        val cardDraft = requireNotNull(viewModel.uiState.value.profileDraft)
+        viewModel.updateProfile(cardDraft.copy(phoneNumber = "+61412345678"))
+        viewModel.saveProfile()
+
+        assertEquals("+61412345678", viewModel.uiState.value.phoneNumber)
+        assertEquals("+12025550198", viewModel.uiState.value.profileLookupPhoneNumber)
+        assertTrue(viewModel.uiState.value.profileDiscoverableByPhone)
+    }
+
+    @Test
     fun numberLookupStillWorksWhenSavedEmailHasNoOnlineMatch() {
         val store = FakeChatStore()
         val cloud = FakeCloudChatController()
@@ -675,6 +713,28 @@ class ChatViewModelTest {
 
         assertEquals(1, store.getMessages("bob-id").size)
         assertEquals("Hi", store.getMessages("bob-id").single().text)
+    }
+
+    @Test
+    fun incomingReplyIsStoredWithoutFetchingTheSenderAccountAgain() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-id", phone = "+12025550198")
+        val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.accountChanged("alice-uid")
+        viewModel.importDeviceContacts(listOf(DeviceContact("Bob", "+12025550198")))
+        viewModel.messageContact(store.getSavedContacts().single().id)
+        viewModel.sendMessage("Hello Bob")
+        val peerId = requireNotNull(viewModel.uiState.value.selectedPeerId)
+        val replyTime = store.getMessages(peerId).single().sentAt + 1
+        cloud.failAccountFetch = true
+
+        cloud.listener?.onDirectMessage("bob-uid",
+            CloudChatMessage("reply-id", "bob-uid", "bob-id", "Bob", "Hello Alice", replyTime))
+
+        assertEquals(listOf("Hello Bob", "Hello Alice"), store.getMessages(peerId).map { it.text })
+        assertEquals(MessageAuthor.PEER, store.getMessages(peerId).last().author)
+        assertTrue(viewModel.uiState.value.conversations.single { it.peerId == peerId }.onlineAccountLinked)
     }
 
     @Test
@@ -970,6 +1030,7 @@ class ChatViewModelTest {
 
     private class FakeCloudChatController : CloudChatController {
         var listener: CloudChatController.Listener? = null
+        var failAccountFetch = false
         val directMessages = mutableListOf<Pair<String, CloudChatMessage>>()
         val groups = mutableListOf<CloudPrivateGroup>()
         val groupMessages = mutableListOf<Pair<String, CloudChatMessage>>()
@@ -993,7 +1054,8 @@ class ChatViewModelTest {
 
         override suspend fun publishAccount(profile: ContactProfile, peerId: String) = Unit
 
-        override suspend fun getAccount(uid: String): CloudAccount? = accounts[uid]
+        override suspend fun getAccount(uid: String): CloudAccount? =
+            if (failAccountFetch) error("Firestore profile fetch unavailable") else accounts[uid]
 
         override suspend fun findAccounts(phoneNumber: String, email: String, peerId: String): List<CloudAccount> =
             accounts.values.filter { account ->

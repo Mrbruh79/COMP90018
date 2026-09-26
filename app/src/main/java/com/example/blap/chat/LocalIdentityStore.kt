@@ -17,8 +17,8 @@ interface IdentityStore {
     }
 }
 
-class LocalIdentityStore(context: Context) : IdentityStore {
-    private val preferences = context.getSharedPreferences("chat_identity", Context.MODE_PRIVATE)
+class LocalIdentityStore(context: Context, scope: String = "") : IdentityStore {
+    private val preferences = context.getSharedPreferences("chat_identity$scope", Context.MODE_PRIVATE)
 
     override fun getPeerId(): String {
         val savedId = preferences.getString("peer_id", null)
@@ -47,12 +47,15 @@ class LocalIdentityStore(context: Context) : IdentityStore {
         email = preferences.getString("email", "").orEmpty(),
         googleAccountEmail = preferences.getString("google_account_email", "").orEmpty(),
         discoverableByPhone = preferences.getBoolean("discoverable_by_phone", false),
+        lookupPhoneNumber = preferences.getString("lookup_phone_number", null)
+            ?: getPhoneNumber().takeIf { preferences.getBoolean("discoverable_by_phone", false) }.orEmpty(),
         bio = preferences.getString("bio", "").orEmpty(),
         websiteUrl = preferences.getString("website", "").orEmpty(),
         instagramUrl = preferences.getString("instagram", "").orEmpty(),
         xUrl = preferences.getString("x", "").orEmpty(),
         linkedinUrl = preferences.getString("linkedin", "").orEmpty(),
         githubUrl = preferences.getString("github", "").orEmpty(),
+        username = preferences.getString("username", "").orEmpty(),
     )
 
     override fun saveProfile(profile: ContactProfile) {
@@ -62,12 +65,14 @@ class LocalIdentityStore(context: Context) : IdentityStore {
             putString("email", profile.email)
             putString("google_account_email", profile.googleAccountEmail)
             putBoolean("discoverable_by_phone", profile.discoverableByPhone)
+            putString("lookup_phone_number", profile.lookupPhoneNumber)
             putString("bio", profile.bio)
             putString("website", profile.websiteUrl)
             putString("instagram", profile.instagramUrl)
             putString("x", profile.xUrl)
             putString("linkedin", profile.linkedinUrl)
             putString("github", profile.githubUrl)
+            putString("username", profile.username)
         }
     }
 }

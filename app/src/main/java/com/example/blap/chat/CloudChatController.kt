@@ -9,6 +9,11 @@ import java.util.Locale
 import kotlinx.coroutines.tasks.await
 
 data class CloudAccount(val uid: String, val name: String, val peerId: String)
+
+internal object AccountLookup {
+    fun phoneHash(profile: ContactProfile): String =
+        if (profile.discoverableByPhone) PhoneIdentity.hash(profile.lookupPhoneNumber).orEmpty() else ""
+}
 data class CloudChatMessage(
     val id: String,
     val senderUid: String,
@@ -137,7 +142,7 @@ class FirebaseCloudChatController(
         val uid = requireAccountUid()
         val user = requireNotNull(auth.currentUser)
         val email = if (user.isEmailVerified) user.email.orEmpty().trim().lowercase(Locale.ROOT) else ""
-        val phoneHash = if (profile.discoverableByPhone) PhoneIdentity.hash(profile.phoneNumber).orEmpty() else ""
+        val phoneHash = AccountLookup.phoneHash(profile)
         val settingsRef = firestore.collection("accountSettings").document(uid)
         val previous = settingsRef.get().await()
         val oldEmail = previous.getString("email").orEmpty()
@@ -159,6 +164,7 @@ class FirebaseCloudChatController(
         ))
         batch.set(firestore.collection("accountCards").document(uid), mapOf(
             "uid" to uid, "name" to profile.displayName.trim().take(24), "peerId" to peerId,
+            "username" to profile.username,
         ))
         if (email.isNotBlank()) {
             batch.set(firestore.collection("emailLookup").document(email).collection("accounts").document(uid), mapOf("uid" to uid))

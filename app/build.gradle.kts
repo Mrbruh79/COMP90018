@@ -63,6 +63,7 @@ dependencies {
     implementation(libs.play.services.code.scanner)
     implementation(libs.zxing.core)
     implementation(libs.osmdroid)
+    implementation(libs.libphonenumber)
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     androidTestImplementation(composeBom)

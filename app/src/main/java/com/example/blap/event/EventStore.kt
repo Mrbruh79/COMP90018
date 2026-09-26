@@ -99,9 +99,9 @@ class InMemoryEventStore : EventStore {
     override fun close() = Unit
 }
 
-class SqliteEventStore(context: Context) : SQLiteOpenHelper(
+class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     context,
-    "community_events.db",
+    "community_events$scope.db",
     null,
     3,
 ), EventStore {

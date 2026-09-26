@@ -11,6 +11,7 @@ enum class ChatScreen {
     EDITING_PROFILE,
     SHOWING_MY_CARD,
     GROUP_SETTINGS,
+    DISCOVERY_SETTINGS,
     SETTINGS,
     EVENTS,
     ERROR,
@@ -34,6 +35,8 @@ data class ContactProfile(
     val xUrl: String = "",
     val linkedinUrl: String = "",
     val githubUrl: String = "",
+    val username: String = "",
+    val lookupPhoneNumber: String = "",
 )
 
 enum class ConversationType {
@@ -85,6 +88,7 @@ data class ConversationSummary(
     val lastMessage: String = "",
     val lastMessageAt: Long = 0,
     val connected: Boolean = false,
+    val onlineAccountLinked: Boolean = false,
     val type: ConversationType = ConversationType.DIRECT,
     val memberCount: Int = 0,
 )
@@ -205,6 +209,7 @@ data class ChatUiState(
     val profileEmail: String = "",
     val profileGoogleEmail: String = "",
     val profileDiscoverableByPhone: Boolean = false,
+    val profileLookupPhoneNumber: String = "",
     val profileBio: String = "",
     val profileWebsite: String = "",
     val profileInstagram: String = "",
@@ -217,6 +222,7 @@ data class ChatUiState(
     val nameError: String? = null,
     val phoneError: String? = null,
     val onlineAccountId: String = "",
+    val onlineLookupStatus: String = "Not checked yet",
 )
 
 object MeshGroup {

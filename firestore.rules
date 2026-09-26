@@ -3,7 +3,8 @@ rules_version = '2';
 // Assumed data model for the existing Standard-edition default database:
 // accountSettings/{uid}: private uid, verified email, optional opted-in phone hash,
 // peerId and discoverableByPhone flag. Only the owner reads this document.
-// accountCards/{uid}: uid, short display name and app peerId. No raw contact details.
+// accountCards/{uid}: uid, unique username, short display name and app peerId.
+// usernames/{username}: one immutable UID reservation for each lowercase username.
 // {emailLookup|phoneLookup|peerLookup}/{key}/accounts/{uid}: uid-only lookup entry.
 // directChatsV2/{id}: two memberIds. privateChatsV2/{id}: ownerUid, name,
 // revision, memberIds and matching member cards. Their messages carry senderUid,
@@ -40,6 +41,16 @@ service cloud.firestore {
       return value is string && value.matches('^[^/]{1,100}$');
     }
 
+    function validUsername(value) {
+      return value is string && value.matches('^[a-z0-9_]{3,20}$');
+    }
+
+    function validUsernameReservation(data, username) {
+      return validUsername(username) && data.keys().hasAll(['uid'])
+        && data.keys().hasOnly(['uid']) && data.uid == request.auth.uid
+        && validUid(data.uid);
+    }
+
     function validAccountSettings(data, uid) {
       return data.keys().hasAll(['uid', 'email', 'phoneHash', 'peerId', 'discoverableByPhone'])
         && data.keys().hasOnly(['uid', 'email', 'phoneHash', 'peerId', 'discoverableByPhone'])
@@ -55,10 +66,12 @@ service cloud.firestore {
     }
 
     function validAccountCard(data, uid) {
-      return data.keys().hasAll(['uid', 'name', 'peerId'])
-        && data.keys().hasOnly(['uid', 'name', 'peerId'])
+      return data.keys().hasAll(['uid', 'name', 'peerId', 'username'])
+        && data.keys().hasOnly(['uid', 'name', 'peerId', 'username'])
         && data.uid == uid && validUid(data.uid)
         && data.name is string && data.name.size() > 0 && data.name.size() <= 24
+        && validUsername(data.username)
+        && getAfter(/databases/$(database)/documents/usernames/$(data.username)).data.uid == uid
         && validPeerId(data.peerId)
         && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.peerId == data.peerId;
     }
@@ -133,8 +146,17 @@ service cloud.firestore {
       allow create: if isOwner(uid) && uidUnchanged(uid)
         && validAccountCard(request.resource.data, uid);
       allow update: if isOwner(uid) && uidNotModified()
+        && request.resource.data.username == resource.data.get('username', request.resource.data.username)
         && validAccountCard(request.resource.data, uid);
       allow delete: if false;
+    }
+
+    match /usernames/{username} {
+      allow get: if accountSignedIn();
+      allow list: if false;
+      allow create: if accountSignedIn()
+        && validUsernameReservation(request.resource.data, username);
+      allow update, delete: if false;
     }
 
     match /emailLookup/{email}/accounts/{uid} {

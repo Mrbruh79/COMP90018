@@ -20,4 +20,10 @@ class PhoneIdentityTest {
         assertNull(PhoneIdentity.normalize("123"))
         assertNull(PhoneIdentity.normalizeInternational("0412345678"))
     }
+
+    @Test
+    fun australianTrunkZeroMatchesInternationalMobileNumber() {
+        assertEquals("+61412345678", PhoneIdentity.normalizeInternational("+61 0412 345 678"))
+        assertEquals(PhoneIdentity.hash("+61 0412 345 678"), PhoneIdentity.hash("+61412345678"))
+    }
 }

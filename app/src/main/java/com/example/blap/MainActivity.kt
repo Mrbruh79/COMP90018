@@ -13,6 +13,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.credentials.CredentialManager
+import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
@@ -27,7 +28,12 @@ import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import com.example.blap.auth.AuthManager
 import com.example.blap.auth.AuthAccount
+import com.example.blap.auth.AccountProfileManager
+import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.chat.ChatViewModel
+import com.example.blap.chat.ContactProfile
+import com.example.blap.chat.LocalDataScope
+import com.example.blap.chat.LocalIdentityStore
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -50,6 +56,8 @@ class MainActivity : ComponentActivity() {
     private var pendingEventGpsEntry = false
     private var pendingEventQrScan = false
     private var authAccount by mutableStateOf(AuthAccount())
+    private var accountProfile by mutableStateOf<PublicAccountProfile?>(null)
+    private var accountProfileLoading by mutableStateOf(false)
 
     private val nearbyPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -93,6 +101,7 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         authAccount = AuthManager.account
+        accountProfileLoading = authAccount.uid.isNotBlank()
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -123,6 +132,12 @@ class MainActivity : ComponentActivity() {
                     deniedPermissions = deniedPermissions.map(NearbyPermissions::displayName),
                     onNameChanged = viewModel::updateDisplayName,
                     authAccount = authAccount,
+                    accountProfile = accountProfile,
+                    accountProfileLoading = accountProfileLoading,
+                    onRegisterEmail = ::registerEmail,
+                    onCompleteAccountProfile = ::completeAccountProfile,
+                    onRetryAccountProfile = ::loadAccountProfile,
+                    onSignOut = ::signOut,
                     onCreateEmailAccount = ::createEmailAccount,
                     onSignInWithEmail = ::signInWithEmail,
                     onSignInWithGoogle = ::signInWithGoogle,
@@ -144,6 +159,7 @@ class MainActivity : ComponentActivity() {
                     onBeginAddContact = viewModel::beginAddContact,
                     onOpenContact = viewModel::openContact,
                     onMessageContact = viewModel::messageContact,
+                    onCheckContactOnline = viewModel::checkContactOnline,
                     onContactDraftChanged = viewModel::updateContactDraft,
                     onDeleteContact = viewModel::deleteContact,
                     onScanContact = ::scanContactCard,
@@ -155,6 +171,11 @@ class MainActivity : ComponentActivity() {
                     onSaveProfile = viewModel::saveProfile,
                     onCancelProfile = viewModel::cancelProfileEdit,
                     onShowSettingsScreen = viewModel::showSettings,
+                    onShowDiscoverySettings = viewModel::showDiscoverySettings,
+                    onDiscoveryPhoneChanged = viewModel::updateDiscoveryPhone,
+                    onDiscoveryEnabledChanged = viewModel::updateDiscoveryEnabled,
+                    onSaveDiscoverySettings = viewModel::saveDiscoverySettings,
+                    onCancelDiscoverySettings = viewModel::cancelDiscoveryEdit,
                     onShowEvents = viewModel::showEvents,
                     onBeginCreateEvent = viewModel::beginCreateEvent,
                     onBeginEditEvent = viewModel::beginEditEvent,
@@ -198,6 +219,92 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+        intent.getStringExtra(ACCOUNT_SETUP_ERROR)?.let { message ->
+            intent.removeExtra(ACCOUNT_SETUP_ERROR)
+            viewModel.showError(message)
+        }
+        if (authAccount.uid.isNotBlank()) loadAccountProfile()
+    }
+
+    private fun localIdentity(): LocalIdentityStore {
+        val scope = LocalDataScope.forAccount(applicationContext, AuthManager.onlineUserId)
+        return LocalIdentityStore(applicationContext, scope)
+    }
+
+    private fun loadAccountProfile() {
+        if (authAccount.uid.isBlank()) return
+        accountProfileLoading = true
+        lifecycleScope.launch {
+            val local = localIdentity().getProfile()
+            val remote = runCatching { AccountProfileManager.load() }
+            val profile = remote.getOrNull() ?: if (local.username.isNotBlank() && local.displayName.isNotBlank()) {
+                runCatching { AccountProfileManager.claim(local.username, local.displayName) }.getOrNull()
+                    ?: if (remote.isFailure) PublicAccountProfile(local.username, local.displayName) else null
+            } else null
+            accountProfile = profile
+            accountProfileLoading = false
+            if (profile != null) viewModel.applyAccountProfile(profile.username, profile.displayName)
+            else if (remote.isFailure) viewModel.showError("Could not load your account. Check your connection and retry.")
+        }
+    }
+
+    private fun completeAccountProfile(username: String, displayName: String) {
+        lifecycleScope.launch {
+            try {
+                val profile = AccountProfileManager.claim(username, displayName)
+                val identity = localIdentity()
+                identity.saveProfile(identity.getProfile().copy(
+                    username = profile.username, displayName = profile.displayName,
+                ))
+                accountProfile = profile
+                viewModel.applyAccountProfile(profile.username, profile.displayName)
+            } catch (error: Exception) {
+                viewModel.showError(error.localizedMessage ?: "Could not save your username.")
+            }
+        }
+    }
+
+    private fun registerEmail(email: String, password: String, username: String, displayName: String) {
+        AccountProfileManager.validate(username, displayName)?.let { viewModel.showError(it); return }
+        AuthManager.createEmailAccount(email, password,
+            onSuccess = {
+                authAccount = AuthManager.account
+                lifecycleScope.launch {
+                    try {
+                        val profile = AccountProfileManager.claim(username, displayName)
+                        val scope = LocalDataScope.forAccount(applicationContext, authAccount.uid)
+                        LocalIdentityStore(applicationContext, scope).saveProfile(
+                            ContactProfile(displayName = profile.displayName, username = profile.username),
+                        )
+                        AuthManager.sendVerificationEmail { }
+                        recreate()
+                    } catch (error: Exception) {
+                        intent.putExtra(ACCOUNT_SETUP_ERROR,
+                            error.localizedMessage ?: "Account created, but username setup failed. Try another.")
+                        recreate()
+                    }
+                }
+            },
+            onError = viewModel::showError,
+        )
+    }
+
+    private fun signOut() {
+        viewModel.stopChat()
+        viewModel.accountChanged("")
+        AuthManager.signOut()
+        authAccount = AuthAccount()
+        accountProfile = null
+        lifecycleScope.launch {
+            runCatching {
+                CredentialManager.create(this@MainActivity).clearCredentialState(ClearCredentialStateRequest())
+            }
+            recreate()
+        }
+    }
+
+    companion object {
+        private const val ACCOUNT_SETUP_ERROR = "account_setup_error"
     }
 
     private fun createEmailAccount(email: String, password: String) {
@@ -216,11 +323,7 @@ class MainActivity : ComponentActivity() {
 
     private fun signInWithEmail(email: String, password: String) {
         AuthManager.signInWithEmail(email, password,
-            onSuccess = {
-                authAccount = AuthManager.account
-                viewModel.accountChanged(authAccount.uid)
-                viewModel.showNotice("Signed in with email.")
-            },
+            onSuccess = { recreate() },
             onError = viewModel::showError,
         )
     }
@@ -246,11 +349,7 @@ class MainActivity : ComponentActivity() {
                 }
                 val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
                 AuthManager.signInWithGoogleToken(token,
-                    onSuccess = {
-                        authAccount = AuthManager.account
-                        viewModel.accountChanged(authAccount.uid)
-                        viewModel.showNotice("Signed in with Google.")
-                    },
+                    onSuccess = { recreate() },
                     onError = viewModel::showError,
                 )
             } catch (_: GetCredentialCancellationException) {

@@ -1,6 +1,8 @@
 package com.example.blap.chat
 
 import java.security.MessageDigest
+import com.google.i18n.phonenumbers.PhoneNumberUtil
+import com.google.i18n.phonenumbers.PhoneNumberUtil.PhoneNumberFormat
 
 object PhoneIdentity {
     fun normalizeInternational(number: String): String? {
@@ -13,7 +15,12 @@ object PhoneIdentity {
         val allDigits = number.filter(Char::isDigit)
         val digits = if (number.trim().startsWith("00")) allDigits.drop(2) else allDigits
         if (digits.length !in 8..15) return null
-        return "+$digits"
+        val international = "+$digits"
+        if (!number.trim().startsWith("+") && !number.trim().startsWith("00")) return international
+        return runCatching {
+            val utility = PhoneNumberUtil.getInstance()
+            utility.format(utility.parse(international, "ZZ"), PhoneNumberFormat.E164)
+        }.getOrNull()?.takeIf { it.length in 9..16 }
     }
 
     fun hash(number: String): String? {

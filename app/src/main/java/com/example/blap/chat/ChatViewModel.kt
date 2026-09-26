@@ -44,8 +44,8 @@ class ChatViewModel(
     private val connectedPeers = ConcurrentHashMap<String, ConnectedPeer>()
     private val cloudUploadsInFlight = ConcurrentHashMap.newKeySet<String>()
     private val localPeerId = identityStore.getPeerId()
-    private var localPhoneHash = PhoneIdentity.hash(identityStore.getPhoneNumber()).orEmpty()
     private val initialProfile = identityStore.getProfile()
+    private var localPhoneHash = PhoneIdentity.hash(initialProfile.phoneNumber).orEmpty()
     private var profileReturnScreen = ChatScreen.SHOWING_MY_CARD
     private var requestedEndpointId: String? = null
     private var scannedPeerId: String? = null
@@ -77,6 +77,7 @@ class ChatViewModel(
             profileEmail = initialProfile.email,
             profileGoogleEmail = initialProfile.googleAccountEmail,
             profileDiscoverableByPhone = initialProfile.discoverableByPhone,
+            profileLookupPhoneNumber = initialProfile.lookupPhoneNumber,
             profileBio = initialProfile.bio,
             profileWebsite = initialProfile.websiteUrl,
             profileInstagram = initialProfile.instagramUrl,
@@ -96,7 +97,6 @@ class ChatViewModel(
             reloadSavedContactsNow()
             if (initialAccountId.isNotBlank()) {
                 cloudChatController?.start(initialAccountId, this@ChatViewModel)
-                publishAccountNow()
                 syncCloudPendingNow()
             }
         }
@@ -123,10 +123,41 @@ class ChatViewModel(
         }
     }
 
-    private suspend fun publishAccountNow() {
-        if (_uiState.value.onlineAccountId.isBlank() || _uiState.value.displayName.isBlank()) return
-        runCatching { cloudChatController?.publishAccount(currentProfile(), localPeerId) }
-            .onFailure { onCloudError(it.localizedMessage ?: "Could not publish your account details.") }
+    fun applyAccountProfile(username: String, displayName: String) {
+        val updated = identityStore.getProfile().copy(username = username, displayName = displayName)
+        identityStore.saveProfile(updated)
+        _uiState.update { state ->
+            state.copy(
+                displayName = displayName,
+                screen = if (state.screen == ChatScreen.WELCOME) ChatScreen.CHATS else state.screen,
+            )
+        }
+        workScope.launch {
+            publishAccountNow()
+            syncCloudPendingNow()
+        }
+    }
+
+    private suspend fun publishAccountNow(reportSuccess: Boolean = false) {
+        if (_uiState.value.onlineAccountId.isBlank() || _uiState.value.displayName.isBlank() ||
+            identityStore.getProfile().username.isBlank()) {
+            if (reportSuccess) onCloudError("Finish account setup before enabling phone lookup.")
+            return
+        }
+        val controller = cloudChatController ?: return
+        runCatching { controller.publishAccount(currentProfile(), localPeerId) }
+            .onSuccess {
+                _uiState.update { state -> state.copy(onlineLookupStatus =
+                    if (state.profileDiscoverableByPhone) "Phone lookup is active"
+                    else "Phone lookup is off") }
+                if (reportSuccess) showNotice(if (_uiState.value.profileDiscoverableByPhone)
+                    "Phone lookup is active for your saved discovery number."
+                    else "Phone lookup is off.")
+            }
+            .onFailure {
+                _uiState.update { state -> state.copy(onlineLookupStatus = "Online update failed") }
+                onCloudError(it.localizedMessage ?: "Could not publish your account details.")
+            }
     }
 
     fun startChat() {
@@ -358,6 +389,33 @@ class ChatViewModel(
             chatStore.savePeer(peerId, contact.name, contact.phoneHash)
             reloadConversationsNow()
             openConversation(peerId)
+            if (_uiState.value.onlineAccountId.isNotBlank() && cloudChatController != null) {
+                runCatching { resolveAccount(cloudChatController, contact, peerId) }
+                    .onSuccess { if (it != null) syncCloudPendingNow() }
+                    .onFailure { onCloudError(it.localizedMessage ?: "Could not check this contact online.") }
+            }
+        }
+    }
+
+    fun checkContactOnline(contactId: String) {
+        val contact = _uiState.value.savedContacts.firstOrNull { it.id == contactId } ?: return
+        val controller = cloudChatController
+        if (_uiState.value.onlineAccountId.isBlank() || controller == null) {
+            showError("Sign in to check this contact online.")
+            return
+        }
+        workScope.launch {
+            val peerId = contact.linkedPeerId ?: ContactIdentity.localPeerId(
+                contact.phoneHash, contact.email, contact.googleAccountEmail,
+            ).orEmpty()
+            runCatching { resolveAccount(controller, contact, peerId) }
+                .onSuccess { account ->
+                    if (account != null) {
+                        showNotice("Found an online account for ${contact.name}. Confirm phone-only matches by QR or Nearby.")
+                        syncCloudPendingNow()
+                    }
+                }
+                .onFailure { onCloudError(it.localizedMessage ?: "Could not check this contact online.") }
         }
     }
 
@@ -630,6 +688,48 @@ class ChatViewModel(
         _uiState.update { it.copy(screen = ChatScreen.EDITING_PROFILE, profileDraft = currentProfile(), error = null) }
     }
 
+    fun showDiscoverySettings() {
+        _uiState.update { it.copy(screen = ChatScreen.DISCOVERY_SETTINGS, profileDraft = currentProfile(), error = null) }
+    }
+
+    fun updateDiscoveryPhone(phoneNumber: String) {
+        _uiState.update { state -> state.copy(profileDraft =
+            (state.profileDraft ?: currentProfile()).copy(lookupPhoneNumber = phoneNumber.take(MAX_PHONE_LENGTH))) }
+    }
+
+    fun updateDiscoveryEnabled(enabled: Boolean) {
+        _uiState.update { state -> state.copy(profileDraft =
+            (state.profileDraft ?: currentProfile()).copy(discoverableByPhone = enabled)) }
+    }
+
+    fun cancelDiscoveryEdit() {
+        _uiState.update { it.copy(screen = ChatScreen.SETTINGS, profileDraft = null, error = null) }
+    }
+
+    fun saveDiscoverySettings() {
+        val draft = _uiState.value.profileDraft ?: currentProfile()
+        val lookupPhone = if (draft.lookupPhoneNumber.isBlank()) "" else
+            PhoneIdentity.normalizeInternational(draft.lookupPhoneNumber)
+        if (lookupPhone == null || (draft.discoverableByPhone && lookupPhone.isBlank())) {
+            showError("Enter a valid phone number with its country code before enabling phone lookup.")
+            return
+        }
+        val saved = currentProfile().copy(
+            lookupPhoneNumber = lookupPhone,
+            discoverableByPhone = draft.discoverableByPhone && lookupPhone.isNotBlank(),
+        )
+        identityStore.saveProfile(saved)
+        _uiState.update { it.copy(
+            profileLookupPhoneNumber = saved.lookupPhoneNumber,
+            profileDiscoverableByPhone = saved.discoverableByPhone,
+            profileDraft = null,
+            screen = ChatScreen.SETTINGS,
+            onlineLookupStatus = "Updating online lookup",
+            notice = "Discovery settings saved. Updating online lookup.",
+        ) }
+        workScope.launch { publishAccountNow(reportSuccess = true) }
+    }
+
     fun updateProfile(profile: ContactProfile) {
         _uiState.update { it.copy(profileDraft = profile.copy(
             displayName = profile.displayName.take(MAX_NAME_LENGTH),
@@ -657,6 +757,7 @@ class ChatViewModel(
                 profileEmail = profile.email.take(MAX_EMAIL_LENGTH),
                 profileGoogleEmail = profile.googleAccountEmail.take(MAX_EMAIL_LENGTH),
                 profileDiscoverableByPhone = profile.discoverableByPhone,
+                profileLookupPhoneNumber = profile.lookupPhoneNumber,
                 profileBio = profile.bio.take(MAX_BIO_LENGTH),
                 profileWebsite = profile.websiteUrl.take(MAX_URL_LENGTH),
                 profileInstagram = profile.instagramUrl.take(MAX_URL_LENGTH),
@@ -675,16 +776,19 @@ class ChatViewModel(
         val email = if (profile.email.isBlank()) "" else ContactIdentity.normalizeEmail(profile.email)
         val googleEmail = if (profile.googleAccountEmail.isBlank()) "" else
             ContactIdentity.normalizeEmail(profile.googleAccountEmail)
-        if (profile.displayName.trim().isBlank() || normalizedPhone == null || email == null || googleEmail == null) {
+        if (profile.displayName.trim().isBlank() || normalizedPhone == null || email == null ||
+            googleEmail == null) {
             showError("Enter your name and check any phone or email addresses you added.")
             return
         }
+        val discovery = currentProfile()
         val saved = profile.copy(
             displayName = profile.displayName.trim(),
             phoneNumber = normalizedPhone,
             email = email,
             googleAccountEmail = googleEmail,
-            discoverableByPhone = profile.discoverableByPhone && normalizedPhone.isNotBlank(),
+            lookupPhoneNumber = discovery.lookupPhoneNumber,
+            discoverableByPhone = discovery.discoverableByPhone,
             bio = profile.bio.trim(),
             websiteUrl = ProfileUrl.normalize(profile.websiteUrl),
             instagramUrl = ProfileUrl.normalize(profile.instagramUrl),
@@ -796,6 +900,7 @@ class ChatViewModel(
 
             ChatScreen.EDITING_CONTACT -> beginManageContacts()
             ChatScreen.EDITING_PROFILE -> cancelProfileEdit()
+            ChatScreen.DISCOVERY_SETTINGS -> cancelDiscoveryEdit()
             ChatScreen.GROUP_SETTINGS -> {
                 _uiState.update { it.copy(screen = ChatScreen.CONVERSATION) }
             }
@@ -1077,11 +1182,11 @@ class ChatViewModel(
     override fun onDirectMessage(otherUid: String, message: CloudChatMessage) {
         workScope.launch {
             val contact = chatStore.getSavedContacts().firstOrNull { it.cloudUserId == otherUid }
-            val account = runCatching { cloudChatController?.getAccount(otherUid) }.getOrNull()
             val peerId = contact?.linkedPeerId ?: contact?.let {
                 ContactIdentity.localPeerId(it.phoneHash, it.email, it.googleAccountEmail)
-            } ?: account?.peerId?.takeIf(String::isNotBlank) ?: "account:$otherUid"
-            chatStore.savePeer(peerId, contact?.name ?: account?.name ?: "Online contact", contact?.phoneHash.orEmpty())
+            } ?: message.senderPeerId.takeIf(String::isNotBlank) ?: "account:$otherUid"
+            chatStore.savePeer(peerId, contact?.name ?: message.senderName.ifBlank { "Online contact" },
+                contact?.phoneHash.orEmpty())
             val inserted = chatStore.saveMessage(
                 message.toLocalMessage(peerId, _uiState.value.onlineAccountId),
             )
@@ -1265,12 +1370,13 @@ class ChatViewModel(
             }
         }
         if (account == null) {
-            onCloudError("No online account found for this contact. They can share a QR card or enable phone lookup.")
+            onCloudError("No online account matched. Check the full country code and number, then ask them to save Find me > phone lookup. A QR card can pair you directly.")
             return null
         }
         if (contact != null && contact.cloudUserId != account.uid) {
             chatStore.saveContact(contact.copy(cloudUserId = account.uid))
             reloadSavedContactsNow()
+            reloadConversationsNow()
         }
         if (matchedByPhone) {
             onCloudError("This number match is not verified. Confirm the person with their QR card.")
@@ -1321,8 +1427,14 @@ class ChatViewModel(
     }
 
     private fun reloadConversationsNow() {
-        val contactNames = chatStore.getSavedContacts().filter { it.linkedPeerId != null }
+        val contacts = chatStore.getSavedContacts()
+        val contactNames = contacts.filter { it.linkedPeerId != null }
             .associate { it.linkedPeerId to it.name }
+        val onlinePeerIds = contacts.filter { it.cloudUserId.isNotBlank() }.mapNotNull { contact ->
+            contact.linkedPeerId ?: ContactIdentity.localPeerId(
+                contact.phoneHash, contact.email, contact.googleAccountEmail,
+            )
+        }.toSet()
         val conversations = chatStore.getConversations().map { conversation ->
             conversation.copy(
                 name = if (conversation.type == ConversationType.DIRECT) {
@@ -1330,6 +1442,8 @@ class ChatViewModel(
                 } else conversation.name,
                 connected = if (conversation.type != ConversationType.DIRECT) connectedPeers.isNotEmpty()
                 else connectedPeers.containsKey(conversation.peerId),
+                onlineAccountLinked = conversation.type == ConversationType.DIRECT &&
+                    (conversation.peerId in onlinePeerIds || chatStore.hasCloudPeerMessage(conversation.peerId)),
             )
         }.sortedByDescending { if (it.lastMessage.isBlank()) 0L else it.lastMessageAt }
         _uiState.update {
@@ -1450,12 +1564,14 @@ class ChatViewModel(
             email = it.profileEmail,
             googleAccountEmail = it.profileGoogleEmail,
             discoverableByPhone = it.profileDiscoverableByPhone,
+            lookupPhoneNumber = it.profileLookupPhoneNumber,
             bio = it.profileBio,
             websiteUrl = it.profileWebsite,
             instagramUrl = it.profileInstagram,
             xUrl = it.profileX,
             linkedinUrl = it.profileLinkedin,
             githubUrl = it.profileGithub,
+            username = identityStore.getProfile().username,
         )
     }
 
@@ -1490,15 +1606,17 @@ class ChatViewModel(
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T {
                 val appContext = context.applicationContext
+                val accountId = AuthManager.onlineUserId
+                val scope = LocalDataScope.forAccount(appContext, accountId)
                 return ChatViewModel(
                     nearbyChatController = NearbyChatManager(appContext),
-                    chatStore = SqliteChatStore(appContext),
-                    identityStore = LocalIdentityStore(appContext),
-                    eventStore = SqliteEventStore(appContext),
+                    chatStore = SqliteChatStore(appContext, scope),
+                    identityStore = LocalIdentityStore(appContext, scope),
+                    eventStore = SqliteEventStore(appContext, scope),
                     eventRemoteRepository = FirebaseEventRemoteRepository(),
                     eventAdminKeyStore = LocalEventAdminKeyStore(appContext),
                     cloudChatController = FirebaseCloudChatController(),
-                    initialAccountId = AuthManager.onlineUserId,
+                    initialAccountId = accountId,
                 ) as T
             }
         }
