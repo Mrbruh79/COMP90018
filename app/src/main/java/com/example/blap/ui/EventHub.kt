@@ -154,10 +154,13 @@ private fun EventListScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column {
-                Text("Events", style = MaterialTheme.typography.headlineMedium)
-                Text("Join online, connect on-site", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
+            Text(
+                "Join online, connect on-site",
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(end = 12.dp),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             Button(onClick = onBeginCreate) { Text("Create") }
         }
         LazyColumn(
