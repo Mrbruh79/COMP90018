@@ -331,7 +331,7 @@ fun NearbyChatApp(
                         onNameChanged = onGroupNameChanged,
                         onToggleMember = onToggleGroupMember,
                         onCreate = onCreateGroup,
-                        onBack = onBackToChats,
+                        onBack = onSystemBack,
                     )
 
                     ChatScreen.MANAGING_CONTACTS -> ContactsScreen(
@@ -346,6 +346,7 @@ fun NearbyChatApp(
                         onMessage = onMessageContact,
                         onCheckOnline = onCheckContactOnline,
                         onOpenCreateGroup = onOpenCreateGroup,
+                        onDiscoverNearby = onBackToChats,
                     )
 
                     ChatScreen.EDITING_CONTACT -> ContactEditorScreen(
@@ -1053,11 +1054,18 @@ private fun CreateGroupScreen(
     var confirmingDelete by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) { Text("Back") }
-            Text(title, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
+            IconButton(onClick = onBack, modifier = Modifier.offset(x = (-12).dp)) {
+                Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = "Back")
+            }
+            Text(
+                title,
+                modifier = Modifier.weight(1f),
+                style = MaterialTheme.typography.titleLarge,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
         Text(
             if (editable) "Choose the people you want in this group." else "Only the group owner can change the name or members.",
@@ -1171,6 +1179,7 @@ private fun ContactsScreen(
     onMessage: (String) -> Unit,
     onCheckOnline: (String) -> Unit,
     onOpenCreateGroup: () -> Unit,
+    onDiscoverNearby: () -> Unit,
 ) {
     val filtered = contacts.filter { contact ->
         search.isBlank() || listOf(
@@ -1205,15 +1214,19 @@ private fun ContactsScreen(
         LazyColumn(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(top = 8.dp)
+            contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp),
         ) {
             if (filtered.isEmpty()) {
                 item {
-                    Text(
-                        if (contacts.isEmpty()) "No contact cards saved yet" else "No contacts match your search",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 8.dp),
-                    )
+                    if (contacts.isEmpty()) {
+                        NoSavedContactsCard(onDiscoverNearby)
+                    } else {
+                        Text(
+                            "No contacts match your search",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(vertical = 8.dp),
+                        )
+                    }
                 }
             } else {
                 items(filtered, key = SavedContact::id) { contact ->
@@ -1284,6 +1297,37 @@ private fun ContactsScreen(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun NoSavedContactsCard(onDiscoverNearby: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+        shape = RoundedCornerShape(16.dp),
+    ) {
+        Column(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text("No saved CommonGround contacts", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Add a new contact using the menu above, or try our nearby discovery feature!",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(
+                onClick = onDiscoverNearby,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.primary,
+                ),
+            ) { Text("Go to Discover Nearby", style = MaterialTheme.typography.titleSmall) }
         }
     }
 }
