@@ -162,7 +162,7 @@ class MainActivity : ComponentActivity() {
                     onSendMessage = viewModel::sendMessage,
                     onMessageDraftChanged = viewModel::updateMessageDraft,
                     onDisconnect = viewModel::disconnect,
-                    onBeginCreateGroup = viewModel::beginCreateGroup,
+                    onOpenCreateGroup = viewModel::beginCreateGroup,
                     onGroupNameChanged = viewModel::updateGroupName,
                     onToggleGroupMember = viewModel::toggleGroupMember,
                     onCreateGroup = viewModel::createPrivateGroup,

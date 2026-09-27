@@ -1,6 +1,7 @@
 package com.example.blap.ui
 
 import android.graphics.Bitmap
+import androidx.annotation.DrawableRes
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -129,7 +130,7 @@ fun NearbyChatApp(
     onSendMessage: (String) -> Unit,
     onMessageDraftChanged: (String) -> Unit,
     onDisconnect: (String) -> Unit,
-    onBeginCreateGroup: () -> Unit,
+    onOpenCreateGroup: () -> Unit,
     onGroupNameChanged: (String) -> Unit,
     onToggleGroupMember: (String) -> Unit,
     onCreateGroup: () -> Unit,
@@ -283,7 +284,7 @@ fun NearbyChatApp(
                         devices = uiState.discoveredDevices,
                         onOpenConversation = onOpenConversation,
                         onConnect = onConnect,
-                        onBeginCreateGroup = onBeginCreateGroup,
+                        onOpenCreateGroup = onOpenCreateGroup,
                         onManageContacts = onManageContacts,
                         search = uiState.conversationSearch,
                         onSearchChanged = onConversationSearchChanged,
@@ -344,6 +345,7 @@ fun NearbyChatApp(
                         onImport = onImportContacts,
                         onMessage = onMessageContact,
                         onCheckOnline = onCheckContactOnline,
+                        onOpenCreateGroup = onOpenCreateGroup,
                     )
 
                     ChatScreen.EDITING_CONTACT -> ContactEditorScreen(
@@ -790,7 +792,7 @@ private fun ConversationList(
     devices: List<NearbyDevice>,
     onOpenConversation: (String) -> Unit,
     onConnect: (String) -> Unit,
-    onBeginCreateGroup: () -> Unit,
+    onOpenCreateGroup: () -> Unit,
     onManageContacts: () -> Unit,
     search: String,
     onSearchChanged: (String) -> Unit,
@@ -832,7 +834,7 @@ private fun ConversationList(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onManageContacts) { Text("New message") }
-                TextButton(onClick = onBeginCreateGroup) { Text("New group") }
+                TextButton(onClick = onOpenCreateGroup) { Text("New group") }
             }
             OutlinedTextField(
                 value = search,
@@ -1168,6 +1170,7 @@ private fun ContactsScreen(
     onImport: () -> Unit,
     onMessage: (String) -> Unit,
     onCheckOnline: (String) -> Unit,
+    onOpenCreateGroup: () -> Unit,
 ) {
     val filtered = contacts.filter { contact ->
         search.isBlank() || listOf(
@@ -1180,76 +1183,80 @@ private fun ContactsScreen(
         ).any { it.contains(search, ignoreCase = true) }
     }
     Column(Modifier.fillMaxSize()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(bottom = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text(
-                "Keep your people in one place. Tap a card to edit their details.",
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 12.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Button(onClick = onAdd) { Text("Add") }
-        }
+        Text("Add new contacts", style = MaterialTheme.typography.titleMedium)
+        ContactActionRow(R.drawable.ic_contact_add, "Manually add contact", onAdd)
+        ContactActionRow(R.drawable.ic_contact_import, "Import phone contacts", onImport)
+        ContactActionRow(R.drawable.ic_scan_qr, "Scan QR Code", onScan)
+        Text(
+            "Saved Contacts",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(top = 16.dp, bottom = 12.dp),
+        )
         OutlinedTextField(
             value = search,
             onValueChange = onSearchChanged,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
             singleLine = true,
             placeholder = { Text("Search contacts") },
-            shape = RoundedCornerShape(15.dp),
+            leadingIcon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null) },
+            shape = CircleShape,
         )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(vertical = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            TextButton(onClick = onImport) { Text("Import from phone") }
-            TextButton(onClick = onScan) { Text("Scan contact QR") }
-        }
+        ContactActionRow(R.drawable.ic_group_add, "Create group chat", onOpenCreateGroup)
         LazyColumn(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(bottom = 12.dp),
+            contentPadding = PaddingValues(top = 8.dp)
         ) {
             if (filtered.isEmpty()) {
                 item {
                     Text(
                         if (contacts.isEmpty()) "No contact cards saved yet" else "No contacts match your search",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(vertical = 18.dp),
+                        modifier = Modifier.padding(vertical = 8.dp),
                     )
                 }
             } else {
                 items(filtered, key = SavedContact::id) { contact ->
+                    val linked = contact.linkedPeerId != null || contact.cloudUserId.isNotBlank()
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { onOpen(contact.id) },
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        ),
                         shape = RoundedCornerShape(16.dp),
                     ) {
-                        Row(
-                            modifier = Modifier.padding(14.dp),
-                            verticalAlignment = Alignment.CenterVertically,
+                        Column(
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Avatar(contact.name, contact.linkedPeerId != null)
-                            Column(
-                                Modifier
-                                    .padding(start = 12.dp)
-                                    .weight(1f),
-                            ) {
-                                Text(contact.name, style = MaterialTheme.typography.titleMedium)
-                                Text(
-                                    contact.email.ifBlank { contact.googleAccountEmail.ifBlank { contact.phoneNumber } },
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Avatar(contact.name, contact.linkedPeerId != null)
+                                Column(
+                                    Modifier
+                                        .padding(horizontal = 16.dp)
+                                        .weight(1f),
+                                ) {
+                                    Text(contact.name, style = MaterialTheme.typography.titleMedium)
+                                    Text(
+                                        contact.email.ifBlank {
+                                            contact.googleAccountEmail.ifBlank { contact.phoneNumber }
+                                        },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                IconButton(onClick = { onMessage(contact.id) }) {
+                                    Icon(
+                                        painterResource(R.drawable.ic_send),
+                                        contentDescription = "Message ${contact.name}",
+                                        tint = MaterialTheme.colorScheme.primary,
+                                    )
+                                }
+                            }
+                            HorizontalDivider()
+                            Row(verticalAlignment = Alignment.CenterVertically) {
                                 Text(
                                     when {
                                         contact.cloudUserId.isNotBlank() -> "Online account found. Confirm a number match by QR."
@@ -1260,15 +1267,17 @@ private fun ContactsScreen(
                                             "Can look up this number online. Match is unverified"
                                         else -> "Saved locally. Sign in or pair by QR or Nearby to chat"
                                     },
-                                    color = if (contact.linkedPeerId != null || contact.cloudUserId.isNotBlank()) MaterialTheme.colorScheme.primary
+                                    modifier = Modifier.weight(1f),
+                                    style = MaterialTheme.typography.labelLarge,
+                                    color = if (linked) MaterialTheme.colorScheme.primary
                                         else MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
-                            }
-                            Column(horizontalAlignment = Alignment.End) {
-                                TextButton(onClick = { onMessage(contact.id) }) { Text("Message") }
                                 if (onlineReady && (contact.phoneNumber.isNotBlank() ||
                                         contact.email.isNotBlank() || contact.googleAccountEmail.isNotBlank())) {
-                                    TextButton(onClick = { onCheckOnline(contact.id) }) { Text("Find online") }
+                                    TextButton(
+                                        onClick = { onCheckOnline(contact.id) },
+                                        modifier = Modifier.padding(start = 12.dp),
+                                    ) { Text("Sync Contact") }
                                 }
                             }
                         }
@@ -1276,6 +1285,36 @@ private fun ContactsScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ContactActionRow(@DrawableRes iconRes: Int, label: String, onClick: () -> Unit) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                painterResource(iconRes),
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimary,
+            )
+        }
+        Text(
+            label,
+            modifier = Modifier.padding(start = 16.dp),
+            style = MaterialTheme.typography.bodyLarge,
+        )
     }
 }
 
