@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { after, before, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
-import { collection, doc, getDoc, getDocs, query, setDoc, where, writeBatch } from 'firebase/firestore';
+import {
+  collection, deleteDoc, doc, getDoc, getDocs, query, runTransaction, setDoc, updateDoc, where, writeBatch,
+} from 'firebase/firestore';
 
 let environment;
 const emailFor = uid => `${uid}@example.com`;
@@ -319,4 +321,147 @@ test('protected public events remain visible but reject guest joins', async () =
     membershipFor('protected-event', 'bob'),
   );
   await assertSucceeds(accountJoin.commit());
+});
+
+const discussionCommentFor = (eventId, threadId, id, authorId, options = {}) => ({
+  eventId,
+  threadId,
+  parentId: options.parentId ?? null,
+  ancestorIds: options.ancestorIds ?? [],
+  depth: options.depth ?? 0,
+  authorId,
+  authorName: authorId,
+  body: options.body ?? `Comment ${id}`,
+  likeCount: 0,
+  replyCount: 0,
+  lastReplyId: '',
+  createdAt: Date.now(),
+  deletedAt: null,
+  deletedByAdmin: false,
+});
+
+async function joinPublicEvent(eventId, uid) {
+  const db = client(uid);
+  const eventSnapshot = await getDoc(doc(db, `events/${eventId}`));
+  const memberIds = [...eventSnapshot.data().memberIds, uid];
+  const batch = writeBatch(db);
+  batch.update(doc(db, `events/${eventId}`), { memberIds });
+  batch.set(doc(db, `events/${eventId}/members/${uid}`), membershipFor(eventId, uid));
+  await assertSucceeds(batch.commit());
+}
+
+async function createDiscussionReply(db, rootPath, replyPath, reply) {
+  return runTransaction(db, async transaction => {
+    const root = await transaction.get(doc(db, rootPath));
+    transaction.set(doc(db, replyPath), reply);
+    transaction.update(doc(db, rootPath), {
+      replyCount: (root.data().replyCount ?? 0) + 1,
+      lastReplyId: replyPath.substring(replyPath.lastIndexOf('/') + 1),
+    });
+  });
+}
+
+test('event discussion enforces membership, nesting, like and unlike', async () => {
+  await publishAccount('alice');
+  await publishAccount('bob');
+  await publishAccount('carol');
+  await createEventAs('alice', 'discussion-event', 'PUBLIC');
+  await joinPublicEvent('discussion-event', 'bob');
+
+  const alice = client('alice');
+  const bob = client('bob');
+  const carol = client('carol');
+  const rootPath = 'events/discussion-event/discussionThreads/thread-1';
+  const root = discussionCommentFor('discussion-event', 'thread-1', 'thread-1', 'bob');
+  await assertSucceeds(setDoc(doc(bob, rootPath), root));
+  await assertSucceeds(getDoc(doc(alice, rootPath)));
+  await assertFails(getDoc(doc(carol, rootPath)));
+
+  const replyPath = `${rootPath}/comments/reply-1`;
+  const reply = discussionCommentFor('discussion-event', 'thread-1', 'reply-1', 'alice', {
+    parentId: 'thread-1', ancestorIds: ['thread-1'], depth: 1, body: 'Nested reply',
+  });
+  await assertSucceeds(createDiscussionReply(alice, rootPath, replyPath, reply));
+  const secondReplyPath = `${rootPath}/comments/reply-2`;
+  await assertSucceeds(createDiscussionReply(bob, rootPath, secondReplyPath,
+    discussionCommentFor('discussion-event', 'thread-1', 'reply-2', 'bob', {
+      parentId: 'reply-1', ancestorIds: ['thread-1', 'reply-1'], depth: 2,
+    })));
+  if ((await getDoc(doc(alice, rootPath))).data().replyCount !== 2) {
+    throw new Error('Thread reply count did not increment');
+  }
+  const badReplyPath = `${rootPath}/comments/bad-reply`;
+  await assertFails(createDiscussionReply(bob, rootPath, badReplyPath, {
+    ...reply, authorId: 'bob', parentId: 'missing', ancestorIds: ['missing'],
+  }));
+  await assertFails(updateDoc(doc(bob, replyPath), { body: 'Changed by Bob' }));
+
+  const likePath = 'events/discussion-event/discussionLikes/thread-1_alice';
+  const like = {
+    eventId: 'discussion-event', threadId: 'thread-1', commentId: 'thread-1',
+    userId: 'alice', createdAt: Date.now(), isRoot: true,
+  };
+  const likeBatch = writeBatch(alice);
+  likeBatch.set(doc(alice, likePath), like);
+  likeBatch.update(doc(alice, rootPath), { likeCount: 1 });
+  await assertSucceeds(likeBatch.commit());
+
+  const duplicateLike = writeBatch(alice);
+  duplicateLike.set(doc(alice, likePath), like);
+  duplicateLike.update(doc(alice, rootPath), { likeCount: 2 });
+  await assertFails(duplicateLike.commit());
+
+  await assertSucceeds(runTransaction(alice, async transaction => {
+    const target = await transaction.get(doc(alice, rootPath));
+    transaction.delete(doc(alice, likePath));
+    transaction.update(doc(alice, rootPath), { likeCount: target.data().likeCount - 1 });
+  }));
+
+  const bobLikePath = 'events/discussion-event/discussionLikes/thread-1_bob';
+  await assertSucceeds(runTransaction(bob, async transaction => {
+    const target = await transaction.get(doc(bob, rootPath));
+    transaction.set(doc(bob, bobLikePath), { ...like, userId: 'bob' });
+    transaction.update(doc(bob, rootPath), { likeCount: target.data().likeCount + 1 });
+  }));
+  const threadLikes = query(
+    collection(alice, 'events/discussion-event/discussionLikes'),
+    where('threadId', '==', 'thread-1'),
+  );
+  await assertSucceeds(getDocs(threadLikes));
+  await assertFails(getDocs(query(
+    collection(bob, 'events/discussion-event/discussionLikes'),
+    where('threadId', '==', 'thread-1'),
+  )));
+  await assertSucceeds(deleteDoc(doc(alice, bobLikePath)));
+
+  await assertSucceeds(updateDoc(doc(alice, replyPath), {
+    body: '', deletedAt: Date.now(), deletedByAdmin: false,
+  }));
+  await assertFails(updateDoc(doc(bob, rootPath), { likeCount: 1 }));
+  const removeBranch = writeBatch(alice);
+  removeBranch.delete(doc(alice, replyPath));
+  removeBranch.delete(doc(alice, secondReplyPath));
+  removeBranch.update(doc(alice, rootPath), { replyCount: 0 });
+  await assertSucceeds(removeBranch.commit());
+  if ((await getDoc(doc(alice, rootPath))).data().replyCount !== 0) {
+    throw new Error('Thread reply count did not decrease after branch removal');
+  }
+  await assertSucceeds(deleteDoc(doc(alice, rootPath)));
+});
+
+test('ended event discussions are read-only for members', async () => {
+  await publishAccount('alice');
+  const alice = client('alice');
+  const event = eventFor('ended-event', 'alice', 'PUBLIC');
+  event.startsAt = Date.now() - 7_200_000;
+  event.endsAt = Date.now() - 3_600_000;
+  const create = writeBatch(alice);
+  create.set(doc(alice, 'events/ended-event'), event);
+  create.set(
+    doc(alice, 'events/ended-event/members/alice'),
+    membershipFor('ended-event', 'alice', 'PRIMARY_ADMIN'),
+  );
+  await assertSucceeds(create.commit());
+  const root = discussionCommentFor('ended-event', 'thread-1', 'thread-1', 'alice');
+  await assertFails(setDoc(doc(alice, 'events/ended-event/discussionThreads/thread-1'), root));
 });

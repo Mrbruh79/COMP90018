@@ -255,6 +255,188 @@ service cloud.firestore {
       return signedIn() && request.auth.uid in eventData(eventId).memberIds;
     }
 
+    function isActiveEventMember(eventId) {
+      let membership = get(/databases/$(database)/documents/events/$(eventId)/members/$(request.auth.uid));
+      return isEventMember(eventId) && membership.data.userId == request.auth.uid
+        && membership.data.get('blockedAt', null) == null
+        && membership.data.get('leftAt', null) == null;
+    }
+
+    function discussionWritable(eventId) {
+      let event = eventData(eventId);
+      return isActiveEventMember(eventId)
+        && event.get('deletedAt', null) == null
+        && request.time.toMillis() <= event.endsAt;
+    }
+
+    function validDiscussionBase(data, eventId, threadId, maximumLength) {
+      return data.keys().hasAll([
+          'eventId', 'threadId', 'parentId', 'ancestorIds', 'depth', 'authorId',
+          'authorName', 'body', 'likeCount', 'replyCount', 'lastReplyId',
+          'createdAt', 'deletedAt', 'deletedByAdmin'
+        ])
+        && data.keys().hasOnly([
+          'eventId', 'threadId', 'parentId', 'ancestorIds', 'depth', 'authorId',
+          'authorName', 'body', 'likeCount', 'replyCount', 'lastReplyId',
+          'createdAt', 'deletedAt', 'deletedByAdmin'
+        ])
+        && data.eventId == eventId && data.threadId == threadId
+        && data.authorId == request.auth.uid
+        && data.authorName is string && data.authorName.size() > 0 && data.authorName.size() <= 24
+        && data.body is string && data.body.size() > 0 && data.body.size() <= maximumLength
+        && data.likeCount == 0 && data.replyCount == 0 && data.lastReplyId == ''
+        && data.createdAt is int && data.createdAt >= 0
+        && data.deletedAt == null && data.deletedByAdmin == false;
+    }
+
+    function validDiscussionRoot(data, eventId, threadId) {
+      return validDiscussionBase(data, eventId, threadId, 2000)
+        && data.parentId == null && data.ancestorIds == [] && data.depth == 0;
+    }
+
+    function validDiscussionReplyParent(data, eventId, threadId) {
+      let root = get(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(threadId));
+      let parent = get(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(threadId)/comments/$(data.parentId));
+      return data.depth == 1
+          && data.parentId == threadId
+          && data.ancestorIds == [threadId]
+          && root.data.get('deletedAt', null) == null
+        || data.depth > 1
+          && parent.data.threadId == threadId
+          && parent.data.depth == data.depth - 1
+          && parent.data.get('deletedAt', null) == null
+          && data.ancestorIds[data.depth - 1] == data.parentId
+          && !(data.parentId in parent.data.ancestorIds)
+          && data.ancestorIds.toSet().hasAll(parent.data.ancestorIds.toSet())
+          && data.ancestorIds.toSet().size() == parent.data.ancestorIds.size() + 1;
+    }
+
+    function validDiscussionReply(data, eventId, threadId, commentId) {
+      let root = get(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(threadId));
+      let rootAfter = getAfter(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(threadId));
+      return validDiscussionBase(data, eventId, threadId, 1000)
+        && data.parentId is string && data.parentId.size() > 0
+        && data.ancestorIds is list && data.depth is int
+        && data.depth > 0 && data.depth <= 20
+        && data.ancestorIds.size() == data.depth
+        && validDiscussionReplyParent(data, eventId, threadId)
+        && rootAfter.data.replyCount == root.data.get('replyCount', 0) + 1
+        && rootAfter.data.lastReplyId == commentId;
+    }
+
+    function validDiscussionReplyCounterIncrement(eventId, threadId) {
+      let replyId = request.resource.data.lastReplyId;
+      let replyPath = /databases/$(database)/documents/events/$(eventId)/discussionThreads/$(threadId)/comments/$(replyId);
+      let replyAfter = getAfter(replyPath);
+      return discussionWritable(eventId)
+        && resource.data.parentId == null
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['replyCount', 'lastReplyId'])
+        && request.resource.data.replyCount == resource.data.get('replyCount', 0) + 1
+        && replyId is string && replyId.size() > 0
+        && !exists(replyPath) && existsAfter(replyPath)
+        && replyAfter.data.eventId == eventId
+        && replyAfter.data.threadId == threadId
+        && replyAfter.data.authorId == request.auth.uid;
+    }
+
+    function validDiscussionAdminReplyCountUpdate(eventId) {
+      return isEventAdmin(eventId)
+        && resource.data.parentId == null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['replyCount'])
+        && request.resource.data.replyCount is int
+        && request.resource.data.replyCount >= 0
+        && request.resource.data.replyCount <= resource.data.get('replyCount', 0);
+    }
+
+    function validDiscussionSoftDelete(eventId) {
+      return discussionWritable(eventId)
+        && resource.data.authorId == request.auth.uid
+        && resource.data.get('deletedAt', null) == null
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['body', 'deletedAt', 'deletedByAdmin'])
+        && request.resource.data.body == ''
+        && request.resource.data.deletedAt is int
+        && request.resource.data.deletedAt > 0
+        && request.resource.data.deletedByAdmin == false;
+    }
+
+    function validDiscussionAdminRemoval(eventId) {
+      return isEventAdmin(eventId)
+        && request.resource.data.diff(resource.data).affectedKeys()
+          .hasOnly(['body', 'deletedAt', 'deletedByAdmin'])
+        && request.resource.data.body == ''
+        && request.resource.data.deletedAt is int
+        && request.resource.data.deletedAt > 0
+        && request.resource.data.deletedByAdmin == true;
+    }
+
+    function discussionLikeExists(eventId, commentId) {
+      let likeId = commentId + '_' + request.auth.uid;
+      return exists(/databases/$(database)/documents/events/$(eventId)/discussionLikes/$(likeId));
+    }
+
+    function discussionLikeExistsAfter(eventId, commentId) {
+      let likeId = commentId + '_' + request.auth.uid;
+      return existsAfter(/databases/$(database)/documents/events/$(eventId)/discussionLikes/$(likeId));
+    }
+
+    function validDiscussionLikeCountUpdate(eventId, commentId) {
+      return discussionWritable(eventId)
+        && resource.data.get('deletedAt', null) == null
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likeCount'])
+        && request.resource.data.likeCount is int && request.resource.data.likeCount >= 0
+        && (
+          request.resource.data.likeCount == resource.data.likeCount + 1
+            && !discussionLikeExists(eventId, commentId)
+            && discussionLikeExistsAfter(eventId, commentId)
+          || request.resource.data.likeCount == resource.data.likeCount - 1
+            && discussionLikeExists(eventId, commentId)
+            && !discussionLikeExistsAfter(eventId, commentId)
+        );
+    }
+
+    function validDiscussionLike(data, eventId, likeId) {
+      return data.keys().hasAll(['eventId', 'threadId', 'commentId', 'userId', 'createdAt', 'isRoot'])
+        && data.keys().hasOnly(['eventId', 'threadId', 'commentId', 'userId', 'createdAt', 'isRoot'])
+        && data.eventId == eventId && data.userId == request.auth.uid
+        && likeId == data.commentId + '_' + request.auth.uid
+        && data.threadId is string && data.threadId.size() > 0
+        && data.commentId is string && data.commentId.size() > 0
+        && data.createdAt is int && data.createdAt >= 0
+        && data.isRoot is bool;
+    }
+
+    function validDiscussionLikeCreate(data, eventId, likeId) {
+      let root = get(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(data.threadId));
+      let reply = get(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(data.threadId)/comments/$(data.commentId));
+      let rootAfter = getAfter(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(data.threadId));
+      let replyAfter = getAfter(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(data.threadId)/comments/$(data.commentId));
+      return discussionWritable(eventId) && validDiscussionLike(data, eventId, likeId)
+        && (
+          data.isRoot == true && data.commentId == data.threadId
+            && root.data.get('deletedAt', null) == null
+            && rootAfter.data.likeCount == root.data.likeCount + 1
+          || data.isRoot == false && data.commentId != data.threadId
+            && reply.data.get('deletedAt', null) == null
+            && replyAfter.data.likeCount == reply.data.likeCount + 1
+        );
+    }
+
+    function validDiscussionLikeDelete(eventId) {
+      let root = get(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(resource.data.threadId));
+      let reply = get(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(resource.data.threadId)/comments/$(resource.data.commentId));
+      let rootAfter = getAfter(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(resource.data.threadId));
+      let replyAfter = getAfter(/databases/$(database)/documents/events/$(eventId)/discussionThreads/$(resource.data.threadId)/comments/$(resource.data.commentId));
+      return discussionWritable(eventId) && resource.data.userId == request.auth.uid
+        && (
+          resource.data.isRoot == true
+            && rootAfter.data.likeCount == root.data.likeCount - 1
+          || resource.data.isRoot == false
+            && replyAfter.data.likeCount == reply.data.likeCount - 1
+        );
+    }
+
     function isPublicEvent(eventId) {
       return eventData(eventId).visibility == 'PUBLIC';
     }
@@ -375,6 +557,36 @@ service cloud.firestore {
           && request.resource.data.signature is string
           && request.resource.data.signature.size() > 0;
         allow delete: if isEventAdmin(eventId);
+      }
+
+      match /discussionThreads/{threadId} {
+        allow read: if isActiveEventMember(eventId);
+        allow create: if discussionWritable(eventId)
+          && validDiscussionRoot(request.resource.data, eventId, threadId);
+        allow update: if validDiscussionLikeCountUpdate(eventId, threadId)
+          || validDiscussionReplyCounterIncrement(eventId, threadId)
+          || validDiscussionAdminReplyCountUpdate(eventId)
+          || validDiscussionSoftDelete(eventId)
+          || validDiscussionAdminRemoval(eventId);
+        allow delete: if isEventAdmin(eventId);
+
+        match /comments/{commentId} {
+          allow read: if isActiveEventMember(eventId);
+          allow create: if discussionWritable(eventId)
+            && validDiscussionReply(request.resource.data, eventId, threadId, commentId);
+          allow update: if validDiscussionLikeCountUpdate(eventId, commentId)
+            || validDiscussionSoftDelete(eventId)
+            || validDiscussionAdminRemoval(eventId);
+          allow delete: if isEventAdmin(eventId);
+        }
+      }
+
+      match /discussionLikes/{likeId} {
+        allow read: if isEventAdmin(eventId)
+          || isActiveEventMember(eventId) && resource.data.userId == request.auth.uid;
+        allow create: if validDiscussionLikeCreate(request.resource.data, eventId, likeId);
+        allow update: if false;
+        allow delete: if isEventAdmin(eventId) || validDiscussionLikeDelete(eventId);
       }
     }
 

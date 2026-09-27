@@ -305,6 +305,8 @@ class ChatViewModel(
     fun deleteSelectedEvent() = eventCoordinator?.deleteSelectedEvent() ?: Unit
     fun joinSelectedEvent() = eventCoordinator?.joinSelectedEvent() ?: Unit
     fun inviteToSelectedEvent(identifier: String) = eventCoordinator?.inviteToSelectedEvent(identifier) ?: Unit
+    fun searchSelectedEventParticipant(identifier: String) =
+        eventCoordinator?.searchSelectedEventParticipant(identifier) ?: Unit
     fun acceptEventInvitation(invitationId: String) = eventCoordinator?.acceptInvitation(invitationId) ?: Unit
     fun declineEventInvitation(invitationId: String) = eventCoordinator?.declineInvitation(invitationId) ?: Unit
     fun revokeEventInvitation(invitationId: String) = eventCoordinator?.revokeInvitation(invitationId) ?: Unit
@@ -314,6 +316,15 @@ class ChatViewModel(
     fun deleteSelectedEventData() = eventCoordinator?.deleteSelectedEventData() ?: Unit
     fun showEventAnnouncements() = eventCoordinator?.showAnnouncements() ?: Unit
     fun publishEventAnnouncement(text: String) = eventCoordinator?.publishAnnouncement(text) ?: Unit
+    fun showEventDiscussion() = eventCoordinator?.showDiscussion() ?: Unit
+    fun loadMoreEventDiscussion() = eventCoordinator?.loadMoreDiscussionRoots() ?: Unit
+    fun openEventDiscussionThread(threadId: String) = eventCoordinator?.openDiscussionThread(threadId) ?: Unit
+    fun createEventDiscussionComment(text: String, parentId: String?) =
+        eventCoordinator?.createDiscussionComment(text, parentId) ?: Unit
+    fun toggleEventDiscussionLike(commentId: String) =
+        eventCoordinator?.toggleDiscussionLike(commentId) ?: Unit
+    fun deleteEventDiscussionComment(commentId: String) =
+        eventCoordinator?.deleteDiscussionComment(commentId) ?: Unit
     fun enterEventWithGps(latitude: Double, longitude: Double, accuracyMetres: Double) =
         eventCoordinator?.enterWithGps(latitude, longitude, accuracyMetres) ?: Unit
 

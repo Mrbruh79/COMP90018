@@ -39,6 +39,27 @@ interface EventRemoteRepository {
     suspend fun registerAdminPublicKey(eventId: String, userId: String, encodedPublicKey: String)
     suspend fun saveAnnouncement(announcement: EventAnnouncement)
     suspend fun getAnnouncements(eventId: String, limit: Int = 100): List<EventAnnouncement>
+    fun observeDiscussionRoots(
+        eventId: String,
+        limit: Int,
+        onComments: (List<EventDiscussionComment>) -> Unit,
+        onError: (Throwable) -> Unit,
+    ): AutoCloseable?
+    fun observeDiscussionThread(
+        eventId: String,
+        threadId: String,
+        onComments: (List<EventDiscussionComment>) -> Unit,
+        onError: (Throwable) -> Unit,
+    ): AutoCloseable?
+    fun observeDiscussionLikes(
+        eventId: String,
+        onLikedCommentIds: (Set<String>) -> Unit,
+        onError: (Throwable) -> Unit,
+    ): AutoCloseable?
+    suspend fun createDiscussionComment(comment: EventDiscussionComment)
+    suspend fun setDiscussionLike(comment: EventDiscussionComment, liked: Boolean)
+    suspend fun deleteOwnDiscussionComment(comment: EventDiscussionComment, deletedAt: Long)
+    suspend fun deleteDiscussionBranchAsAdmin(comment: EventDiscussionComment, deletedAt: Long)
 }
 
 class FirebaseEventRemoteRepository(
@@ -100,6 +121,7 @@ class FirebaseEventRemoteRepository(
 
     override suspend fun deleteEvent(eventId: String) {
         val eventRef = firestore.collection(EVENTS).document(eventId)
+        deleteDiscussionForEvent(eventId)
         deleteCollection(eventRef.collection(ANNOUNCEMENTS))
         deleteCollection(eventRef.collection(MEMBERS))
         deleteInvitationsForEvent(eventId)
@@ -331,6 +353,230 @@ class FirebaseEventRemoteRepository(
             .limit(limit.coerceIn(1, 500).toLong()).get().await().documents
             .mapNotNull { document -> document.data?.toAnnouncement(document.id, eventId) }.asReversed()
 
+    override fun observeDiscussionRoots(
+        eventId: String,
+        limit: Int,
+        onComments: (List<EventDiscussionComment>) -> Unit,
+        onError: (Throwable) -> Unit,
+    ): AutoCloseable {
+        val registration = discussionThreads(eventId)
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .limit(limit.coerceIn(1, 100).toLong())
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) onError(error)
+                else onComments(
+                    snapshot?.documents.orEmpty()
+                        .mapNotNull { document ->
+                            document.data?.toDiscussionComment(document.id, eventId, document.id)
+                        }
+                        .filterNot(EventDiscussionComment::deletedByAdmin),
+                )
+            }
+        return AutoCloseable(registration::remove)
+    }
+
+    override fun observeDiscussionThread(
+        eventId: String,
+        threadId: String,
+        onComments: (List<EventDiscussionComment>) -> Unit,
+        onError: (Throwable) -> Unit,
+    ): AutoCloseable {
+        var root: EventDiscussionComment? = null
+        var replies: List<EventDiscussionComment> = emptyList()
+        var rootLoaded = false
+        var repliesLoaded = false
+
+        fun publish() {
+            if (!rootLoaded || !repliesLoaded) return
+            val currentRoot = root ?: return onComments(emptyList())
+            if (currentRoot.deletedByAdmin) return onComments(emptyList())
+            val adminDeletedIds = replies.asSequence()
+                .filter(EventDiscussionComment::deletedByAdmin)
+                .mapTo(mutableSetOf(), EventDiscussionComment::id)
+            onComments(
+                listOf(currentRoot) + replies.filter { reply ->
+                    !reply.deletedByAdmin && reply.ancestorIds.none(adminDeletedIds::contains)
+                },
+            )
+        }
+
+        val threadRef = discussionThreads(eventId).document(threadId)
+        val rootRegistration = threadRef.addSnapshotListener { snapshot, error ->
+            if (error != null) onError(error)
+            else {
+                rootLoaded = true
+                root = snapshot?.takeIf(DocumentSnapshot::exists)?.data
+                    ?.toDiscussionComment(threadId, eventId, threadId)
+                publish()
+            }
+        }
+        val repliesRegistration = threadRef.collection(DISCUSSION_COMMENTS)
+            .orderBy("createdAt", Query.Direction.ASCENDING)
+            .addSnapshotListener { snapshot, error ->
+            if (error != null) onError(error)
+            else {
+                repliesLoaded = true
+                replies = snapshot?.documents.orEmpty().mapNotNull { document ->
+                        document.data?.toDiscussionComment(document.id, eventId, threadId)
+                    }
+                    publish()
+                }
+            }
+        return AutoCloseable {
+            rootRegistration.remove()
+            repliesRegistration.remove()
+        }
+    }
+
+    override fun observeDiscussionLikes(
+        eventId: String,
+        onLikedCommentIds: (Set<String>) -> Unit,
+        onError: (Throwable) -> Unit,
+    ): AutoCloseable {
+        val uid = auth.currentUser?.uid
+        if (uid.isNullOrBlank()) {
+            onLikedCommentIds(emptySet())
+            return AutoCloseable { }
+        }
+        val registration = firestore.collection(EVENTS).document(eventId).collection(DISCUSSION_LIKES)
+            .whereEqualTo("userId", uid)
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) onError(error)
+                else onLikedCommentIds(
+                    snapshot?.documents.orEmpty().mapNotNullTo(mutableSetOf()) {
+                        it.getString("commentId")
+                    },
+                )
+            }
+        return AutoCloseable(registration::remove)
+    }
+
+    override suspend fun createDiscussionComment(comment: EventDiscussionComment) {
+        val commentRef = discussionCommentReference(comment)
+        if (comment.isRoot) {
+            commentRef.set(comment.toRemoteMap()).await()
+            return
+        }
+        val threadRef = discussionThreads(comment.eventId).document(comment.threadId)
+        firestore.runTransaction { transaction ->
+            val thread = transaction.get(threadRef)
+            require(thread.exists()) { "This discussion thread no longer exists." }
+            val currentReplyCount = thread.getLong("replyCount")?.toInt() ?: 0
+            transaction.set(commentRef, comment.toRemoteMap())
+            transaction.update(
+                threadRef,
+                mapOf(
+                    "replyCount" to currentReplyCount + 1,
+                    "lastReplyId" to comment.id,
+                ),
+            )
+        }.await()
+    }
+
+    override suspend fun setDiscussionLike(comment: EventDiscussionComment, liked: Boolean) {
+        val uid = requireUserId()
+        val eventRef = firestore.collection(EVENTS).document(comment.eventId)
+        val likeRef = eventRef.collection(DISCUSSION_LIKES).document("${comment.id}_$uid")
+        val targetRef = discussionCommentReference(comment)
+        firestore.runTransaction { transaction ->
+            val target = transaction.get(targetRef)
+            require(target.exists()) { "This comment no longer exists." }
+            val currentCount = target.getLong("likeCount")?.toInt() ?: 0
+            if (liked) {
+                transaction.set(
+                    likeRef,
+                    mapOf(
+                        "eventId" to comment.eventId,
+                        "threadId" to comment.threadId,
+                        "commentId" to comment.id,
+                        "userId" to uid,
+                        "createdAt" to System.currentTimeMillis(),
+                        "isRoot" to comment.isRoot,
+                    ),
+                )
+                transaction.update(targetRef, "likeCount", currentCount + 1)
+            } else {
+                transaction.delete(likeRef)
+                transaction.update(targetRef, "likeCount", (currentCount - 1).coerceAtLeast(0))
+            }
+        }.await()
+    }
+
+    override suspend fun deleteOwnDiscussionComment(comment: EventDiscussionComment, deletedAt: Long) {
+        discussionCommentReference(comment).update(
+            mapOf(
+                "body" to "",
+                "deletedAt" to deletedAt,
+                "deletedByAdmin" to false,
+            ),
+        ).await()
+    }
+
+    override suspend fun deleteDiscussionBranchAsAdmin(comment: EventDiscussionComment, deletedAt: Long) {
+        val threadRef = discussionThreads(comment.eventId).document(comment.threadId)
+        discussionCommentReference(comment).update(
+            mapOf(
+                "body" to "",
+                "deletedAt" to deletedAt,
+                "deletedByAdmin" to true,
+            ),
+        ).await()
+        val replyDocuments = threadRef.collection(DISCUSSION_COMMENTS).get().await().documents
+        val commentIds = if (comment.isRoot) {
+            replyDocuments.mapTo(mutableSetOf(comment.id), DocumentSnapshot::getId)
+        } else {
+            replyDocuments.filter { document ->
+                document.id == comment.id ||
+                    (document.get("ancestorIds") as? List<*>)?.contains(comment.id) == true
+            }.mapTo(mutableSetOf(comment.id), DocumentSnapshot::getId)
+        }
+        val likeDocuments = firestore.collection(EVENTS).document(comment.eventId)
+            .collection(DISCUSSION_LIKES).whereEqualTo("threadId", comment.threadId)
+            .get().await().documents.filter { it.getString("commentId") in commentIds }
+
+        val targetDocuments = replyDocuments.filter { it.id in commentIds }
+        (likeDocuments + targetDocuments).chunked(DELETE_BATCH_SIZE).forEach { documents ->
+            val batch = firestore.batch()
+            documents.forEach { batch.delete(it.reference) }
+            batch.commit().await()
+        }
+        if (comment.isRoot) {
+            threadRef.delete().await()
+        } else {
+            // The target may have disappeared between the query and the batch; deleting it again is harmless.
+            threadRef.collection(DISCUSSION_COMMENTS).document(comment.id).delete().await()
+            firestore.runTransaction { transaction ->
+                val thread = transaction.get(threadRef)
+                if (thread.exists()) {
+                    val currentReplyCount = thread.getLong("replyCount")?.toInt() ?: 0
+                    transaction.update(
+                        threadRef,
+                        "replyCount",
+                        (currentReplyCount - targetDocuments.size).coerceAtLeast(0),
+                    )
+                }
+            }.await()
+        }
+    }
+
+    private fun discussionThreads(eventId: String) = firestore.collection(EVENTS).document(eventId)
+        .collection(DISCUSSION_THREADS)
+
+    private fun discussionCommentReference(comment: EventDiscussionComment) =
+        discussionThreads(comment.eventId).document(comment.threadId).let { threadRef ->
+            if (comment.isRoot) threadRef else threadRef.collection(DISCUSSION_COMMENTS).document(comment.id)
+        }
+
+    private suspend fun deleteDiscussionForEvent(eventId: String) {
+        val eventRef = firestore.collection(EVENTS).document(eventId)
+        val threads = eventRef.collection(DISCUSSION_THREADS).get().await().documents
+        threads.forEach { thread ->
+            deleteCollection(thread.reference.collection(DISCUSSION_COMMENTS))
+        }
+        deleteCollection(eventRef.collection(DISCUSSION_LIKES))
+        deleteCollection(eventRef.collection(DISCUSSION_THREADS))
+    }
+
     private fun CommunityEvent.toRemoteMap(): Map<String, Any?> = mapOf(
         "title" to title, "description" to description, "venueName" to venueName,
         "latitude" to latitude, "longitude" to longitude, "radiusMetres" to radiusMetres,
@@ -358,6 +604,23 @@ class FirebaseEventRemoteRepository(
         "recipientName" to recipientName, "recipientUsername" to recipientUsername,
         "startsAt" to startsAt, "endsAt" to endsAt, "createdAt" to createdAt,
         "expiresAt" to expiresAt, "status" to status.name,
+    )
+
+    private fun EventDiscussionComment.toRemoteMap(): Map<String, Any?> = mapOf(
+        "eventId" to eventId,
+        "threadId" to threadId,
+        "parentId" to parentId,
+        "ancestorIds" to ancestorIds,
+        "depth" to depth,
+        "authorId" to authorId,
+        "authorName" to authorName,
+        "body" to body,
+        "likeCount" to likeCount,
+        "replyCount" to replyCount,
+        "lastReplyId" to lastReplyId,
+        "createdAt" to createdAt,
+        "deletedAt" to deletedAt,
+        "deletedByAdmin" to deletedByAdmin,
     )
 
     private fun Map<String, Any>.toEvent(id: String): CommunityEvent? = runCatching {
@@ -428,6 +691,30 @@ class FirebaseEventRemoteRepository(
         )
     }.getOrNull()
 
+    private fun Map<String, Any>.toDiscussionComment(
+        id: String,
+        eventId: String,
+        threadId: String,
+    ): EventDiscussionComment? = runCatching {
+        EventDiscussionComment(
+            id = id,
+            eventId = eventId,
+            threadId = get("threadId") as? String ?: threadId,
+            parentId = get("parentId") as? String,
+            ancestorIds = (get("ancestorIds") as? List<*>)?.filterIsInstance<String>().orEmpty(),
+            depth = (get("depth") as? Number)?.toInt() ?: 0,
+            authorId = getValue("authorId") as String,
+            authorName = get("authorName") as? String ?: "Event member",
+            body = get("body") as? String ?: "",
+            likeCount = (get("likeCount") as? Number)?.toInt() ?: 0,
+            replyCount = (get("replyCount") as? Number)?.toInt() ?: 0,
+            lastReplyId = get("lastReplyId") as? String ?: "",
+            createdAt = (get("createdAt") as? Number)?.toLong() ?: 0L,
+            deletedAt = (get("deletedAt") as? Number)?.toLong(),
+            deletedByAdmin = get("deletedByAdmin") as? Boolean ?: false,
+        )
+    }.getOrNull()
+
     private companion object {
         const val EVENTS = "events"
         const val MEMBERS = "members"
@@ -437,6 +724,9 @@ class FirebaseEventRemoteRepository(
         const val EMAIL_LOOKUP = "emailLookup"
         const val ACCOUNTS = "accounts"
         const val ACCOUNT_CARDS = "accountCards"
+        const val DISCUSSION_THREADS = "discussionThreads"
+        const val DISCUSSION_COMMENTS = "comments"
+        const val DISCUSSION_LIKES = "discussionLikes"
         const val DELETE_BATCH_SIZE = 450
         val USERNAME_PATTERN = Regex("^[a-z0-9_]{3,20}$")
         val EMAIL_PATTERN = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")

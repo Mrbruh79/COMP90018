@@ -116,6 +116,11 @@ data class EventInvitee(
     val username: String,
 )
 
+data class EventParticipantSearchResult(
+    val membership: EventMembership,
+    val username: String,
+)
+
 data class EventAccessRequest(
     val id: String = UUID.randomUUID().toString(),
     val eventId: String,
@@ -181,6 +186,49 @@ data class EventChatMessage(
     val text: String,
     val createdAt: Long = System.currentTimeMillis(),
 )
+
+data class EventDiscussionComment(
+    val id: String = UUID.randomUUID().toString(),
+    val eventId: String,
+    val threadId: String = id,
+    val parentId: String? = null,
+    val ancestorIds: List<String> = emptyList(),
+    val depth: Int = 0,
+    val authorId: String,
+    val authorName: String,
+    val body: String,
+    val likeCount: Int = 0,
+    val replyCount: Int = 0,
+    val lastReplyId: String = "",
+    val createdAt: Long = System.currentTimeMillis(),
+    val deletedAt: Long? = null,
+    val deletedByAdmin: Boolean = false,
+) {
+    val isRoot: Boolean
+        get() = parentId == null
+
+    val isAuthorDeleted: Boolean
+        get() = deletedAt != null && !deletedByAdmin
+
+    init {
+        require(id.isNotBlank()) { "Discussion comment ID cannot be blank." }
+        require(eventId.isNotBlank()) { "Discussion event ID cannot be blank." }
+        require(threadId.isNotBlank()) { "Discussion thread ID cannot be blank." }
+        require(authorId.isNotBlank()) { "Discussion author cannot be blank." }
+        require(depth in 0..MAX_DISCUSSION_DEPTH) { "Invalid discussion depth." }
+        require(likeCount >= 0) { "Like count cannot be negative." }
+        require(replyCount >= 0) { "Reply count cannot be negative." }
+        require(isRoot == (depth == 0)) { "Only top-level comments can have depth zero." }
+        require(isRoot == ancestorIds.isEmpty()) { "Invalid discussion ancestor path." }
+        require(isRoot || ancestorIds.lastOrNull() == parentId) { "Invalid discussion parent path." }
+    }
+
+    companion object {
+        const val MAX_DISCUSSION_DEPTH = 20
+        const val MAX_ROOT_BODY_LENGTH = 2_000
+        const val MAX_REPLY_BODY_LENGTH = 1_000
+    }
+}
 
 data class EventCreateRequest(
     val title: String,
