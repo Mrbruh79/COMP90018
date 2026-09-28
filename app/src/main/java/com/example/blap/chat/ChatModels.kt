@@ -234,5 +234,5 @@ data class ChatUiState(
 
 object MeshGroup {
     const val ID = "__blap_mesh_group__"
-    const val NAME = "Mesh group"
+    const val NAME = "Nearby Chat"
 }

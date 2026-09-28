@@ -893,27 +893,40 @@ private fun ConversationList(
     showAccountPrompt: Boolean,
     onOpenAccount: () -> Unit,
 ) {
-    val filteredConversations = conversations.filter {
-        search.isBlank() || it.name.contains(search, ignoreCase = true) ||
+    val searching = search.isNotBlank()
+    val searchResults = conversations.filter {
+        it.name.contains(search, ignoreCase = true) ||
             it.lastMessage.contains(search, ignoreCase = true)
     }
+    val nearbyChat = conversations.firstOrNull { it.type == ConversationType.OPEN_MESH }
+    val recentChats = conversations.filter { it.type != ConversationType.OPEN_MESH }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
         contentPadding = PaddingValues(bottom = 88.dp),
     ) {
-        if (showAccountPrompt && search.isBlank()) {
+        if (showAccountPrompt && !searching) {
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth().clickable(onClick = onOpenAccount),
                     colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
                     shape = RoundedCornerShape(16.dp),
                 ) {
-                    Column(Modifier.padding(14.dp)) {
-                        Text("Sign in or link an account", style = MaterialTheme.typography.titleMedium)
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Text(
-                            "Sign in with Email or Google to use online chats.",
+                            "Sign in to your account to enable online chats and contacts sync.",
+                            modifier = Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        Icon(
+                            painterResource(R.drawable.ic_chevron_right),
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.padding(start = 12.dp),
                         )
                     }
                 }
@@ -926,25 +939,54 @@ private fun ConversationList(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
                 singleLine = true,
                 placeholder = { Text("Search messages") },
-                shape = RoundedCornerShape(16.dp),
+                leadingIcon = {
+                    Icon(painterResource(R.drawable.ic_search), contentDescription = null)
+                },
+                shape = CircleShape,
             )
         }
-        if (filteredConversations.isEmpty()) {
-            item {
-                Text(
-                    if (search.isBlank()) "Start a conversation from your contacts." else "No conversations match your search.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(vertical = 20.dp),
-                )
+        if (searching) {
+            item { SectionHeader("Search Result") }
+            if (searchResults.isEmpty()) {
+                item {
+                    Text(
+                        "No conversations match your search",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    )
+                }
             }
-        }
-        items(filteredConversations, key = ConversationSummary::peerId) { conversation ->
-            ConversationCard(conversation) { onOpenConversation(conversation.peerId) }
-        }
-        if (search.isBlank()) {
+            items(searchResults, key = ConversationSummary::peerId) { conversation ->
+                ConversationCard(conversation) { onOpenConversation(conversation.peerId) }
+            }
+        } else {
+            if (recentChats.isNotEmpty()) {
+                item { SectionHeader("Recent Chats") }
+                items(recentChats, key = ConversationSummary::peerId) { conversation ->
+                    ConversationCard(conversation) { onOpenConversation(conversation.peerId) }
+                }
+            }
+            if (nearbyChat != null) {
+                item {
+                    SectionHeader("Nearby Chat", "Chat with nearby CommonGround users.")
+                }
+                item {
+                    ConversationCard(nearbyChat) { onOpenConversation(nearbyChat.peerId) }
+                }
+                item {
+                    Text(
+                        "Your information will not be shared until you connect with someone.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             item {
-                Text("Nearby", style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(top = 20.dp, bottom = 4.dp))
+                SectionHeader(
+                    "Discover Nearby Contacts",
+                    "Discover and connect with other CommonGround users.",
+                )
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                     modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
@@ -990,18 +1032,54 @@ private fun ConversationList(
     }
 }
 
+/**
+ * A conversation is reachable when a message sent now can actually arrive: over the nearby mesh,
+ * or via a linked online account. Mesh chat has no cloud path, so it reduces to [connected].
+ */
+private fun ConversationSummary.reachable() = connected || onlineAccountLinked
+
+private fun ConversationSummary.emptyPreview() = when (type) {
+    ConversationType.OPEN_MESH -> "Discover connections with public nearby chat."
+    else -> "Say hello"
+}
+
+@DrawableRes
+private fun ConversationSummary.avatarIcon(): Int? = when (type) {
+    ConversationType.OPEN_MESH -> R.drawable.ic_nearby_chat
+    ConversationType.PRIVATE_GROUP -> R.drawable.ic_contacts
+    ConversationType.DIRECT -> null
+}
+
+@Composable
+private fun SectionHeader(title: String, subtitle: String? = null) {
+    Column(Modifier.padding(top = 16.dp)) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        if (subtitle != null) {
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        }
+    }
+}
+
 @Composable
 private fun ConversationCard(conversation: ConversationSummary, onClick: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Avatar(conversation.name, conversation.connected)
-            Column(Modifier.padding(start = 12.dp).weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Avatar(conversation.name, conversation.reachable(), conversation.avatarIcon())
+            Column(Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.Top) {
                     Text(conversation.name, style = MaterialTheme.typography.titleMedium,
                         modifier = Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis)
                     if (conversation.lastMessageAt > 0 && conversation.lastMessage.isNotBlank()) {
@@ -1010,19 +1088,10 @@ private fun ConversationCard(conversation: ConversationSummary, onClick: () -> U
                             modifier = Modifier.padding(start = 8.dp))
                     }
                 }
-                Text(conversation.lastMessage.ifBlank { "Say hello" }, maxLines = 1,
+                Text(conversation.lastMessage.ifBlank { conversation.emptyPreview() }, maxLines = 2,
+                    style = MaterialTheme.typography.bodySmall,
                     overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 3.dp))
-                Text(when (conversation.type) {
-                    ConversationType.OPEN_MESH -> "Public nearby chat"
-                    ConversationType.PRIVATE_GROUP -> "${conversation.memberCount} members"
-                    ConversationType.DIRECT -> when {
-                        conversation.connected -> "Connected nearby"
-                        conversation.onlineAccountLinked -> "Online account linked · not nearby"
-                        else -> "Not connected nearby"
-                    }
-                }, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 3.dp))
+                    modifier = Modifier.padding(top = 4.dp))
             }
         }
     }
@@ -1063,7 +1132,16 @@ private fun DeviceCard(device: NearbyDevice, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Avatar(name: String, connected: Boolean) {
+private fun Avatar(
+    name: String,
+    connected: Boolean,
+    @DrawableRes iconRes: Int? = null,
+) {
+    val content = if (connected) {
+        MaterialTheme.colorScheme.onTertiary
+    } else {
+        MaterialTheme.colorScheme.onSurface
+    }
     Box(
         modifier = Modifier
             .size(44.dp)
@@ -1077,15 +1155,11 @@ private fun Avatar(name: String, connected: Boolean) {
             ),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            initialsOf(name),
-            color = if (connected) {
-                MaterialTheme.colorScheme.onTertiary
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-            fontWeight = FontWeight.Bold,
-        )
+        if (iconRes != null) {
+            Icon(painterResource(iconRes), contentDescription = null, tint = content)
+        } else {
+            Text(initialsOf(name), color = content, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
