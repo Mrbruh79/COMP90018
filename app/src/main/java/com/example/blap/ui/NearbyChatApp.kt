@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
@@ -83,6 +84,8 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import com.example.blap.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -936,7 +939,7 @@ private fun ConversationList(
             OutlinedTextField(
                 value = search,
                 onValueChange = onSearchChanged,
-                modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                 singleLine = true,
                 placeholder = { Text("Search messages") },
                 leadingIcon = {
@@ -987,48 +990,144 @@ private fun ConversationList(
                     "Discover Nearby Contacts",
                     "Discover and connect with other CommonGround users.",
                 )
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(when {
-                            !nearbyActive -> "Connect without internet"
-                            connectionCount > 0 -> "$connectionCount phone${if (connectionCount == 1) "" else "s"} connected"
-                            else -> "Looking for people nearby"
-                        }, style = MaterialTheme.typography.titleMedium)
-                        Text(if (nearbyActive) "Keep BLAP open on both phones to connect."
-                            else "Turn on nearby messaging to discover other phones running BLAP.",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-                        if (!nearbyActive) {
-                            Button(onClick = onStartNearby, modifier = Modifier.padding(top = 10.dp)) {
-                                Text("Turn on nearby")
-                            }
-                        } else {
-                            OutlinedButton(
+                if (nearbyActive) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        ),
+                        shape = RoundedCornerShape(16.dp),
+                    ) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(
+                                if (connectionCount > 0) {
+                                    "$connectionCount phone${if (connectionCount == 1) "" else "s"} connected"
+                                } else {
+                                    "Nearby search is currently active"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            Text(
+                                "Your account is discoverable to nearby devices.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(top = 4.dp),
+                            )
+                            NearbyToggleButton(
+                                label = "Turn off nearby",
+                                filled = true,
                                 onClick = onStopNearby,
-                                modifier = Modifier.padding(top = 10.dp),
-                                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.primary
-                                )
-                            ) {
-                                Text("Turn off nearby")
-                            }
-                        }
-                        if (deniedPermissions.isNotEmpty()) {
-                            Text("Allow nearby permissions to connect.", color = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.padding(top = 8.dp))
-                            TextButton(onClick = onOpenSettings) { Text("Open permissions") }
+                            )
                         }
                     }
+                } else {
+                    NearbyToggleButton(
+                        label = "Turn on nearby",
+                        filled = false,
+                        onClick = onStartNearby,
+                    )
+                }
+                if (deniedPermissions.isNotEmpty()) {
+                    Text(
+                        "Permissions must be enabled to be able to use the nearby feature.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(top = 16.dp),
+                    )
+                    OutlinedButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 16.dp)
+                            .height(ExtraSmallButtonHeight),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    ) { Text("Open permissions", style = MaterialTheme.typography.titleSmall) }
                 }
             }
             if (nearbyActive) {
                 items(devices, key = NearbyDevice::endpointId) { device ->
-                    DeviceCard(device) { onConnect(device.endpointId) }
+                    DeviceRow(device) { onConnect(device.endpointId) }
+                }
+                item {
+                    Text(
+                        if (devices.isEmpty()) {
+                            "Devices you can connect with will be shown here."
+                        } else {
+                            "${devices.size} device${if (devices.size == 1) "" else "s"} ready to connect."
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
                 }
             }
         }
+    }
+}
+
+/**
+ * Material 3 button container heights. The size tokens are internal in material3 1.4.0, so the
+ * values from the spec are named here instead of being repeated as literals.
+ */
+private val MediumButtonHeight = 56.dp
+private val ExtraSmallButtonHeight = 32.dp
+
+@Composable
+private fun NearbyToggleButton(label: String, filled: Boolean, onClick: () -> Unit) {
+    val content: @Composable RowScope.() -> Unit = {
+        Icon(
+            painterResource(R.drawable.ic_bluetooth),
+            contentDescription = null,
+            modifier = Modifier.padding(end = 8.dp),
+        )
+        Text(label, style = MaterialTheme.typography.titleSmall)
+    }
+    val modifier = Modifier
+        .fillMaxWidth()
+        .padding(top = 16.dp)
+        .height(MediumButtonHeight)
+    if (filled) {
+        Button(onClick = onClick, modifier = modifier, content = content)
+    } else {
+        OutlinedButton(
+            onClick = onClick,
+            modifier = modifier,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = MaterialTheme.colorScheme.primary,
+            ),
+            content = content,
+        )
+    }
+}
+
+@Composable
+private fun DeviceRow(device: NearbyDevice, onConnect: () -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Avatar(device.name, connected = true)
+        Text(
+            device.name,
+            modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
+            style = MaterialTheme.typography.titleMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Button(
+            onClick = onConnect,
+            modifier = Modifier.semantics {
+                contentDescription = "Connect to ${device.name}"
+            },
+        ) { Text("Connect") }
     }
 }
 
@@ -1052,7 +1151,7 @@ private fun ConversationSummary.avatarIcon(): Int? = when (type) {
 
 @Composable
 private fun SectionHeader(title: String, subtitle: String? = null) {
-    Column(Modifier.padding(top = 16.dp)) {
+    Column(Modifier.padding(top = 8.dp)) {
         Text(title, style = MaterialTheme.typography.titleMedium)
         if (subtitle != null) {
             Text(
@@ -1101,34 +1200,6 @@ private fun formatConversationTime(time: Long): String {
     val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault())
     val pattern = if (today.format(Date(time)) == today.format(Date())) "h:mm a" else "MMM d"
     return SimpleDateFormat(pattern, Locale.getDefault()).format(Date(time))
-}
-
-@Composable
-private fun DeviceCard(device: NearbyDevice, onClick: () -> Unit) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-    ) {
-        Row(
-            Modifier.padding(15.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Avatar(device.name, true)
-            Column(
-                Modifier
-                    .padding(start = 12.dp)
-                    .weight(1f),
-            ) {
-                Text(device.name, style = MaterialTheme.typography.titleMedium)
-                Text("Tap to connect", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Text("CONNECT", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
-        }
-    }
 }
 
 @Composable
@@ -2396,7 +2467,7 @@ private fun ChatScreen(
             TextButton(onClick = onBack) { Text("Back") }
             Box(Modifier.clickable(enabled = conversation.type == ConversationType.DIRECT) {
                 onOpenContactProfile()
-            }) { Avatar(conversation.name, conversation.connected) }
+            }) { Avatar(conversation.name, conversation.reachable()) }
             Column(
                 Modifier
                     .padding(start = 10.dp)
