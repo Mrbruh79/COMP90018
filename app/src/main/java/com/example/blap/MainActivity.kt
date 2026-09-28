@@ -189,7 +189,7 @@ class MainActivity : ComponentActivity() {
                     onSaveCurrentChatContact = viewModel::saveCurrentChatContact,
                     onMessageDraftChanged = viewModel::updateMessageDraft,
                     onDisconnect = viewModel::disconnect,
-                    onBeginCreateGroup = viewModel::beginCreateGroup,
+                    onOpenCreateGroup = viewModel::beginCreateGroup,
                     onGroupNameChanged = viewModel::updateGroupName,
                     onToggleGroupMember = viewModel::toggleGroupMember,
                     onCreateGroup = viewModel::createPrivateGroup,

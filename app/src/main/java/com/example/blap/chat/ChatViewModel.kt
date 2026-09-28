@@ -58,6 +58,7 @@ class ChatViewModel(
     private var localPhoneHash = PhoneIdentity.hash(initialProfile.phoneNumber).orEmpty()
     private var profileReturnScreen = ChatScreen.SHOWING_MY_CARD
     private var contactReturnScreen = ChatScreen.MANAGING_CONTACTS
+    private var groupReturnScreen = ChatScreen.CHATS
     private var requestedEndpointId: String? = null
     private var scannedPeerId: String? = null
     private var scannedPhoneHash: String? = null
@@ -754,6 +755,7 @@ class ChatViewModel(
     }
 
     fun beginCreateGroup() {
+        groupReturnScreen = _uiState.value.screen
         _uiState.update {
             it.copy(
                 screen = ChatScreen.CREATING_GROUP,
@@ -1060,8 +1062,13 @@ class ChatViewModel(
         when (_uiState.value.screen) {
             ChatScreen.CONVERSATION,
             ChatScreen.CONNECTING,
-            ChatScreen.CREATING_GROUP,
             -> showConversationList()
+
+            ChatScreen.CREATING_GROUP -> if (groupReturnScreen == ChatScreen.MANAGING_CONTACTS) {
+                beginManageContacts()
+            } else {
+                showConversationList()
+            }
 
             ChatScreen.MANAGING_CONTACTS,
             ChatScreen.SHOWING_MY_CARD,
