@@ -51,6 +51,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -274,6 +275,20 @@ fun NearbyChatApp(
             contentColor = MaterialTheme.colorScheme.onBackground,
             contentWindowInsets = WindowInsets.safeDrawing,
             snackbarHost = { SnackbarHost(snackbar) },
+            floatingActionButton = {
+                if (uiState.screen == ChatScreen.CHATS) {
+                    FloatingActionButton(
+                        onClick = onManageContacts,
+                        containerColor = MaterialTheme.colorScheme.primary,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                    ) {
+                        Icon(
+                            painterResource(R.drawable.ic_new_chat),
+                            contentDescription = "New chat",
+                        )
+                    }
+                }
+            },
             bottomBar = {
                 if (uiState.screen in TOP_LEVEL_SCREENS) {
                     AppNavigationBar(
@@ -320,7 +335,6 @@ fun NearbyChatApp(
                         devices = uiState.discoveredDevices,
                         onOpenConversation = onOpenConversation,
                         onConnect = onConnect,
-                        onOpenCreateGroup = onOpenCreateGroup,
                         onManageContacts = onManageContacts,
                         search = uiState.conversationSearch,
                         onSearchChanged = onConversationSearchChanged,
@@ -867,7 +881,6 @@ private fun ConversationList(
     devices: List<NearbyDevice>,
     onOpenConversation: (String) -> Unit,
     onConnect: (String) -> Unit,
-    onOpenCreateGroup: () -> Unit,
     onManageContacts: () -> Unit,
     search: String,
     onSearchChanged: (String) -> Unit,
@@ -887,7 +900,7 @@ private fun ConversationList(
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
-        contentPadding = PaddingValues(bottom = 20.dp),
+        contentPadding = PaddingValues(bottom = 88.dp),
     ) {
         if (showAccountPrompt && search.isBlank()) {
             item {
@@ -907,10 +920,6 @@ private fun ConversationList(
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onManageContacts) { Text("New message") }
-                TextButton(onClick = onOpenCreateGroup) { Text("New group") }
-            }
             OutlinedTextField(
                 value = search,
                 onValueChange = onSearchChanged,
