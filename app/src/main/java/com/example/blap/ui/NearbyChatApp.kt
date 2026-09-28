@@ -113,6 +113,8 @@ import com.example.blap.chat.NearbyDevice
 import com.example.blap.chat.ProfileUrl
 import com.example.blap.chat.SavedContact
 import com.example.blap.chat.PhoneNumberParts
+import com.example.blap.ui.theme.ButtonHeightExtraSmall
+import com.example.blap.ui.theme.ButtonHeightMedium
 import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.event.EventCreateRequest
@@ -871,7 +873,7 @@ private fun WelcomeScreen(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(top = 24.dp)
-                .height(56.dp),
+                .height(ButtonHeightMedium),
         ) {
             Text("Continue to chats")
         }
@@ -1041,7 +1043,7 @@ private fun ConversationList(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 16.dp)
-                            .height(ExtraSmallButtonHeight),
+                            .height(ButtonHeightExtraSmall),
                         contentPadding = PaddingValues(horizontal = 16.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
                         colors = ButtonDefaults.outlinedButtonColors(
@@ -1072,13 +1074,6 @@ private fun ConversationList(
     }
 }
 
-/**
- * Material 3 button container heights. The size tokens are internal in material3 1.4.0, so the
- * values from the spec are named here instead of being repeated as literals.
- */
-private val MediumButtonHeight = 56.dp
-private val ExtraSmallButtonHeight = 32.dp
-
 @Composable
 private fun NearbyToggleButton(label: String, filled: Boolean, onClick: () -> Unit) {
     val content: @Composable RowScope.() -> Unit = {
@@ -1092,7 +1087,7 @@ private fun NearbyToggleButton(label: String, filled: Boolean, onClick: () -> Un
     val modifier = Modifier
         .fillMaxWidth()
         .padding(top = 16.dp)
-        .height(MediumButtonHeight)
+        .height(ButtonHeightMedium)
     if (filled) {
         Button(onClick = onClick, modifier = modifier, content = content)
     } else {
