@@ -27,6 +27,39 @@ async function publishAccount(uid, phoneHash = '', discoverableByPhone = false) 
   await assertSucceeds(batch.commit());
 }
 
+const privateProfileFor = uid => ({
+  uid, updatedAt: 1, displayName: 'Alice', username: uid,
+  phoneNumber: '+61412345678', email: 'alice@example.com', googleAccountEmail: '',
+  discoverableByPhone: true, lookupPhoneNumber: '+61412345678', bio: 'Hello',
+  websiteUrl: '', instagramUrl: '', xUrl: '', linkedinUrl: '', githubUrl: '',
+});
+
+test('private profile survives owner relogin and rejects other readers and malformed writes', async () => {
+  const alice = client('alice');
+  const bob = client('bob');
+  const guest = environment.authenticatedContext('guest').firestore();
+  const signedOut = environment.unauthenticatedContext().firestore();
+  const path = 'privateProfiles/alice';
+  await assertSucceeds(setDoc(doc(alice, path), privateProfileFor('alice')));
+  await assertSucceeds(getDoc(doc(client('alice'), path)));
+  await assertFails(getDoc(doc(bob, path)));
+  await assertFails(getDoc(doc(guest, path)));
+  await assertFails(getDoc(doc(signedOut, path)));
+  await assertFails(getDocs(collection(alice, 'privateProfiles')));
+  await assertFails(setDoc(doc(bob, path), privateProfileFor('bob')));
+  await assertFails(setDoc(doc(alice, path), { ...privateProfileFor('alice'), uid: 'bob' }));
+  await assertFails(updateDoc(doc(alice, path), { bio: 'a'.repeat(1_000_000) }));
+  await assertFails(updateDoc(doc(alice, path), { admin: true }));
+  await assertFails(updateDoc(doc(alice, path), { phoneNumber: 123 }));
+  await assertFails(updateDoc(doc(alice, path), { lookupPhoneNumber: '', discoverableByPhone: true }));
+  await assertFails(updateDoc(doc(alice, path), { username: null }));
+  const missingField = privateProfileFor('alice');
+  delete missingField.bio;
+  await assertFails(setDoc(doc(alice, path), missingField));
+  await assertFails(deleteDoc(doc(alice, path)));
+  await assertSucceeds(updateDoc(doc(alice, path), { bio: 'Updated', updatedAt: 2 }));
+});
+
 before(async () => {
   const [host, port] = (process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8082').split(':');
   environment = await initializeTestEnvironment({
@@ -140,6 +173,10 @@ test('direct chats are limited to two account UIDs, with immutable sender data',
     senderUid: 'alice', senderPeerId: 'alice-peer', senderName: 'Alice', text: 'Hello', sentAt: 100,
   };
   await assertSucceeds(setDoc(doc(alice, 'directChatsV2/chat-1/messages/m1'), message));
+  await assertSucceeds(setDoc(doc(alice, 'directChatsV2/chat-1/messages/poll'), {
+    ...message, text: '\u001fCG2|P|TWVldD8|UGFyaw|TGlicmFyeQ', sentAt: 102,
+  }));
+  await assertSucceeds(getDoc(doc(bob, 'directChatsV2/chat-1/messages/poll')));
   await assertSucceeds(getDoc(doc(bob, 'directChatsV2/chat-1/messages/m1')));
   await assertSucceeds(setDoc(doc(bob, 'directChatsV2/chat-1'), { memberIds: ['alice', 'bob'] }));
   await assertSucceeds(setDoc(doc(bob, 'directChatsV2/chat-1/messages/reply'), {

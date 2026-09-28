@@ -8,6 +8,7 @@ enum class ChatScreen {
     CREATING_GROUP,
     MANAGING_CONTACTS,
     EDITING_CONTACT,
+    CONTACT_PROFILE,
     EDITING_PROFILE,
     SHOWING_MY_CARD,
     GROUP_SETTINGS,
@@ -116,6 +117,7 @@ data class SavedContact(
     val githubUrl: String = "",
     val source: ContactSource = ContactSource.MANUAL,
     val updatedAt: Long = System.currentTimeMillis(),
+    val username: String = "",
 )
 
 data class DeviceContact(
@@ -142,6 +144,7 @@ data class GroupContact(
     val phoneHash: String = "",
     val email: String = "",
     val availableOnMesh: Boolean = false,
+    val username: String = "",
 )
 
 data class OutgoingNearbyMessage(
@@ -199,6 +202,10 @@ data class ChatUiState(
     val contactPhoneDraft: String = "",
     val contactEmailDraft: String = "",
     val contactGoogleEmailDraft: String = "",
+    val contactUsernameDraft: String = "",
+    val accountCandidates: List<CloudAccount> = emptyList(),
+    val accountCandidateContactId: String? = null,
+    val openChatAfterAccountChoice: Boolean = false,
     val contactBioDraft: String = "",
     val contactWebsiteDraft: String = "",
     val contactInstagramDraft: String = "",

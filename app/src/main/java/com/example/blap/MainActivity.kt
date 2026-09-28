@@ -5,6 +5,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -31,9 +32,13 @@ import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.AccountProfileManager
 import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.chat.ChatViewModel
+import com.example.blap.chat.ChatNotificationSettings
+import com.example.blap.chat.ChatNotificationSettingsStore
 import com.example.blap.chat.ContactProfile
 import com.example.blap.chat.LocalDataScope
 import com.example.blap.chat.LocalIdentityStore
+import com.example.blap.chat.FirebasePrivateProfileStore
+import com.example.blap.chat.PrivateProfileSnapshot
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -59,6 +64,14 @@ class MainActivity : ComponentActivity() {
     private var authAccount by mutableStateOf(AuthAccount())
     private var accountProfile by mutableStateOf<PublicAccountProfile?>(null)
     private var accountProfileLoading by mutableStateOf(false)
+    private lateinit var notificationSettingsStore: ChatNotificationSettingsStore
+    private var notificationSettings by mutableStateOf(ChatNotificationSettings())
+    private var notificationPermissionGranted by mutableStateOf(false)
+    private val privateProfileStore by lazy { FirebasePrivateProfileStore() }
+
+    private val notificationPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted -> notificationPermissionGranted = granted }
 
     private val nearbyPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
@@ -112,6 +125,12 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         authAccount = AuthManager.account
+        notificationSettingsStore = ChatNotificationSettingsStore(
+            applicationContext,
+            LocalDataScope.forAccount(applicationContext, AuthManager.onlineUserId),
+        )
+        notificationSettings = notificationSettingsStore.load()
+        notificationPermissionGranted = hasNotificationPermission()
         accountProfileLoading = authAccount.uid.isNotBlank()
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -160,6 +179,14 @@ class MainActivity : ComponentActivity() {
                     onOpenConversation = viewModel::openConversation,
                     onBackToChats = viewModel::showConversationList,
                     onSendMessage = viewModel::sendMessage,
+                    onSendReply = viewModel::sendReply,
+                    onCreatePoll = viewModel::createPoll,
+                    onVoteInPoll = viewModel::voteInPoll,
+                    onEditMessage = viewModel::editMessage,
+                    onDeleteMessage = viewModel::deleteMessage,
+                    onOpenChatContactProfile = viewModel::openCurrentChatProfile,
+                    onCloseChatContactProfile = viewModel::closeCurrentChatProfile,
+                    onSaveCurrentChatContact = viewModel::saveCurrentChatContact,
                     onMessageDraftChanged = viewModel::updateMessageDraft,
                     onDisconnect = viewModel::disconnect,
                     onBeginCreateGroup = viewModel::beginCreateGroup,
@@ -169,8 +196,11 @@ class MainActivity : ComponentActivity() {
                     onManageContacts = viewModel::beginManageContacts,
                     onBeginAddContact = viewModel::beginAddContact,
                     onOpenContact = viewModel::openContact,
+                    onCloseContactEditor = viewModel::closeContactEditor,
                     onMessageContact = viewModel::messageContact,
                     onCheckContactOnline = viewModel::checkContactOnline,
+                    onSelectOnlineAccount = viewModel::selectOnlineAccount,
+                    onCancelAccountSelection = viewModel::cancelAccountSelection,
                     onContactDraftChanged = viewModel::updateContactDraft,
                     onDeleteContact = viewModel::deleteContact,
                     onScanContact = ::scanContactCard,
@@ -182,6 +212,10 @@ class MainActivity : ComponentActivity() {
                     onSaveProfile = viewModel::saveProfile,
                     onCancelProfile = viewModel::cancelProfileEdit,
                     onShowSettingsScreen = viewModel::showSettings,
+                    notificationSettings = notificationSettings,
+                    notificationPermissionGranted = notificationPermissionGranted,
+                    onNotificationSettingsChanged = ::updateNotificationSettings,
+                    onRequestNotificationPermission = ::requestNotificationPermission,
                     onShowDiscoverySettings = viewModel::showDiscoverySettings,
                     onDiscoveryPhoneChanged = viewModel::updateDiscoveryPhone,
                     onDiscoveryEnabledChanged = viewModel::updateDiscoveryEnabled,
@@ -266,6 +300,7 @@ class MainActivity : ComponentActivity() {
 
     private fun loadAccountProfile() {
         if (authAccount.uid.isBlank()) return
+        val loadingUid = authAccount.uid
         accountProfileLoading = true
         lifecycleScope.launch {
             val local = localIdentity().getProfile()
@@ -274,10 +309,20 @@ class MainActivity : ComponentActivity() {
                 runCatching { AccountProfileManager.claim(local.username, local.displayName) }.getOrNull()
                     ?: if (remote.isFailure) PublicAccountProfile(local.username, local.displayName) else null
             } else null
+            if (authAccount.uid != loadingUid) return@launch
+            if (profile != null) {
+                val privateCopy = runCatching { privateProfileStore.load(loadingUid) }
+                if (privateCopy.isSuccess) {
+                    viewModel.restorePrivateProfile(
+                        privateCopy.getOrNull(), profile.username, profile.displayName,
+                    )
+                }
+                viewModel.applyAccountProfile(profile.username, profile.displayName)
+            } else if (remote.isFailure) {
+                viewModel.showError("Could not load your account. Check your connection and retry.")
+            }
             accountProfile = profile
             accountProfileLoading = false
-            if (profile != null) viewModel.applyAccountProfile(profile.username, profile.displayName)
-            else if (remote.isFailure) viewModel.showError("Could not load your account. Check your connection and retry.")
         }
     }
 
@@ -290,6 +335,7 @@ class MainActivity : ComponentActivity() {
                     username = profile.username, displayName = profile.displayName,
                 ))
                 accountProfile = profile
+                viewModel.restorePrivateProfile(null, profile.username, profile.displayName)
                 viewModel.applyAccountProfile(profile.username, profile.displayName)
             } catch (error: Exception) {
                 viewModel.showError(error.localizedMessage ?: "Could not save your username.")
@@ -306,9 +352,13 @@ class MainActivity : ComponentActivity() {
                     try {
                         val profile = AccountProfileManager.claim(username, displayName)
                         val scope = LocalDataScope.forAccount(applicationContext, authAccount.uid)
-                        LocalIdentityStore(applicationContext, scope).saveProfile(
-                            ContactProfile(displayName = profile.displayName, username = profile.username),
+                        val identity = LocalIdentityStore(applicationContext, scope)
+                        val saved = identity.getProfile().copy(
+                            displayName = profile.displayName, username = profile.username,
                         )
+                        identity.saveProfile(saved)
+                        runCatching { privateProfileStore.save(authAccount.uid,
+                            PrivateProfileSnapshot(saved, identity.profileUpdatedAt())) }
                         AuthManager.sendVerificationEmail { }
                         restartForAccountChange()
                     } catch (error: Exception) {
@@ -397,12 +447,33 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        notificationPermissionGranted = hasNotificationPermission()
         if (deniedPermissions.isNotEmpty()) deniedPermissions = NearbyPermissions.missing(this)
         if (authAccount.uid.isNotBlank() && !authAccount.emailVerified) {
             AuthManager.refreshAccount {
                 authAccount = AuthManager.account
                 viewModel.accountChanged(authAccount.uid)
             }
+        }
+    }
+
+    private fun hasNotificationPermission(): Boolean = Build.VERSION.SDK_INT < 33 ||
+        ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33 && !hasNotificationPermission()) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    private fun updateNotificationSettings(value: ChatNotificationSettings) {
+        val old = notificationSettings
+        notificationSettings = value
+        notificationSettingsStore.save(value)
+        if (value.enabled && (!old.enabled || (!old.direct && value.direct) ||
+                (!old.privateGroups && value.privateGroups) || (!old.openMesh && value.openMesh))) {
+            requestNotificationPermission()
         }
     }
 

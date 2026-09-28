@@ -4,6 +4,8 @@ rules_version = '2';
 // accountSettings/{uid}: private uid, verified email, optional opted-in phone hash,
 // peerId and discoverableByPhone flag. Only the owner reads this document.
 // accountCards/{uid}: uid, unique username, short display name and app peerId.
+// privateProfiles/{uid}: owner-only card fields and discovery choice, with
+// a client update time for reconciling local and account copies.
 // usernames/{username}: one immutable UID reservation for each lowercase username.
 // {emailLookup|phoneLookup|peerLookup}/{key}/accounts/{uid}: uid-only lookup entry.
 // directChatsV2/{id}: two memberIds. privateChatsV2/{id}: ownerUid, name,
@@ -76,6 +78,36 @@ service cloud.firestore {
         && getAfter(/databases/$(database)/documents/accountSettings/$(uid)).data.peerId == data.peerId;
     }
 
+    function validPrivateProfile(data, uid) {
+      return data.keys().hasAll([
+          'uid', 'updatedAt', 'displayName', 'username', 'phoneNumber', 'email',
+          'googleAccountEmail', 'discoverableByPhone', 'lookupPhoneNumber',
+          'bio', 'websiteUrl', 'instagramUrl', 'xUrl', 'linkedinUrl', 'githubUrl'
+        ])
+        && data.keys().hasOnly([
+          'uid', 'updatedAt', 'displayName', 'username', 'phoneNumber', 'email',
+          'googleAccountEmail', 'discoverableByPhone', 'lookupPhoneNumber',
+          'bio', 'websiteUrl', 'instagramUrl', 'xUrl', 'linkedinUrl', 'githubUrl'
+        ])
+        && data.uid == uid && validUid(data.uid)
+        && data.updatedAt is int && data.updatedAt >= 0
+        && data.displayName is string && data.displayName.size() > 0 && data.displayName.size() <= 24
+        && validUsername(data.username)
+        && data.phoneNumber is string && data.phoneNumber.matches('^([+][0-9]{8,15})?$')
+        && data.email is string && data.email.size() <= 120
+        && data.googleAccountEmail is string && data.googleAccountEmail.size() <= 120
+        && data.discoverableByPhone is bool
+        && data.lookupPhoneNumber is string
+        && data.lookupPhoneNumber.matches('^([+][0-9]{8,15})?$')
+        && (!data.discoverableByPhone || data.lookupPhoneNumber.size() > 0)
+        && data.bio is string && data.bio.size() <= 240
+        && data.websiteUrl is string && data.websiteUrl.size() <= 200
+        && data.instagramUrl is string && data.instagramUrl.size() <= 200
+        && data.xUrl is string && data.xUrl.size() <= 200
+        && data.linkedinUrl is string && data.linkedinUrl.size() <= 200
+        && data.githubUrl is string && data.githubUrl.size() <= 200;
+    }
+
     function validLookup(data, uid) {
       return data.keys().hasAll(['uid']) && data.keys().hasOnly(['uid'])
         && data.uid == uid && validUid(data.uid);
@@ -138,6 +170,15 @@ service cloud.firestore {
       allow update: if isOwner(uid) && uidNotModified()
         && validAccountSettings(request.resource.data, uid);
       allow delete: if false;
+    }
+
+    match /privateProfiles/{uid} {
+      allow get: if isOwner(uid);
+      allow list, delete: if false;
+      allow create: if isOwner(uid) && uidUnchanged(uid)
+        && validPrivateProfile(request.resource.data, uid);
+      allow update: if isOwner(uid) && uidNotModified()
+        && validPrivateProfile(request.resource.data, uid);
     }
 
     match /accountCards/{uid} {

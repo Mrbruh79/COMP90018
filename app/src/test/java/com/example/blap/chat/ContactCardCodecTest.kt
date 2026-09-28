@@ -39,6 +39,22 @@ class ContactCardCodecTest {
     }
 
     @Test
+    fun cardSharesUsernameEvenWithoutPhoneOrEmail() {
+        val profile = ContactProfile(displayName = "Bob", username = "bob_user")
+        val card = ContactCardCodec.decodeCard(ContactCardCodec.encode(profile))
+
+        assertEquals("bob_user", card?.profile?.username)
+        assertEquals(profile, card?.profile)
+    }
+
+    @Test
+    fun oldMultiAddressCardStillDecodesWithoutUsername() {
+        val payload = "BLAP-CONTACT:3:Bob||||||||||"
+
+        assertEquals("", ContactCardCodec.decodeCard(payload)?.profile?.username)
+    }
+
+    @Test
     fun olderPairedCardsStillDecodeWithoutGoogleEmail() {
         val peerId = "20aecc56-8f17-44b1-ac58-338417b7d320"
         val payload = "BLAP-CONTACT:2:Bob|%2B12025550198||||||||$peerId"

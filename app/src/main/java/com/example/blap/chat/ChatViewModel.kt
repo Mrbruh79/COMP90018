@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -15,6 +16,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import com.example.blap.event.EventAdminKeyStore
 import com.example.blap.event.EventAnnouncement
 import com.example.blap.event.EventCreateRequest
@@ -41,19 +44,25 @@ class ChatViewModel(
     eventRemoteRepository: EventRemoteRepository? = null,
     eventAdminKeyStore: EventAdminKeyStore? = null,
     private val cloudChatController: CloudChatController? = null,
+    private val chatNotifier: ChatNotifier = NoopChatNotifier,
     initialAccountId: String = "",
+    private val privateProfileStore: PrivateProfileStore? = null,
 ) : ViewModel(), NearbyChatController.Listener, CloudChatController.Listener {
     private val workScope = CoroutineScope(SupervisorJob() + ioDispatcher)
+    private val privateProfileWriteMutex = Mutex()
+    private val newestPrivateProfileVersion = AtomicLong(0)
     private val connectedPeers = ConcurrentHashMap<String, ConnectedPeer>()
     private val cloudUploadsInFlight = ConcurrentHashMap.newKeySet<String>()
     private val localPeerId = identityStore.getPeerId()
     private val initialProfile = identityStore.getProfile()
     private var localPhoneHash = PhoneIdentity.hash(initialProfile.phoneNumber).orEmpty()
     private var profileReturnScreen = ChatScreen.SHOWING_MY_CARD
+    private var contactReturnScreen = ChatScreen.MANAGING_CONTACTS
     private var requestedEndpointId: String? = null
     private var scannedPeerId: String? = null
     private var scannedPhoneHash: String? = null
     private var scannedEmail: String? = null
+    private var pairedFromOpenChat = false
     private val eventCoordinator = if (
         eventStore != null && eventRemoteRepository != null && eventAdminKeyStore != null
     ) {
@@ -129,7 +138,7 @@ class ChatViewModel(
 
     fun applyAccountProfile(username: String, displayName: String) {
         val updated = identityStore.getProfile().copy(username = username, displayName = displayName)
-        identityStore.saveProfile(updated)
+        identityStore.saveProfileAt(updated, identityStore.profileUpdatedAt())
         _uiState.update { state ->
             state.copy(
                 displayName = displayName,
@@ -139,6 +148,55 @@ class ChatViewModel(
         workScope.launch {
             publishAccountNow()
             syncCloudPendingNow()
+        }
+    }
+
+    fun restorePrivateProfile(snapshot: PrivateProfileSnapshot?, username: String, displayName: String) {
+        val localTime = identityStore.profileUpdatedAt()
+        val localProfile = identityStore.getProfile()
+        val localHasDetails = localProfile.hasPrivateDetails()
+        val remoteHasDetails = snapshot?.profile?.hasPrivateDetails() == true
+        val accountId = _uiState.value.onlineAccountId
+        val restoreRemote = snapshot != null && (
+            (snapshot.updatedAt > localTime &&
+                !(localTime == 0L && localHasDetails && !remoteHasDetails)) ||
+            (localTime == 0L && !localHasDetails && remoteHasDetails)
+        )
+        if (restoreRemote) {
+            val remote = requireNotNull(snapshot)
+            val restored = remote.profile.copy(username = username, displayName = displayName)
+            identityStore.saveProfileAt(restored, remote.updatedAt)
+            localPhoneHash = PhoneIdentity.hash(restored.phoneNumber).orEmpty()
+            applyProfile(restored)
+            newestPrivateProfileVersion.updateAndGet { maxOf(it, remote.updatedAt) }
+        } else if (accountId.isNotBlank() && (localHasDetails || localTime > 0L) &&
+            (snapshot == null || localTime > snapshot.updatedAt || !remoteHasDetails)) {
+            val local = localProfile.copy(username = username, displayName = displayName)
+            val savedAt = if (localTime == 0L) System.currentTimeMillis() else localTime
+            identityStore.saveProfileAt(local, savedAt)
+            syncPrivateProfile(local, savedAt)
+        }
+    }
+
+    private fun ContactProfile.hasPrivateDetails(): Boolean =
+        phoneNumber.isNotBlank() || email.isNotBlank() || googleAccountEmail.isNotBlank() ||
+            bio.isNotBlank() || websiteUrl.isNotBlank() || instagramUrl.isNotBlank() ||
+            xUrl.isNotBlank() || linkedinUrl.isNotBlank() || githubUrl.isNotBlank() ||
+            lookupPhoneNumber.isNotBlank() || discoverableByPhone
+
+    private fun syncPrivateProfile(profile: ContactProfile, updatedAt: Long) {
+        val uid = _uiState.value.onlineAccountId.takeIf(String::isNotBlank) ?: return
+        val store = privateProfileStore ?: return
+        newestPrivateProfileVersion.updateAndGet { maxOf(it, updatedAt) }
+        workScope.launch {
+            runCatching {
+                privateProfileWriteMutex.withLock {
+                    if (updatedAt >= newestPrivateProfileVersion.get()) {
+                        store.save(uid, PrivateProfileSnapshot(profile, updatedAt))
+                    }
+                }
+            }
+                .onFailure { onCloudError("Profile backup failed. Your changes are saved on this phone.") }
         }
     }
 
@@ -340,6 +398,7 @@ class ChatViewModel(
     fun dismissEventMessage() = eventCoordinator?.dismissMessage() ?: Unit
 
     fun beginManageContacts() {
+        contactReturnScreen = ChatScreen.MANAGING_CONTACTS
         _uiState.update {
             it.copy(
                 screen = ChatScreen.MANAGING_CONTACTS,
@@ -353,6 +412,8 @@ class ChatViewModel(
     }
 
     fun beginAddContact() {
+        contactReturnScreen = ChatScreen.MANAGING_CONTACTS
+        pairedFromOpenChat = false
         scannedPeerId = null
         scannedPhoneHash = null
         scannedEmail = null
@@ -364,6 +425,7 @@ class ChatViewModel(
                 contactPhoneDraft = "",
                 contactEmailDraft = "",
                 contactGoogleEmailDraft = "",
+                contactUsernameDraft = "",
                 contactBioDraft = "",
                 contactWebsiteDraft = "",
                 contactInstagramDraft = "",
@@ -381,6 +443,8 @@ class ChatViewModel(
         scannedPhoneHash = null
         scannedEmail = null
         val contact = _uiState.value.savedContacts.firstOrNull { it.id == contactId } ?: return
+        contactReturnScreen = if (_uiState.value.screen == ChatScreen.CONTACT_PROFILE)
+            ChatScreen.CONTACT_PROFILE else ChatScreen.MANAGING_CONTACTS
         _uiState.update {
             it.copy(
                 screen = ChatScreen.EDITING_CONTACT,
@@ -389,6 +453,7 @@ class ChatViewModel(
                 contactPhoneDraft = contact.phoneNumber,
                 contactEmailDraft = contact.email,
                 contactGoogleEmailDraft = contact.googleAccountEmail,
+                contactUsernameDraft = contact.username,
                 contactBioDraft = contact.bio,
                 contactWebsiteDraft = contact.websiteUrl,
                 contactInstagramDraft = contact.instagramUrl,
@@ -401,24 +466,62 @@ class ChatViewModel(
         }
     }
 
+    fun openCurrentChatProfile() {
+        val state = _uiState.value
+        val peerId = state.selectedPeerId ?: return
+        if (state.conversations.none { it.peerId == peerId && it.type == ConversationType.DIRECT }) return
+        val contact = state.savedContacts.firstOrNull {
+            it.linkedPeerId == peerId ||
+                ContactIdentity.localPeerId(it.phoneHash, it.email, it.googleAccountEmail) == peerId ||
+                (it.cloudUserId.isNotBlank() && "account:${it.cloudUserId}" == peerId)
+        }
+        _uiState.update { it.copy(screen = ChatScreen.CONTACT_PROFILE, selectedContactId = contact?.id) }
+    }
+
+    fun saveCurrentChatContact() {
+        val state = _uiState.value
+        val peerId = state.selectedPeerId ?: return
+        val name = state.conversations.firstOrNull {
+            it.peerId == peerId && it.type == ConversationType.DIRECT
+        }?.name ?: return
+        beginAddContact()
+        contactReturnScreen = ChatScreen.CONTACT_PROFILE
+        scannedPeerId = peerId
+        pairedFromOpenChat = true
+        _uiState.update { it.copy(contactNameDraft = name) }
+    }
+
+    fun closeCurrentChatProfile() {
+        _uiState.update { it.copy(screen = ChatScreen.CONVERSATION) }
+    }
+
+    fun closeContactEditor() {
+        if (contactReturnScreen == ChatScreen.CONTACT_PROFILE)
+            _uiState.update { it.copy(screen = ChatScreen.CONTACT_PROFILE) }
+        else beginManageContacts()
+    }
+
     fun messageContact(contactId: String) {
         val contact = _uiState.value.savedContacts.firstOrNull { it.id == contactId } ?: return
         val peerId = contact.linkedPeerId ?: ContactIdentity.localPeerId(
             contact.phoneHash, contact.email, contact.googleAccountEmail,
-        ) ?: return
-        if (contact.linkedPeerId == null && _uiState.value.onlineAccountId.isBlank()) {
+        ) ?: contact.cloudUserId.takeIf(String::isNotBlank)?.let { "account:$it" }
+        if (peerId == null && _uiState.value.onlineAccountId.isBlank()) {
             _uiState.update { it.copy(notice = "Sign in with Email or Google, or pair by QR/Nearby, to message this contact.") }
             return
         }
         workScope.launch {
-            chatStore.savePeer(peerId, contact.name, contact.phoneHash)
+            val account = if (_uiState.value.onlineAccountId.isNotBlank() && cloudChatController != null)
+                runCatching { resolveAccount(cloudChatController, contact, peerId.orEmpty(), promptForChoice = true,
+                    openChatAfterChoice = true) }
+                    .onFailure { onCloudError(it.localizedMessage ?: "Could not check this contact online.") }.getOrNull()
+            else null
+            if (_uiState.value.accountCandidateContactId == contactId) return@launch
+            val conversationId = contact.linkedPeerId ?: peerId ?: account?.let { "account:${it.uid}" } ?: return@launch
+            chatStore.savePeer(conversationId, contact.name, contact.phoneHash)
             reloadConversationsNow()
-            openConversation(peerId)
-            if (_uiState.value.onlineAccountId.isNotBlank() && cloudChatController != null) {
-                runCatching { resolveAccount(cloudChatController, contact, peerId) }
-                    .onSuccess { if (it != null) syncCloudPendingNow() }
-                    .onFailure { onCloudError(it.localizedMessage ?: "Could not check this contact online.") }
-            }
+            openConversation(conversationId)
+            if (account != null) syncCloudPendingNow()
         }
     }
 
@@ -433,15 +536,37 @@ class ChatViewModel(
             val peerId = contact.linkedPeerId ?: ContactIdentity.localPeerId(
                 contact.phoneHash, contact.email, contact.googleAccountEmail,
             ).orEmpty()
-            runCatching { resolveAccount(controller, contact, peerId) }
+            runCatching { resolveAccount(controller, contact, peerId, promptForChoice = true) }
                 .onSuccess { account ->
                     if (account != null) {
-                        showNotice("Found an online account for ${contact.name}. Confirm phone-only matches by QR or Nearby.")
+                        showNotice(if (contact.username.isNotBlank())
+                            "Linked @${account.username} to ${contact.name}." else
+                            "Found ${contact.name} online. Confirm phone-only matches by QR or Nearby.")
                         syncCloudPendingNow()
                     }
                 }
                 .onFailure { onCloudError(it.localizedMessage ?: "Could not check this contact online.") }
         }
+    }
+
+    fun selectOnlineAccount(uid: String) {
+        val state = _uiState.value
+        val contact = state.savedContacts.firstOrNull { it.id == state.accountCandidateContactId } ?: return
+        val account = state.accountCandidates.firstOrNull { it.uid == uid } ?: return
+        val openChat = state.openChatAfterAccountChoice
+        _uiState.update { it.copy(accountCandidates = emptyList(), accountCandidateContactId = null,
+            openChatAfterAccountChoice = false) }
+        workScope.launch {
+            linkOnlineAccount(contact, account)
+            showNotice("Linked @${account.username} to ${contact.name}. Phone matches are not verified; confirm the username with them.")
+            if (openChat) messageContact(contact.id)
+            syncCloudPendingNow()
+        }
+    }
+
+    fun cancelAccountSelection() {
+        _uiState.update { it.copy(accountCandidates = emptyList(), accountCandidateContactId = null,
+            openChatAfterAccountChoice = false) }
     }
 
     fun updateContactDraft(profile: ContactProfile) {
@@ -451,6 +576,7 @@ class ChatViewModel(
                 contactPhoneDraft = profile.phoneNumber.take(MAX_PHONE_LENGTH),
                 contactEmailDraft = profile.email.take(MAX_EMAIL_LENGTH),
                 contactGoogleEmailDraft = profile.googleAccountEmail.take(MAX_EMAIL_LENGTH),
+                contactUsernameDraft = profile.username.trim().removePrefix("@").take(20),
                 contactBioDraft = profile.bio.take(MAX_BIO_LENGTH),
                 contactWebsiteDraft = profile.websiteUrl.take(MAX_URL_LENGTH),
                 contactInstagramDraft = profile.instagramUrl.take(MAX_URL_LENGTH),
@@ -493,43 +619,57 @@ class ChatViewModel(
             ContactIdentity.normalizeEmail(state.contactEmailDraft)
         val googleEmail = if (state.contactGoogleEmailDraft.isBlank()) "" else
             ContactIdentity.normalizeEmail(state.contactGoogleEmailDraft)
+        val username = state.contactUsernameDraft.trim().removePrefix("@").lowercase()
         if (name.isBlank() || normalizedPhone == null || email == null || googleEmail == null ||
-            (normalizedPhone.isBlank() && email.isBlank() && googleEmail.isBlank() && scannedPeerId == null)
+            (username.isNotBlank() && !username.matches(Regex("[a-z0-9_]{3,20}"))) ||
+            (normalizedPhone.isBlank() && email.isBlank() && googleEmail.isBlank() && username.isBlank() && scannedPeerId == null)
         ) {
-            _uiState.update { it.copy(error = "Enter a name and at least one valid phone or email address.") }
+            _uiState.update { it.copy(error = "Enter a name and a valid username, phone, or email.") }
             return
         }
         val phoneHash = PhoneIdentity.hash(normalizedPhone).orEmpty()
         workScope.launch {
-            val linkedPeerId = scannedPeerId?.takeIf {
-                (phoneHash.isNotBlank() && scannedPhoneHash == phoneHash) ||
+            val chatAccountUid = scannedPeerId?.takeIf { it.startsWith("account:") }
+                ?.removePrefix("account:").orEmpty()
+            val linkedPeerId = scannedPeerId?.takeUnless { it.startsWith("account:") }?.takeIf {
+                pairedFromOpenChat ||
+                    (phoneHash.isNotBlank() && scannedPhoneHash == phoneHash) ||
                     (scannedEmail != null && (scannedEmail == email || scannedEmail == googleEmail)) ||
+                    (username.isNotBlank() && state.contactSourceDraft == ContactSource.QR) ||
                     (phoneHash.isBlank() && email.isBlank() && googleEmail.isBlank())
-            } ?: chatStore.getKnownContacts()
-                .firstOrNull { phoneHash.isNotBlank() && it.phoneHash == phoneHash }
-                ?.peerId
+            } ?: if (username.isBlank()) chatStore.getKnownContacts()
+                .firstOrNull { phoneHash.isNotBlank() && it.phoneHash == phoneHash }?.peerId else null
             val existing = state.selectedContactId?.let { id ->
                 state.savedContacts.firstOrNull { it.id == id }
-            }
+            } ?: state.savedContacts.firstOrNull { username.isNotBlank() && it.username == username }
             val retainedPeerId = existing?.linkedPeerId?.takeIf {
-                (phoneHash.isNotBlank() && existing.phoneHash == phoneHash) ||
-                    (email.isNotBlank() && existing.email == email) ||
-                    (googleEmail.isNotBlank() && existing.googleAccountEmail == googleEmail)
+                existing.username == username &&
+                    ((phoneHash.isNotBlank() && existing.phoneHash == phoneHash) ||
+                        (email.isNotBlank() && existing.email == email) ||
+                        (googleEmail.isNotBlank() && existing.googleAccountEmail == googleEmail) ||
+                        username.isNotBlank())
             }
+            val sameAccount = existing != null &&
+                (existing.username.isBlank() || existing.username == username) &&
+                ((username.isNotBlank() && existing.username == username) ||
+                    (phoneHash.isNotBlank() && existing.phoneHash == phoneHash) ||
+                    (email.isNotBlank() && existing.email == email) ||
+                    (googleEmail.isNotBlank() && existing.googleAccountEmail == googleEmail))
+            val cloudUserId = chatAccountUid.ifBlank {
+                existing?.cloudUserId?.takeIf { sameAccount }.orEmpty()
+            }
+            val savedId = existing?.id ?: UUID.randomUUID().toString()
             chatStore.saveContact(
                 SavedContact(
-                    id = existing?.id ?: UUID.randomUUID().toString(),
+                    id = savedId,
                     name = name,
                     phoneNumber = normalizedPhone,
                     phoneHash = phoneHash,
-                    linkedPeerId = retainedPeerId ?: linkedPeerId,
+                    linkedPeerId = linkedPeerId ?: retainedPeerId,
                     email = email,
                     googleAccountEmail = googleEmail,
-                    cloudUserId = existing?.cloudUserId.orEmpty().takeIf {
-                        (phoneHash.isNotBlank() && existing?.phoneHash == phoneHash) ||
-                            (email.isNotBlank() && existing?.email == email) ||
-                            (googleEmail.isNotBlank() && existing?.googleAccountEmail == googleEmail)
-                    }.orEmpty(),
+                    cloudUserId = cloudUserId,
+                    username = username,
                     bio = state.contactBioDraft.trim(),
                     websiteUrl = ProfileUrl.normalize(state.contactWebsiteDraft),
                     instagramUrl = ProfileUrl.normalize(state.contactInstagramDraft),
@@ -541,7 +681,7 @@ class ChatViewModel(
             )
             reloadSavedContactsNow()
             val syntheticPeerId = ContactIdentity.localPeerId(phoneHash, email, googleEmail)
-            val actualPeerId = retainedPeerId ?: linkedPeerId
+            val actualPeerId = linkedPeerId ?: retainedPeerId
             if (actualPeerId != null && syntheticPeerId != null) {
                 chatStore.moveConversation(syntheticPeerId, actualPeerId)
             }
@@ -549,10 +689,12 @@ class ChatViewModel(
             reloadConversationsNow()
             _uiState.update {
                 it.copy(
-                    screen = ChatScreen.MANAGING_CONTACTS,
-                    selectedContactId = null,
+                    screen = contactReturnScreen,
+                    selectedContactId = if (contactReturnScreen == ChatScreen.CONTACT_PROFILE)
+                        savedId else null,
                     contactNameDraft = "",
                     contactPhoneDraft = "",
+                    contactUsernameDraft = "",
                 )
             }
         }
@@ -564,7 +706,8 @@ class ChatViewModel(
             chatStore.deleteContact(contactId)
             reloadSavedContactsNow()
             _uiState.update {
-                it.copy(screen = ChatScreen.MANAGING_CONTACTS, selectedContactId = null)
+                it.copy(screen = if (contactReturnScreen == ChatScreen.CONTACT_PROFILE)
+                    ChatScreen.CONVERSATION else ChatScreen.MANAGING_CONTACTS, selectedContactId = null)
             }
         }
     }
@@ -744,6 +887,7 @@ class ChatViewModel(
             discoverableByPhone = draft.discoverableByPhone && lookupPhone.isNotBlank(),
         )
         identityStore.saveProfile(saved)
+        syncPrivateProfile(saved, identityStore.profileUpdatedAt())
         _uiState.update { it.copy(
             profileLookupPhoneNumber = saved.lookupPhoneNumber,
             profileDiscoverableByPhone = saved.discoverableByPhone,
@@ -822,6 +966,7 @@ class ChatViewModel(
             githubUrl = ProfileUrl.normalize(profile.githubUrl),
         )
         identityStore.saveProfile(saved)
+        syncPrivateProfile(saved, identityStore.profileUpdatedAt())
         localPhoneHash = PhoneIdentity.hash(normalizedPhone).orEmpty()
         applyProfile(saved)
         if (wasActive) {
@@ -923,7 +1068,8 @@ class ChatViewModel(
             ChatScreen.SETTINGS,
             -> showConversationList()
 
-            ChatScreen.EDITING_CONTACT -> beginManageContacts()
+            ChatScreen.CONTACT_PROFILE -> closeCurrentChatProfile()
+            ChatScreen.EDITING_CONTACT -> closeContactEditor()
             ChatScreen.EDITING_PROFILE -> cancelProfileEdit()
             ChatScreen.DISCOVERY_SETTINGS -> cancelDiscoveryEdit()
             ChatScreen.GROUP_SETTINGS -> {
@@ -939,11 +1085,62 @@ class ChatViewModel(
         }
     }
 
-    fun sendMessage(text: String) {
+    fun sendMessage(text: String) = sendContent(ChatContent.Text(text.trim().take(MAX_MESSAGE_LENGTH)))
+
+    fun sendReply(targetId: String, text: String) {
+        if (text.isBlank()) return
+        val target = ChatTimeline.present(_uiState.value.messages).firstOrNull {
+            it.message.id == targetId && !it.deleted
+        } ?: return
+        val excerpt = when (val content = target.content) {
+            is ChatContent.Text -> content.body
+            is ChatContent.Reply -> content.body
+            is ChatContent.Poll -> content.question
+            else -> return
+        }.take(80)
+        sendContent(ChatContent.Reply(text.trim().take(500), targetId, excerpt))
+    }
+
+    fun createPoll(question: String, options: List<String>) {
+        val clean = options.map(String::trim).filter(String::isNotBlank)
+        if (question.isBlank() || clean.size !in 2..4 || clean.distinct().size != clean.size) {
+            showError("Enter a question and two to four different options.")
+            return
+        }
+        sendContent(ChatContent.Poll(question.trim().take(180), clean.map { it.take(80) }))
+    }
+
+    fun voteInPoll(pollId: String, option: Int) {
+        val poll = ChatTimeline.present(_uiState.value.messages).firstOrNull { it.message.id == pollId }
+        val choices = (poll?.content as? ChatContent.Poll)?.options ?: return
+        if (poll.deleted || option !in choices.indices) return
+        sendContent(ChatContent.Vote(pollId, option))
+    }
+
+    fun editMessage(messageId: String, text: String) {
+        if (text.isBlank()) return
+        val original = ChatTimeline.present(_uiState.value.messages).firstOrNull { it.message.id == messageId }
+            ?: return
+        if (original.message.author != MessageAuthor.ME || original.deleted ||
+            (original.content !is ChatContent.Text && original.content !is ChatContent.Reply)) return
+        sendContent(ChatContent.Edit(messageId, text.trim().take(500)))
+    }
+
+    fun deleteMessage(messageId: String) {
+        val original = ChatTimeline.present(_uiState.value.messages).firstOrNull { it.message.id == messageId }
+            ?: return
+        if (original.message.author != MessageAuthor.ME || original.deleted) return
+        sendContent(ChatContent.Delete(messageId))
+    }
+
+    private fun sendContent(content: ChatContent) {
         val peerId = _uiState.value.selectedPeerId ?: return
         val conversation = _uiState.value.conversations.firstOrNull { it.peerId == peerId } ?: return
-        val cleanText = text.trim().take(MAX_MESSAGE_LENGTH)
-        if (cleanText.isBlank()) return
+        val cleanText = ChatFeatures.encode(content)
+        if (cleanText.isBlank() || cleanText.length > MAX_MESSAGE_LENGTH) {
+            if (cleanText.length > MAX_MESSAGE_LENGTH) showError("This message is too long.")
+            return
+        }
 
         val message = ChatMessage(
             id = UUID.randomUUID().toString(),
@@ -959,7 +1156,8 @@ class ChatViewModel(
         )
         _uiState.update { state ->
             state.copy(
-                messageDrafts = state.messageDrafts - peerId,
+                messageDrafts = if (content is ChatContent.Text || content is ChatContent.Reply)
+                    state.messageDrafts - peerId else state.messageDrafts,
                 messages = state.messages + message,
                 conversations = updateConversationPreview(state.conversations, message),
             )
@@ -1135,6 +1333,7 @@ class ChatViewModel(
                 if (_uiState.value.selectedPeerId == message.conversationId) {
                     reloadMessagesNow(message.conversationId)
                 }
+                notifyIncoming(savedMessage)
             }
             nearbyChatController.acknowledgeMessage(
                 message.conversationId,
@@ -1227,6 +1426,7 @@ class ChatViewModel(
                 reloadSavedContactsNow()
                 reloadConversationsNow()
                 if (_uiState.value.selectedPeerId == peerId) reloadMessagesNow(peerId)
+                notifyIncoming(message.toLocalMessage(peerId, _uiState.value.onlineAccountId))
             }
         }
     }
@@ -1263,6 +1463,7 @@ class ChatViewModel(
             if (inserted) {
                 reloadConversationsNow()
                 if (_uiState.value.selectedPeerId == groupId) reloadMessagesNow(groupId)
+                notifyIncoming(message.toLocalMessage(groupId, _uiState.value.onlineAccountId))
             }
         }
     }
@@ -1284,6 +1485,19 @@ class ChatViewModel(
             senderAccountId = senderUid,
             cloudSynced = true,
         )
+
+    private fun notifyIncoming(message: ChatMessage) {
+        val state = _uiState.value
+        val conversation = state.conversations.firstOrNull { it.peerId == message.peerId }
+        chatNotifier.incoming(
+            message,
+            conversation?.name ?: message.senderName.ifBlank { "New chat" },
+            conversation?.type ?: if (message.peerId == MeshGroup.ID) ConversationType.OPEN_MESH
+                else if (chatStore.getGroups().any { it.id == message.peerId }) ConversationType.PRIVATE_GROUP
+                else ConversationType.DIRECT,
+            state.screen == ChatScreen.CONVERSATION && state.selectedPeerId == message.peerId,
+        )
+    }
 
     private fun movePhoneConversationToPeer(phoneHash: String, peerId: String) {
         val oldId = "phone:$phoneHash"
@@ -1318,11 +1532,13 @@ class ChatViewModel(
             else {
                 val contact = contacts.firstOrNull {
                     it.linkedPeerId == member.peerId ||
+                        (it.cloudUserId.isNotBlank() && "account:${it.cloudUserId}" == member.peerId) ||
+                        "contact:${it.id}" == member.peerId ||
                         ContactIdentity.localPeerId(it.phoneHash, it.email, it.googleAccountEmail) == member.peerId ||
                         (member.phoneHash.isNotBlank() && it.phoneHash == member.phoneHash)
                 }
                 val account = resolveAccount(controller, contact, member.peerId) ?: return false
-                CloudGroupMember(account.uid, member.peerId, member.name)
+                CloudGroupMember(account.uid, account.peerId.ifBlank { "account:${account.uid}" }, member.name)
             }
         }
         return runCatching {
@@ -1353,6 +1569,7 @@ class ChatViewModel(
             } else if (message.peerId != MeshGroup.ID) {
                 val contact = chatStore.getSavedContacts().firstOrNull {
                     it.linkedPeerId == message.peerId ||
+                        (it.cloudUserId.isNotBlank() && "account:${it.cloudUserId}" == message.peerId) ||
                         ContactIdentity.localPeerId(it.phoneHash, it.email, it.googleAccountEmail) == message.peerId
                 }
                 val account = resolveAccount(controller, contact, message.peerId) ?: return
@@ -1371,12 +1588,38 @@ class ChatViewModel(
         controller: CloudChatController,
         contact: SavedContact?,
         peerId: String,
+        promptForChoice: Boolean = false,
+        openChatAfterChoice: Boolean = false,
     ): CloudAccount? {
         if (!contact?.cloudUserId.isNullOrBlank()) {
-            controller.getAccount(contact.cloudUserId)?.let { return it }
+            controller.getAccount(contact.cloudUserId)?.takeIf {
+                contact.username.isBlank() || it.username == contact.username
+            }?.let { account ->
+                linkOnlineAccount(contact, account)
+                return account
+            }
+        }
+        if (contact == null && peerId.startsWith("account:")) {
+            return controller.getAccount(peerId.removePrefix("account:"))
+        }
+        if (contact == null) {
+            val senderUid = chatStore.getMessages(peerId).firstOrNull {
+                it.author == MessageAuthor.PEER && it.senderAccountId.isNotBlank()
+            }?.senderAccountId
+            if (senderUid != null) controller.getAccount(senderUid)?.let { return it }
+        }
+        if (!contact?.username.isNullOrBlank()) {
+            val account = controller.findAccounts(username = contact.username).singleOrNull()
+            if (account != null) {
+                linkOnlineAccount(contact, account)
+                return account
+            }
+            onCloudError("No account found for @${contact.username}. Check the username on their profile card.")
+            return null
         }
         val pairedPeerId = contact?.linkedPeerId ?: peerId.takeUnless {
-            it.startsWith("phone:") || it.startsWith("email:") || it.startsWith("account:")
+            it.startsWith("phone:") || it.startsWith("email:") || it.startsWith("account:") ||
+                it.startsWith("contact:")
         }
         val lookups = listOfNotNull(
             pairedPeerId?.takeIf(String::isNotBlank)?.let { "peer" to it },
@@ -1393,7 +1636,10 @@ class ChatViewModel(
                 else -> controller.findAccounts(phoneNumber = value)
             }
             if (candidates.size > 1) {
-                onCloudError("Several accounts match this contact. Use a QR card to choose the right person.")
+                if (promptForChoice && contact != null) {
+                    _uiState.update { it.copy(accountCandidates = candidates.sortedBy(CloudAccount::username),
+                        accountCandidateContactId = contact.id, openChatAfterAccountChoice = openChatAfterChoice) }
+                } else onCloudError("Several accounts match this contact. Choose a username in Contacts > Find online.")
                 return null
             }
             if (candidates.size == 1) {
@@ -1403,18 +1649,22 @@ class ChatViewModel(
             }
         }
         if (account == null) {
-            onCloudError("No online account matched. Check the full country code and number, then ask them to save Find me > phone lookup. A QR card can pair you directly.")
+            onCloudError("No online account matched. Ask for their @username or QR card, or check that phone lookup is enabled.")
             return null
         }
-        if (contact != null && contact.cloudUserId != account.uid) {
-            chatStore.saveContact(contact.copy(cloudUserId = account.uid))
-            reloadSavedContactsNow()
-            reloadConversationsNow()
-        }
+        if (contact != null) linkOnlineAccount(contact, account)
         if (matchedByPhone) {
             onCloudError("This number match is not verified. Confirm the person with their QR card.")
         }
         return account
+    }
+
+    private fun linkOnlineAccount(contact: SavedContact, account: CloudAccount) {
+        if (contact.cloudUserId == account.uid && contact.username == account.username) return
+        chatStore.saveContact(contact.copy(cloudUserId = account.uid,
+            username = account.username.ifBlank { contact.username }))
+        reloadSavedContactsNow()
+        reloadConversationsNow()
     }
 
     override fun onCleared() {
@@ -1461,15 +1711,20 @@ class ChatViewModel(
 
     private fun reloadConversationsNow() {
         val contacts = chatStore.getSavedContacts()
-        val contactNames = contacts.filter { it.linkedPeerId != null }
-            .associate { it.linkedPeerId to it.name }
+        val contactNames = contacts.mapNotNull { contact ->
+            val id = contact.linkedPeerId ?: ContactIdentity.localPeerId(contact.phoneHash, contact.email,
+                contact.googleAccountEmail) ?: contact.cloudUserId.takeIf(String::isNotBlank)
+                ?.let { "account:$it" }
+            id?.let { it to contact.name }
+        }.toMap()
         val onlinePeerIds = contacts.filter { it.cloudUserId.isNotBlank() }.mapNotNull { contact ->
             contact.linkedPeerId ?: ContactIdentity.localPeerId(
                 contact.phoneHash, contact.email, contact.googleAccountEmail,
-            )
+            ) ?: "account:${contact.cloudUserId}"
         }.toSet()
         val conversations = chatStore.getConversations().map { conversation ->
             conversation.copy(
+                lastMessage = ChatFeatures.preview(conversation.lastMessage),
                 name = if (conversation.type == ConversationType.DIRECT) {
                     contactNames[conversation.peerId] ?: conversation.name
                 } else conversation.name,
@@ -1504,7 +1759,7 @@ class ChatViewModel(
     ): List<ConversationSummary> {
         val oldConversation = conversations.firstOrNull { it.peerId == message.peerId } ?: return conversations
         val updated = oldConversation.copy(
-            lastMessage = message.text,
+            lastMessage = ChatFeatures.preview(message.text),
             lastMessageAt = message.sentAt,
         )
         return conversations.filterNot { it.peerId == message.peerId }.plus(updated)
@@ -1554,13 +1809,15 @@ class ChatViewModel(
             val contactKey = contact.phoneHash.ifBlank { "contact:${contact.id}" }
             contactsByHash[contactKey] = GroupContact(
                 peerId = linkedPeerId ?: if (contact.phoneHash.isNotBlank()) "phone:${contact.phoneHash}"
-                    else "contact:${contact.id}",
+                    else contact.cloudUserId.takeIf(String::isNotBlank)?.let { "account:$it" }
+                        ?: "contact:${contact.id}",
                 name = contact.name,
                 connected = linkedPeerId?.let(connectedPeers::containsKey) == true,
                 phoneNumber = contact.phoneNumber,
                 phoneHash = contact.phoneHash,
                 email = contact.email.ifBlank { contact.googleAccountEmail },
                 availableOnMesh = linkedPeerId != null,
+                username = contact.username,
             )
         }
         val contacts = contactsByHash.values.map { contact ->
@@ -1572,6 +1829,7 @@ class ChatViewModel(
                 phoneHash = contact.phoneHash,
                 email = contact.email,
                 availableOnMesh = contact.availableOnMesh,
+                username = contact.username,
             )
         }.sortedBy { it.name.lowercase() }
         _uiState.update { state ->
@@ -1649,6 +1907,11 @@ class ChatViewModel(
                     eventRemoteRepository = FirebaseEventRemoteRepository(),
                     eventAdminKeyStore = LocalEventAdminKeyStore(appContext),
                     cloudChatController = FirebaseCloudChatController(),
+                    privateProfileStore = FirebasePrivateProfileStore(),
+                    chatNotifier = AndroidChatNotifier(
+                        appContext,
+                        ChatNotificationSettingsStore(appContext, scope),
+                    ),
                     initialAccountId = accountId,
                 ) as T
             }

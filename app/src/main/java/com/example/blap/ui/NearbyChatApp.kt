@@ -2,11 +2,17 @@ package com.example.blap.ui
 
 import android.graphics.Bitmap
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -17,7 +23,6 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.ime
@@ -43,6 +48,8 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -53,12 +60,14 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -69,6 +78,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.res.painterResource
 import com.example.blap.R
 import androidx.compose.ui.text.font.FontWeight
@@ -80,6 +91,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.blap.chat.ChatScreen
 import com.example.blap.chat.ChatMessage
+import com.example.blap.chat.ChatNotificationSettings
+import com.example.blap.chat.ChatContent
+import com.example.blap.chat.ChatTimeline
+import com.example.blap.chat.PresentedMessage
 import com.example.blap.chat.ChatUiState
 import com.example.blap.chat.ContactCardCodec
 import com.example.blap.chat.ContactProfile
@@ -102,6 +117,7 @@ import com.google.zxing.qrcode.QRCodeWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun NearbyChatApp(
@@ -127,6 +143,14 @@ fun NearbyChatApp(
     onOpenConversation: (String) -> Unit,
     onBackToChats: () -> Unit,
     onSendMessage: (String) -> Unit,
+    onSendReply: (String, String) -> Unit,
+    onCreatePoll: (String, List<String>) -> Unit,
+    onVoteInPoll: (String, Int) -> Unit,
+    onEditMessage: (String, String) -> Unit,
+    onDeleteMessage: (String) -> Unit,
+    onOpenChatContactProfile: () -> Unit,
+    onCloseChatContactProfile: () -> Unit,
+    onSaveCurrentChatContact: () -> Unit,
     onMessageDraftChanged: (String) -> Unit,
     onDisconnect: (String) -> Unit,
     onBeginCreateGroup: () -> Unit,
@@ -136,8 +160,11 @@ fun NearbyChatApp(
     onManageContacts: () -> Unit,
     onBeginAddContact: () -> Unit,
     onOpenContact: (String) -> Unit,
+    onCloseContactEditor: () -> Unit,
     onMessageContact: (String) -> Unit,
     onCheckContactOnline: (String) -> Unit,
+    onSelectOnlineAccount: (String) -> Unit,
+    onCancelAccountSelection: () -> Unit,
     onContactDraftChanged: (ContactProfile) -> Unit,
     onDeleteContact: () -> Unit,
     onScanContact: () -> Unit,
@@ -149,6 +176,10 @@ fun NearbyChatApp(
     onSaveProfile: () -> Unit,
     onCancelProfile: () -> Unit,
     onShowSettingsScreen: () -> Unit,
+    notificationSettings: ChatNotificationSettings,
+    notificationPermissionGranted: Boolean,
+    onNotificationSettingsChanged: (ChatNotificationSettings) -> Unit,
+    onRequestNotificationPermission: () -> Unit,
     onShowDiscoverySettings: () -> Unit,
     onDiscoveryPhoneChanged: (String) -> Unit,
     onDiscoveryEnabledChanged: (Boolean) -> Unit,
@@ -260,11 +291,16 @@ fun NearbyChatApp(
                     .fillMaxSize()
                     .padding(padding)
                     .consumeWindowInsets(padding)
-                    .imePadding()
                     .padding(horizontal = 18.dp),
             ) {
                 if (uiState.screen in TOP_LEVEL_SCREENS) Header(uiState)
-                when (uiState.screen) {
+                Crossfade(
+                    targetState = uiState.screen,
+                    animationSpec = tween(180),
+                    modifier = Modifier.weight(1f),
+                    label = "Screen transition",
+                ) { screen ->
+                when (screen) {
                     ChatScreen.WELCOME -> WelcomeScreen(
                         authAccount = authAccount,
                         onCreateEmailAccount = onCreateEmailAccount,
@@ -314,6 +350,12 @@ fun NearbyChatApp(
                                 messages = uiState.messages,
                                 directConnectionCount = uiState.directConnectionCount,
                                 onSend = onSendMessage,
+                                onReply = onSendReply,
+                                onCreatePoll = onCreatePoll,
+                                onVote = onVoteInPoll,
+                                onEdit = onEditMessage,
+                                onDelete = onDeleteMessage,
+                                onOpenContactProfile = onOpenChatContactProfile,
                                 draft = uiState.messageDrafts[conversation.peerId].orEmpty(),
                                 onDraftChanged = onMessageDraftChanged,
                                 onBack = onBackToChats,
@@ -353,7 +395,15 @@ fun NearbyChatApp(
                         onChanged = onContactDraftChanged,
                         onSave = onSaveContact,
                         onDelete = onDeleteContact,
-                        onBack = onManageContacts,
+                        onBack = onCloseContactEditor,
+                    )
+
+                    ChatScreen.CONTACT_PROFILE -> ChatContactProfileScreen(
+                        conversation = uiState.conversations.firstOrNull { it.peerId == uiState.selectedPeerId },
+                        contact = uiState.savedContacts.firstOrNull { it.id == uiState.selectedContactId },
+                        onEdit = { uiState.selectedContactId?.let(onOpenContact) },
+                        onSaveContact = onSaveCurrentChatContact,
+                        onBack = onCloseChatContactProfile,
                     )
 
                     ChatScreen.SHOWING_MY_CARD -> MyCardScreen(
@@ -387,6 +437,10 @@ fun NearbyChatApp(
                         venueStatus = uiState.venueStatus,
                         checkingVenue = uiState.checkingVenue,
                         onCheckVenue = onCheckVenue,
+                        notificationSettings = notificationSettings,
+                        notificationPermissionGranted = notificationPermissionGranted,
+                        onNotificationSettingsChanged = onNotificationSettingsChanged,
+                        onRequestNotificationPermission = onRequestNotificationPermission,
                     )
 
                     ChatScreen.DISCOVERY_SETTINGS -> DiscoverySettingsScreen(
@@ -455,7 +509,26 @@ fun NearbyChatApp(
 
                     ChatScreen.ERROR -> ErrorScreen(onStartChat)
                 }
+                }
             }
+        }
+        if (uiState.accountCandidates.isNotEmpty()) {
+            AlertDialog(
+                onDismissRequest = onCancelAccountSelection,
+                title = { Text("Choose the right account") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("These accounts match the contact details. Check the username before linking.")
+                        uiState.accountCandidates.forEach { account ->
+                            OutlinedButton(
+                                onClick = { onSelectOnlineAccount(account.uid) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("${account.name}  @${account.username.ifBlank { "unknown" }}") }
+                        }
+                    }
+                },
+                confirmButton = { TextButton(onClick = onCancelAccountSelection) { Text("Cancel") } },
+            )
         }
     }
 }
@@ -490,6 +563,7 @@ private fun ChatUiState.contactDraftProfile() = ContactProfile(
     phoneNumber = contactPhoneDraft,
     email = contactEmailDraft,
     googleAccountEmail = contactGoogleEmailDraft,
+    username = contactUsernameDraft,
     bio = contactBioDraft,
     websiteUrl = contactWebsiteDraft,
     instagramUrl = contactInstagramDraft,
@@ -803,6 +877,7 @@ private fun ConversationList(
     showAccountPrompt: Boolean,
     onOpenAccount: () -> Unit,
 ) {
+    var newChatMenuExpanded by remember { mutableStateOf(false) }
     val filteredConversations = conversations.filter {
         search.isBlank() || it.name.contains(search, ignoreCase = true) ||
             it.lastMessage.contains(search, ignoreCase = true)
@@ -830,9 +905,20 @@ private fun ConversationList(
             }
         }
         item {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(onClick = onManageContacts) { Text("New message") }
-                TextButton(onClick = onBeginCreateGroup) { Text("New group") }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Box {
+                    TextButton(onClick = { newChatMenuExpanded = true }) { Text("+ New chat") }
+                    DropdownMenu(expanded = newChatMenuExpanded, onDismissRequest = { newChatMenuExpanded = false }) {
+                        DropdownMenuItem(text = { Text("Message a contact") }, onClick = {
+                            newChatMenuExpanded = false
+                            onManageContacts()
+                        })
+                        DropdownMenuItem(text = { Text("Create private group") }, onClick = {
+                            newChatMenuExpanded = false
+                            onBeginCreateGroup()
+                        })
+                    }
+                }
             }
             OutlinedTextField(
                 value = search,
@@ -860,7 +946,8 @@ private fun ConversationList(
                 Text("Nearby", style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(top = 20.dp, bottom = 4.dp))
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-                    modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp)) {
+                    modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(16.dp),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
                     Column(Modifier.padding(16.dp)) {
                         Text(when {
                             !nearbyActive -> "Connect without internet"
@@ -909,6 +996,7 @@ private fun ConversationCard(conversation: ConversationSummary, onClick: () -> U
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Avatar(conversation.name, conversation.connected)
@@ -954,6 +1042,7 @@ private fun DeviceCard(device: NearbyDevice, onClick: () -> Unit) {
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Row(
             Modifier.padding(15.dp),
@@ -1117,6 +1206,7 @@ private fun CreateGroupScreen(
                                     when {
                                         contact.connected -> "Connected now"
                                         contact.availableOnMesh -> "Recognized on the mesh"
+                                        contact.username.isNotBlank() -> "Online address: @${contact.username}"
                                         contact.phoneNumber.isNotBlank() -> "Will match by phone number when they join"
                                         else -> "Saved by email. Pair nearby for mesh chat"
                                     },
@@ -1175,6 +1265,7 @@ private fun ContactsScreen(
             contact.phoneNumber,
             contact.email,
             contact.googleAccountEmail,
+            contact.username,
             contact.instagramUrl,
             contact.linkedinUrl,
         ).any { it.contains(search, ignoreCase = true) }
@@ -1246,14 +1337,21 @@ private fun ContactsScreen(
                                     .weight(1f),
                             ) {
                                 Text(contact.name, style = MaterialTheme.typography.titleMedium)
+                                if (contact.username.isNotBlank()) {
+                                    Text("@${contact.username}", color = MaterialTheme.colorScheme.primary)
+                                }
                                 Text(
-                                    contact.email.ifBlank { contact.googleAccountEmail.ifBlank { contact.phoneNumber } },
+                                    contact.email.ifBlank { contact.googleAccountEmail.ifBlank {
+                                        contact.phoneNumber.ifBlank { "BLAP contact" } } },
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                                 Text(
                                     when {
+                                        contact.cloudUserId.isNotBlank() && contact.username.isNotBlank() ->
+                                            "Online as @${contact.username}"
                                         contact.cloudUserId.isNotBlank() -> "Online account found. Confirm a number match by QR."
                                         contact.linkedPeerId != null -> "Recognized on mesh"
+                                        onlineReady && contact.username.isNotBlank() -> "Can find @${contact.username} online"
                                         onlineReady && (contact.email.isNotBlank() || contact.googleAccountEmail.isNotBlank()) ->
                                             "Can look up a verified account email online"
                                         onlineReady && contact.phoneNumber.isNotBlank() ->
@@ -1267,7 +1365,8 @@ private fun ContactsScreen(
                             Column(horizontalAlignment = Alignment.End) {
                                 TextButton(onClick = { onMessage(contact.id) }) { Text("Message") }
                                 if (onlineReady && (contact.phoneNumber.isNotBlank() ||
-                                        contact.email.isNotBlank() || contact.googleAccountEmail.isNotBlank())) {
+                                        contact.email.isNotBlank() || contact.googleAccountEmail.isNotBlank() ||
+                                        contact.username.isNotBlank())) {
                                     TextButton(onClick = { onCheckOnline(contact.id) }) { Text("Find online") }
                                 }
                             }
@@ -1292,7 +1391,7 @@ private fun ContactEditorScreen(
     ProfileForm(
         title = if (isExisting) "Edit contact" else if (source == ContactSource.QR) "Review scanned card" else "New contact",
         subtitle = if (source == ContactSource.QR) {
-            "Check these details before saving the card to BLAP."
+            "Check the username before saving. It links this card to their online account."
         } else {
             "Add contact details and any social profiles you want to keep together."
         },
@@ -1363,6 +1462,11 @@ private fun ProfileForm(
             item {
                 ProfileTextField("Name", profile.displayName) {
                     onChanged(profile.copy(displayName = it))
+                }
+            }
+            if (isContact) item {
+                ProfileTextField("BLAP username", profile.username) {
+                    onChanged(profile.copy(username = it))
                 }
             }
             item {
@@ -1438,7 +1542,7 @@ private fun ProfileForm(
             onClick = onSave,
             enabled = profile.displayName.isNotBlank() &&
                 (!isContact || profile.phoneNumber.isNotBlank() || profile.email.isNotBlank() ||
-                    profile.googleAccountEmail.isNotBlank() || allowQrOnly),
+                    profile.googleAccountEmail.isNotBlank() || profile.username.isNotBlank() || allowQrOnly),
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp),
@@ -1866,6 +1970,10 @@ private fun SettingsScreen(
     venueStatus: String,
     checkingVenue: Boolean,
     onCheckVenue: () -> Unit,
+    notificationSettings: ChatNotificationSettings,
+    notificationPermissionGranted: Boolean,
+    onNotificationSettingsChanged: (ChatNotificationSettings) -> Unit,
+    onRequestNotificationPermission: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -1873,7 +1981,7 @@ private fun SettingsScreen(
         contentPadding = PaddingValues(bottom = 18.dp),
     ) {
         item {
-            Card(modifier = Modifier.fillMaxWidth()) {
+            Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(accountProfile.displayName, style = MaterialTheme.typography.titleLarge)
                     if (accountProfile.username.isNotBlank()) Text("@${accountProfile.username}")
@@ -1900,6 +2008,45 @@ private fun SettingsScreen(
                 action = if (nearbyActive) "Turn off" else "Turn on",
                 onClick = if (nearbyActive) onStopNearby else onStartNearby,
             )
+        }
+        item {
+            Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
+                Column(Modifier.animateContentSize().padding(16.dp)) {
+                    Text("Notifications", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "Choose which chat messages alert you on this phone.",
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    NotificationSettingRow("Allow chat alerts", notificationSettings.enabled) {
+                        onNotificationSettingsChanged(notificationSettings.copy(enabled = it))
+                    }
+                    AnimatedVisibility(notificationSettings.enabled) {
+                        Column {
+                        NotificationSettingRow("Direct messages", notificationSettings.direct) {
+                            onNotificationSettingsChanged(notificationSettings.copy(direct = it))
+                        }
+                        NotificationSettingRow("Private groups", notificationSettings.privateGroups) {
+                            onNotificationSettingsChanged(notificationSettings.copy(privateGroups = it))
+                        }
+                        NotificationSettingRow("Open mesh chat", notificationSettings.openMesh) {
+                            onNotificationSettingsChanged(notificationSettings.copy(openMesh = it))
+                        }
+                        NotificationSettingRow("Show message previews", notificationSettings.showPreview) {
+                            onNotificationSettingsChanged(notificationSettings.copy(showPreview = it))
+                        }
+                        if (!notificationPermissionGranted) {
+                            Text("Android notifications are off for this app.", color = MaterialTheme.colorScheme.error)
+                            TextButton(onClick = onRequestNotificationPermission) { Text("Allow in Android") }
+                        }
+                        }
+                    }
+                    Text(
+                        "Alerts appear while CommonGround is running. Messages received while it is closed appear when you open the app, without a background alert.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
         }
         item {
             Card(modifier = Modifier.fillMaxWidth(),
@@ -1964,6 +2111,65 @@ private fun SettingsScreen(
 }
 
 @Composable
+private fun NotificationSettingRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Text(label, modifier = Modifier.weight(1f))
+        Switch(checked = checked, onCheckedChange = onCheckedChange)
+    }
+}
+
+@Composable
+private fun ChatContactProfileScreen(
+    conversation: ConversationSummary?,
+    contact: SavedContact?,
+    onEdit: () -> Unit,
+    onSaveContact: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val uriHandler = LocalUriHandler.current
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+        TextButton(onClick = onBack) { Text("Back to chat") }
+        Text(contact?.name ?: conversation?.name.orEmpty(), style = MaterialTheme.typography.headlineSmall)
+        if (contact == null) {
+            Text("This person is not in your saved contacts yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Button(onClick = onSaveContact, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                Text("Save contact")
+            }
+            return@Column
+        }
+        Text(
+            when {
+                contact.cloudUserId.isNotBlank() -> "Online account linked"
+                contact.linkedPeerId != null -> "Paired nearby"
+                else -> "Saved on this phone"
+            }, color = MaterialTheme.colorScheme.primary,
+        )
+        listOf(
+            "BLAP username" to contact.username.takeIf(String::isNotBlank)?.let { "@$it" }.orEmpty(),
+            "Phone" to contact.phoneNumber,
+            "Email" to contact.email,
+            "Google account" to contact.googleAccountEmail,
+            "About" to contact.bio,
+        ).filter { it.second.isNotBlank() }.forEach { (label, value) ->
+            Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 16.dp))
+            Text(value)
+        }
+        listOf(
+            "Website" to contact.websiteUrl,
+            "Instagram" to contact.instagramUrl,
+            "X" to contact.xUrl,
+            "LinkedIn" to contact.linkedinUrl,
+            "GitHub" to contact.githubUrl,
+        ).filter { it.second.isNotBlank() }.forEach { (label, value) ->
+            TextButton(onClick = { runCatching { uriHandler.openUri(value) } }) { Text("Open $label") }
+        }
+        Button(onClick = onEdit, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+            Text("Edit saved contact")
+        }
+    }
+}
+
+@Composable
 private fun SettingsCard(
     title: String,
     detail: String,
@@ -1976,6 +2182,7 @@ private fun SettingsCard(
             .clickable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(18.dp),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
     ) {
         Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
@@ -1993,6 +2200,12 @@ private fun ChatScreen(
     messages: List<ChatMessage>,
     directConnectionCount: Int,
     onSend: (String) -> Unit,
+    onReply: (String, String) -> Unit,
+    onCreatePoll: (String, List<String>) -> Unit,
+    onVote: (String, Int) -> Unit,
+    onEdit: (String, String) -> Unit,
+    onDelete: (String) -> Unit,
+    onOpenContactProfile: () -> Unit,
     draft: String,
     onDraftChanged: (String) -> Unit,
     onBack: () -> Unit,
@@ -2000,6 +2213,13 @@ private fun ChatScreen(
     onOpenGroupSettings: () -> Unit,
 ) {
     val listState = rememberLazyListState()
+    val presented = remember(messages) { ChatTimeline.present(messages) }
+    var replyingTo by rememberSaveable(conversation.peerId) { mutableStateOf<String?>(null) }
+    var editingId by rememberSaveable(conversation.peerId) { mutableStateOf<String?>(null) }
+    var editingText by rememberSaveable(conversation.peerId) { mutableStateOf("") }
+    var deletingId by rememberSaveable(conversation.peerId) { mutableStateOf<String?>(null) }
+    var showPollDialog by rememberSaveable(conversation.peerId) { mutableStateOf(false) }
+    var moreExpanded by remember { mutableStateOf(false) }
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
     LaunchedEffect(conversation.peerId) {
@@ -2019,13 +2239,20 @@ private fun ChatScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             TextButton(onClick = onBack) { Text("Back") }
-            Avatar(conversation.name, conversation.connected)
+            Box(Modifier.clickable(enabled = conversation.type == ConversationType.DIRECT) {
+                onOpenContactProfile()
+            }) { Avatar(conversation.name, conversation.connected) }
             Column(
                 Modifier
                     .padding(start = 10.dp)
-                    .weight(1f),
+                    .weight(1f)
+                    .clickable(enabled = conversation.type == ConversationType.DIRECT) { onOpenContactProfile() },
             ) {
                 Text(conversation.name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (conversation.type == ConversationType.DIRECT) {
+                    Text("Tap to view profile", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.primary)
+                }
                 Text(
                     when {
                         conversation.type == ConversationType.OPEN_MESH && directConnectionCount > 0 ->
@@ -2042,10 +2269,28 @@ private fun ChatScreen(
                     color = if (conversation.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (conversation.connected && conversation.type == ConversationType.DIRECT) {
-                TextButton(onClick = onDisconnect) { Text("Disconnect") }
-            } else if (conversation.type == ConversationType.PRIVATE_GROUP) {
-                TextButton(onClick = onOpenGroupSettings) { Text("Group info") }
+            if (conversation.type != ConversationType.OPEN_MESH) Box {
+                TextButton(onClick = { moreExpanded = true }) { Text("More") }
+                DropdownMenu(expanded = moreExpanded, onDismissRequest = { moreExpanded = false }) {
+                    if (conversation.type == ConversationType.DIRECT) {
+                        DropdownMenuItem(text = { Text("Contact profile") }, onClick = {
+                            moreExpanded = false
+                            onOpenContactProfile()
+                        })
+                    }
+                    if (conversation.type == ConversationType.PRIVATE_GROUP) {
+                        DropdownMenuItem(text = { Text("Group settings") }, onClick = {
+                            moreExpanded = false
+                            onOpenGroupSettings()
+                        })
+                    }
+                    if (conversation.connected && conversation.type == ConversationType.DIRECT) {
+                        DropdownMenuItem(text = { Text("Disconnect nearby") }, onClick = {
+                            moreExpanded = false
+                            onDisconnect()
+                        })
+                    }
+                }
             }
         }
         HorizontalDivider()
@@ -2056,22 +2301,146 @@ private fun ChatScreen(
             verticalArrangement = Arrangement.spacedBy(10.dp),
             contentPadding = PaddingValues(vertical = 14.dp),
         ) {
-            if (messages.isEmpty()) {
+            if (presented.isEmpty()) {
                 item { Text("No messages yet", color = MaterialTheme.colorScheme.onSurfaceVariant) }
             } else {
-                items(messages.asReversed(), key = ChatMessage::id) { message ->
-                    MessageBubble(message, showSender = conversation.type != ConversationType.DIRECT)
+                items(presented.asReversed(), key = { it.message.id }) { item ->
+                    MessageBubble(
+                        item = item,
+                        showSender = conversation.type != ConversationType.DIRECT,
+                        onReply = { replyingTo = item.message.id; editingId = null },
+                        onEdit = {
+                            editingId = item.message.id
+                            editingText = when (val content = item.content) {
+                                is ChatContent.Text -> content.body
+                                is ChatContent.Reply -> content.body
+                                else -> ""
+                            }
+                            replyingTo = null
+                        },
+                        onDelete = { deletingId = item.message.id },
+                        onVote = { option -> onVote(item.message.id, option) },
+                    )
                 }
             }
         }
-        MessageComposer(text = draft, onTextChanged = onDraftChanged, onSend = onSend)
+        AnimatedVisibility(replyingTo != null || editingId != null) {
+            val target = presented.firstOrNull { it.message.id == (editingId ?: replyingTo) }
+            Row(
+                Modifier.fillMaxWidth()
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                    .padding(start = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    if (editingId != null) "Editing message" else "Replying to ${target?.message?.senderName.orEmpty()}",
+                    modifier = Modifier.weight(1f), color = MaterialTheme.colorScheme.primary,
+                )
+                TextButton(onClick = { replyingTo = null; editingId = null }) { Text("Cancel") }
+            }
+        }
+        Row(
+            Modifier.fillMaxWidth().padding(top = 8.dp)
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.surface, RoundedCornerShape(20.dp))
+                .padding(7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(onClick = { showPollDialog = true }) { Text("Poll") }
+            Box(Modifier.weight(1f)) {
+                MessageComposer(
+                    text = if (editingId != null) editingText else draft,
+                    onTextChanged = { if (editingId != null) editingText = it else onDraftChanged(it) },
+                    onSend = { text ->
+                        when {
+                            editingId != null -> onEdit(requireNotNull(editingId), text)
+                            replyingTo != null -> onReply(requireNotNull(replyingTo), text)
+                            else -> onSend(text)
+                        }
+                        replyingTo = null
+                        editingId = null
+                    },
+                    sendLabel = if (editingId != null) "Save" else "Send",
+                )
+            }
+        }
         Spacer(Modifier.height(8.dp))
     }
+    if (deletingId != null) DeleteConfirmationDialog(
+        title = "Delete this message?",
+        message = "It will disappear for people using the updated app when this change syncs.",
+        onConfirm = { onDelete(requireNotNull(deletingId)); deletingId = null },
+        onDismiss = { deletingId = null },
+    )
+    if (showPollDialog) PollComposerDialog(
+        onCreate = { question, options -> onCreatePoll(question, options); showPollDialog = false },
+        onDismiss = { showPollDialog = false },
+    )
+}
+
+@Composable
+private fun PollComposerDialog(onCreate: (String, List<String>) -> Unit, onDismiss: () -> Unit) {
+    var question by rememberSaveable { mutableStateOf("") }
+    var first by rememberSaveable { mutableStateOf("") }
+    var second by rememberSaveable { mutableStateOf("") }
+    var third by rememberSaveable { mutableStateOf("") }
+    var fourth by rememberSaveable { mutableStateOf("") }
+    val options = listOf(first, second, third, fourth).map(String::trim).filter(String::isNotBlank)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Create a poll") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                OutlinedTextField(question, { question = it.take(180) }, label = { Text("Question") })
+                OutlinedTextField(first, { first = it.take(80) }, label = { Text("Option 1") })
+                OutlinedTextField(second, { second = it.take(80) }, label = { Text("Option 2") })
+                OutlinedTextField(third, { third = it.take(80) }, label = { Text("Option 3 (optional)") })
+                OutlinedTextField(fourth, { fourth = it.take(80) }, label = { Text("Option 4 (optional)") })
+                Text("Tap an option in the chat to vote. You can change your vote.",
+                    style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onCreate(question.trim(), options) },
+                enabled = question.isNotBlank() && first.isNotBlank() && second.isNotBlank() &&
+                    options.size == options.distinct().size,
+            ) { Text("Create") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 @Composable
 internal fun MessageBubble(message: ChatMessage, showSender: Boolean) {
+    MessageBubble(
+        item = PresentedMessage(message, ChatContent.Text(message.text)),
+        showSender = showSender,
+        onReply = {},
+        onEdit = {},
+        onDelete = {},
+        onVote = {},
+        showActions = false,
+    )
+}
+
+@Composable
+internal fun MessageBubble(
+    item: PresentedMessage,
+    showSender: Boolean,
+    onReply: () -> Unit,
+    onEdit: () -> Unit,
+    onDelete: () -> Unit,
+    onVote: (Int) -> Unit,
+    showActions: Boolean = true,
+) {
+    val message = item.message
     val mine = message.author == MessageAuthor.ME
+    var menuExpanded by remember { mutableStateOf(false) }
+    var swipeOffset by remember(message.id) { mutableFloatStateOf(0f) }
+    val visibleSwipeOffset by animateFloatAsState(swipeOffset, label = "Reply swipe")
+    val replyThreshold = with(LocalDensity.current) { 68.dp.toPx() }
+    val swipeLimit = with(LocalDensity.current) { 88.dp.toPx() }
     Column(
         Modifier.fillMaxWidth(),
         horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
@@ -2084,11 +2453,40 @@ internal fun MessageBubble(message: ChatMessage, showSender: Boolean) {
                 color = MaterialTheme.colorScheme.primary,
             )
         }
-        Text(
-            message.text,
+        Box {
+            if (showActions && !item.deleted) {
+                Text(
+                    "↩",
+                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 12.dp),
+                    color = MaterialTheme.colorScheme.primary,
+                    style = MaterialTheme.typography.titleLarge,
+                )
+            }
+            Column(
             modifier = Modifier
                 .widthIn(max = 310.dp)
+                .offset { IntOffset(visibleSwipeOffset.roundToInt(), 0) }
+                .pointerInput(message.id, showActions, item.deleted) {
+                    if (showActions && !item.deleted) {
+                        detectHorizontalDragGestures(
+                            onHorizontalDrag = { change, amount ->
+                                swipeOffset = (swipeOffset + amount).coerceIn(0f, swipeLimit)
+                                change.consume()
+                            },
+                            onDragEnd = {
+                                if (swipeOffset >= replyThreshold) onReply()
+                                swipeOffset = 0f
+                            },
+                            onDragCancel = { swipeOffset = 0f },
+                        )
+                    }
+                }
                 .clip(RoundedCornerShape(17.dp))
+                .border(
+                    1.dp,
+                    if (mine) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outline,
+                    RoundedCornerShape(17.dp),
+                )
                 .background(
                     if (mine) {
                         MaterialTheme.colorScheme.tertiary
@@ -2096,13 +2494,41 @@ internal fun MessageBubble(message: ChatMessage, showSender: Boolean) {
                         MaterialTheme.colorScheme.surface
                     },
                 )
+                .clickable(enabled = showActions && !item.deleted) { menuExpanded = true }
                 .padding(horizontal = 14.dp, vertical = 10.dp),
-            color = if (mine) {
-                MaterialTheme.colorScheme.onTertiary
-            } else {
-                MaterialTheme.colorScheme.onSurface
-            },
-        )
+            ) {
+                val textColor = if (mine) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSurface
+                if (item.deleted) Text("Message deleted", color = textColor)
+                else when (val content = item.content) {
+                    is ChatContent.Text -> Text(content.body, color = textColor)
+                    is ChatContent.Reply -> {
+                        Text("Reply to: ${content.excerpt}", color = textColor,
+                            style = MaterialTheme.typography.labelMedium)
+                        Text(content.body, color = textColor)
+                    }
+                    is ChatContent.Poll -> {
+                        Text(content.question, color = textColor, style = MaterialTheme.typography.titleMedium)
+                        content.options.forEachIndexed { index, option ->
+                            TextButton(onClick = { onVote(index) }) {
+                                Text("${if (item.myVote == index) "✓ " else ""}$option · ${item.votes.getOrElse(index) { 0 }}")
+                            }
+                        }
+                    }
+                    else -> Unit
+                }
+                if (item.edited && !item.deleted) Text("Edited", color = textColor,
+                    style = MaterialTheme.typography.labelSmall)
+            }
+            DropdownMenu(expanded = showActions && menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                DropdownMenuItem(text = { Text("Reply") }, onClick = { menuExpanded = false; onReply() })
+                if (mine) {
+                    if (item.content is ChatContent.Text || item.content is ChatContent.Reply) {
+                        DropdownMenuItem(text = { Text("Edit") }, onClick = { menuExpanded = false; onEdit() })
+                    }
+                    DropdownMenuItem(text = { Text("Delete") }, onClick = { menuExpanded = false; onDelete() })
+                }
+            }
+        }
         val timestamp = formatTimestamp(message.sentAt)
         if (mine) {
             val status = when (message.status) {
@@ -2131,7 +2557,12 @@ private fun formatTimestamp(sentAt: Long): String =
     SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(sentAt))
 
 @Composable
-internal fun MessageComposer(text: String, onTextChanged: (String) -> Unit, onSend: (String) -> Unit) {
+internal fun MessageComposer(
+    text: String,
+    onTextChanged: (String) -> Unit,
+    onSend: (String) -> Unit,
+    sendLabel: String = "Send",
+) {
     val send = {
         if (text.isNotBlank()) {
             onSend(text)
@@ -2157,7 +2588,7 @@ internal fun MessageComposer(text: String, onTextChanged: (String) -> Unit, onSe
         )
         Spacer(Modifier.width(9.dp))
         Button(onClick = send, enabled = text.isNotBlank(), modifier = Modifier.height(52.dp)) {
-            Text("Send")
+            Text(sendLabel)
         }
     }
 }

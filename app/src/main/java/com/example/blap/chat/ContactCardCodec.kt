@@ -10,11 +10,12 @@ object ContactCardCodec {
     private const val PREFIX = "BLAP-CONTACT:1:"
     private const val PAIRED_PREFIX = "BLAP-CONTACT:2:"
     private const val MULTI_ADDRESS_PREFIX = "BLAP-CONTACT:3:"
+    private const val USERNAME_PREFIX = "BLAP-CONTACT:4:"
 
     data class Card(val profile: ContactProfile, val peerId: String = "")
 
     fun encode(profile: ContactProfile, peerId: String = ""): String =
-        MULTI_ADDRESS_PREFIX + listOf(
+        USERNAME_PREFIX + listOf(
         profile.displayName,
         profile.phoneNumber,
         profile.email,
@@ -26,20 +27,22 @@ object ContactCardCodec {
         profile.linkedinUrl,
         profile.githubUrl,
         peerId,
+        profile.username,
     )
             .joinToString("|") { URLEncoder.encode(it, StandardCharsets.UTF_8.name()) }
 
     fun decode(payload: String): ContactProfile? = decodeCard(payload)?.profile
 
     fun decodeCard(payload: String): Card? {
-        val multiAddress = payload.startsWith(MULTI_ADDRESS_PREFIX)
+        val withUsername = payload.startsWith(USERNAME_PREFIX)
+        val multiAddress = withUsername || payload.startsWith(MULTI_ADDRESS_PREFIX)
         val paired = payload.startsWith(PAIRED_PREFIX)
         if (!multiAddress && !paired && !payload.startsWith(PREFIX)) return null
         return runCatching {
             val fields = payload.removePrefix(
-                if (multiAddress) MULTI_ADDRESS_PREFIX else if (paired) PAIRED_PREFIX else PREFIX,
+                if (withUsername) USERNAME_PREFIX else if (multiAddress) MULTI_ADDRESS_PREFIX else if (paired) PAIRED_PREFIX else PREFIX,
             ).split('|')
-            if (fields.size != if (multiAddress) 11 else if (paired) 10 else 9) return null
+            if (fields.size != if (withUsername) 12 else if (multiAddress) 11 else if (paired) 10 else 9) return null
             val decoded = fields.map {
                 URLDecoder.decode(it, StandardCharsets.UTF_8.name())
             }
@@ -59,6 +62,7 @@ object ContactCardCodec {
                 xUrl = decoded[6 + offset].take(200),
                 linkedinUrl = decoded[7 + offset].take(200),
                 githubUrl = decoded[8 + offset].take(200),
+                username = if (withUsername) decoded[11].take(20) else "",
             ), peerId = peerId.take(100))
         }.getOrNull()
     }

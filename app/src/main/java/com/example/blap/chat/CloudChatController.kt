@@ -8,7 +8,7 @@ import java.security.MessageDigest
 import java.util.Locale
 import kotlinx.coroutines.tasks.await
 
-data class CloudAccount(val uid: String, val name: String, val peerId: String)
+data class CloudAccount(val uid: String, val name: String, val peerId: String, val username: String = "")
 
 internal object AccountLookup {
     fun phoneHash(profile: ContactProfile): String =
@@ -42,7 +42,7 @@ interface CloudChatController {
     fun stop()
     suspend fun publishAccount(profile: ContactProfile, peerId: String)
     suspend fun getAccount(uid: String): CloudAccount?
-    suspend fun findAccounts(phoneNumber: String = "", email: String = "", peerId: String = ""): List<CloudAccount>
+    suspend fun findAccounts(phoneNumber: String = "", email: String = "", peerId: String = "", username: String = ""): List<CloudAccount>
     suspend fun sendDirect(otherUid: String, message: CloudChatMessage)
     suspend fun saveGroup(group: CloudPrivateGroup)
     suspend fun deleteGroup(groupId: String)
@@ -176,11 +176,16 @@ class FirebaseCloudChatController(
         batch.commit().await()
     }
 
-    override suspend fun findAccounts(phoneNumber: String, email: String, peerId: String): List<CloudAccount> {
+    override suspend fun findAccounts(phoneNumber: String, email: String, peerId: String, username: String): List<CloudAccount> {
         requireAccountUid()
         val ids = linkedSetOf<String>()
         val normalizedEmail = ContactIdentity.normalizeEmail(email).orEmpty()
         val phoneHash = PhoneIdentity.hash(phoneNumber).orEmpty()
+        val normalizedUsername = username.trim().removePrefix("@").lowercase(Locale.ROOT)
+        if (normalizedUsername.matches(Regex("[a-z0-9_]{3,20}"))) {
+            firestore.collection("usernames").document(normalizedUsername).get().await()
+                .getString("uid")?.takeIf(String::isNotBlank)?.let(ids::add)
+        }
         if (normalizedEmail.isNotBlank()) {
             firestore.collection("emailLookup").document(normalizedEmail).collection("accounts")
                 .get().await().documents.mapTo(ids, DocumentSnapshot::getId)
@@ -200,7 +205,8 @@ class FirebaseCloudChatController(
         requireAccountUid()
         val card = firestore.collection("accountCards").document(uid).get().await()
         if (!card.exists() || card.getString("uid") != uid) return null
-        return CloudAccount(uid, card.getString("name").orEmpty(), card.getString("peerId").orEmpty())
+        return CloudAccount(uid, card.getString("name").orEmpty(), card.getString("peerId").orEmpty(),
+            card.getString("username").orEmpty())
     }
 
     override suspend fun sendDirect(otherUid: String, message: CloudChatMessage) {

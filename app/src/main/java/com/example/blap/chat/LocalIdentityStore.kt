@@ -15,6 +15,8 @@ interface IdentityStore {
         saveDisplayName(profile.displayName)
         savePhoneNumber(profile.phoneNumber)
     }
+    fun profileUpdatedAt(): Long = 0L
+    fun saveProfileAt(profile: ContactProfile, updatedAt: Long) = saveProfile(profile)
 }
 
 class LocalIdentityStore(context: Context, scope: String = "") : IdentityStore {
@@ -58,8 +60,14 @@ class LocalIdentityStore(context: Context, scope: String = "") : IdentityStore {
         username = preferences.getString("username", "").orEmpty(),
     )
 
-    override fun saveProfile(profile: ContactProfile) {
+    override fun profileUpdatedAt(): Long = preferences.getLong("profile_updated_at", 0L)
+
+    override fun saveProfile(profile: ContactProfile) =
+        saveProfileAt(profile, maxOf(System.currentTimeMillis(), profileUpdatedAt() + 1))
+
+    override fun saveProfileAt(profile: ContactProfile, updatedAt: Long) {
         preferences.edit {
+            putLong("profile_updated_at", updatedAt)
             putString("display_name", profile.displayName)
             putString("phone_number", profile.phoneNumber)
             putString("email", profile.email)

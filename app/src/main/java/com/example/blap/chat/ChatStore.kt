@@ -39,7 +39,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     context,
     "nearby_chat$scope.db",
     null,
-    10,
+    11,
 ), ChatStore {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -153,6 +153,11 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             addColumnIfMissing(db, "app_contacts", "cloud_user_id", "cloud_user_id TEXT NOT NULL DEFAULT ''")
             addColumnIfMissing(db, "chat_groups", "owner_account_id", "owner_account_id TEXT NOT NULL DEFAULT ''")
         }
+        if (oldVersion < 11) {
+            addColumnIfMissing(db, "app_contacts", "username", "username TEXT NOT NULL DEFAULT ''")
+            db.execSQL("DROP INDEX IF EXISTS app_contacts_phone_hash")
+            db.execSQL("CREATE INDEX IF NOT EXISTS app_contacts_phone_hash ON app_contacts(phone_hash) WHERE phone_hash <> ''")
+        }
     }
 
     @Synchronized
@@ -193,6 +198,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             put("email", contact.email)
             put("google_account_email", contact.googleAccountEmail)
             put("cloud_user_id", contact.cloudUserId)
+            put("username", contact.username)
             put("bio", contact.bio)
             put("website_url", contact.websiteUrl)
             put("instagram_url", contact.instagramUrl)
@@ -218,7 +224,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             arrayOf(
                 "contact_id", "name", "phone_number", "phone_hash", "linked_peer_id",
                 "email", "google_account_email", "cloud_user_id", "bio", "website_url", "instagram_url", "x_url", "linkedin_url",
-                "github_url", "source", "updated_at",
+                "github_url", "source", "updated_at", "username",
             ),
             null,
             null,
@@ -244,6 +250,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
                     githubUrl = cursor.getString(13),
                     source = ContactSource.entries[cursor.getInt(14).coerceIn(0, ContactSource.entries.lastIndex)],
                     updatedAt = cursor.getLong(15),
+                    username = cursor.getString(16),
                 )
             }
         }
@@ -599,6 +606,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
                 email TEXT NOT NULL DEFAULT '',
                 google_account_email TEXT NOT NULL DEFAULT '',
                 cloud_user_id TEXT NOT NULL DEFAULT '',
+                username TEXT NOT NULL DEFAULT '',
                 bio TEXT NOT NULL DEFAULT '',
                 website_url TEXT NOT NULL DEFAULT '',
                 instagram_url TEXT NOT NULL DEFAULT '',
@@ -610,7 +618,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             )
             """.trimIndent(),
         )
-        db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS app_contacts_phone_hash ON app_contacts(phone_hash) WHERE phone_hash <> ''")
+        db.execSQL("CREATE INDEX IF NOT EXISTS app_contacts_phone_hash ON app_contacts(phone_hash) WHERE phone_hash <> ''")
     }
 
     private fun addColumnIfMissing(
