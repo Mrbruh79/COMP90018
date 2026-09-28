@@ -33,6 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.example.blap.R
+import com.example.blap.ui.theme.ButtonHeightMedium
 import com.example.blap.ui.theme.CommonGroundTheme
 
 @Composable
@@ -85,7 +86,7 @@ fun OnboardingScreen(onGetStarted: () -> Unit, modifier: Modifier = Modifier) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 28.dp)
-                    .height(56.dp),
+                    .height(ButtonHeightMedium),
             ) {
                 Text("Continue to setup")
             }
