@@ -9,13 +9,10 @@ class EventCheckInCodecTest {
     @Test
     fun signedCheckInRoundTrips() {
         val keys = EventCheckInCodec.generateAdminKeyPair()
-        val issuedAt = 5_000_000L
         val payload = EventCheckInCodec.create(
             eventId = "event-1",
             adminId = "admin-1",
             privateKey = keys.private,
-            issuedAt = issuedAt,
-            lifetimeMillis = 5 * 60 * 1_000L,
             nonce = "fixed-nonce",
         )
 
@@ -23,7 +20,6 @@ class EventCheckInCodecTest {
             payload,
             expectedEventId = "event-1",
             publicKey = keys.public,
-            now = issuedAt + 1_000,
         )
 
         assertNotNull(credential)
@@ -38,25 +34,22 @@ class EventCheckInCodecTest {
             eventId = "event-1",
             adminId = "admin-1",
             privateKey = keys.private,
-            issuedAt = 5_000_000L,
         )
 
-        assertNull(EventCheckInCodec.verify(payload, "event-2", keys.public, 5_001_000L))
-        assertNull(EventCheckInCodec.verify(payload + "x", "event-1", keys.public, 5_001_000L))
+        assertNull(EventCheckInCodec.verify(payload, "event-2", keys.public))
+        assertNull(EventCheckInCodec.verify(payload + "x", "event-1", keys.public))
     }
 
     @Test
-    fun expiredCheckInIsRejected() {
+    fun staticCheckInDoesNotExpireInsideTheCredential() {
         val keys = EventCheckInCodec.generateAdminKeyPair()
         val payload = EventCheckInCodec.create(
             eventId = "event-1",
             adminId = "admin-1",
             privateKey = keys.private,
-            issuedAt = 5_000_000L,
-            lifetimeMillis = 60_000L,
+            nonce = "static-event-nonce",
         )
 
-        assertNull(EventCheckInCodec.verify(payload, "event-1", keys.public, 5_500_000L))
+        assertNotNull(EventCheckInCodec.verify(payload, "event-1", keys.public))
     }
 }
-

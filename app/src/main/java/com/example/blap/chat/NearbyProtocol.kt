@@ -92,6 +92,7 @@ sealed interface NearbyPacket {
         val adminPublicKeys: Map<String, String>,
         val visibility: String,
         val requiresSignIn: Boolean,
+        val venueCheckInPayload: String,
         val createdAt: Long,
         val updatedAt: Long,
         val deletedAt: Long?,
@@ -253,6 +254,7 @@ object NearbyProtocol {
                     }
                     output.writeUTF(packet.visibility)
                     output.writeBoolean(packet.requiresSignIn)
+                    output.writeUTF(packet.venueCheckInPayload)
                     output.writeLong(packet.createdAt)
                     output.writeLong(packet.updatedAt)
                     output.writeBoolean(packet.deletedAt != null)
@@ -396,6 +398,7 @@ object NearbyProtocol {
                     }
                     val visibility = input.readUTF()
                     val requiresSignIn = input.readBoolean()
+                    val venueCheckInPayload = input.readUTF()
                     val createdAt = input.readLong()
                     val updatedAt = input.readLong()
                     val deletedAt = if (input.readBoolean()) input.readLong() else null
@@ -415,6 +418,7 @@ object NearbyProtocol {
                         adminKeys,
                         visibility,
                         requiresSignIn,
+                        venueCheckInPayload,
                         createdAt,
                         updatedAt,
                         deletedAt,

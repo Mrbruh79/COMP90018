@@ -583,7 +583,8 @@ class FirebaseEventRemoteRepository(
         "startsAt" to startsAt, "endsAt" to endsAt, "createdBy" to createdBy,
         "adminIds" to adminIds.toList(), "memberIds" to memberIds.toList(),
         "adminPublicKeys" to adminPublicKeys, "visibility" to visibility.name,
-        "requiresSignIn" to requiresSignIn, "privateMeshSecret" to privateMeshSecret, "createdAt" to createdAt,
+        "requiresSignIn" to requiresSignIn, "privateMeshSecret" to privateMeshSecret,
+        "venueCheckInPayload" to venueCheckInPayload, "createdAt" to createdAt,
         "updatedAt" to updatedAt, "deletedAt" to deletedAt,
     )
 
@@ -645,6 +646,7 @@ class FirebaseEventRemoteRepository(
             adminIds = admins, memberIds = members, adminPublicKeys = publicKeys,
             visibility = visibility, requiresSignIn = get("requiresSignIn") as? Boolean ?: false,
             privateMeshSecret = get("privateMeshSecret") as? String ?: "",
+            venueCheckInPayload = get("venueCheckInPayload") as? String ?: "",
             createdAt = (get("createdAt") as? Number)?.toLong() ?: 0L,
             updatedAt = (get("updatedAt") as? Number)?.toLong()
                 ?: (get("createdAt") as? Number)?.toLong() ?: 0L,

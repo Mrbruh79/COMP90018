@@ -49,6 +49,7 @@ data class CommunityEvent(
     val visibility: EventVisibility = EventVisibility.PUBLIC,
     val requiresSignIn: Boolean = false,
     val privateMeshSecret: String = "",
+    val venueCheckInPayload: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = createdAt,
     val deletedAt: Long? = null,
@@ -66,6 +67,9 @@ data class CommunityEvent(
         require(adminIds.all(memberIds::contains)) { "Every event admin must remain a member." }
         require(visibility != EventVisibility.PRIVATE || privateMeshSecret.isNotBlank()) {
             "Private events require a mesh secret."
+        }
+        require(visibility != EventVisibility.PRIVATE || venueCheckInPayload.isBlank()) {
+            "Private events cannot use venue QR check-in."
         }
     }
 
@@ -295,11 +299,6 @@ object EventAccessPolicy {
         }
         if (credential.adminId !in event.adminIds) {
             return EventEntryDecision.Denied("This check-in code was not issued by an event admin.")
-        }
-        if (now + MAX_CLOCK_SKEW_MILLIS < credential.issuedAt ||
-            now - MAX_CLOCK_SKEW_MILLIS > credential.expiresAt
-        ) {
-            return EventEntryDecision.Denied("This check-in code has expired.")
         }
         return EventEntryDecision.Allowed(EventAccessMethod.VENUE_QR)
     }

@@ -101,6 +101,7 @@ object EventMutationSigner {
             adminPublicKeys.toSortedMap().entries.joinToString("\u001E") { "${it.key}=${it.value}" },
             visibility.name,
             requiresSignIn.toString(),
+            venueCheckInPayload,
             createdAt.toString(),
             updatedAt.toString(),
             deletedAt?.toString().orEmpty(),

@@ -18,15 +18,12 @@ import java.util.UUID
 data class EventCheckInCredential(
     val eventId: String,
     val adminId: String,
-    val issuedAt: Long,
-    val expiresAt: Long,
     val nonce: String,
 )
 
-/** Creates short-lived, admin-signed venue check-in QR payloads. */
+/** Creates static, admin-signed venue check-in QR payloads for public events. */
 object EventCheckInCodec {
-    private const val PREFIX = "COMMONGROUND-CHECKIN:1:"
-    private const val MAX_CREDENTIAL_LIFETIME_MILLIS = 10 * 60 * 1_000L
+    private const val PREFIX = "COMMONGROUND-CHECKIN:2:"
     private val encoder = Base64.getUrlEncoder().withoutPadding()
     private val decoder = Base64.getUrlDecoder()
 
@@ -50,18 +47,14 @@ object EventCheckInCodec {
         eventId: String,
         adminId: String,
         privateKey: PrivateKey,
-        issuedAt: Long = System.currentTimeMillis(),
-        lifetimeMillis: Long = 5 * 60 * 1_000L,
         nonce: String = UUID.randomUUID().toString(),
     ): String {
         require(eventId.isNotBlank())
         require(adminId.isNotBlank())
-        require(lifetimeMillis in 1..MAX_CREDENTIAL_LIFETIME_MILLIS)
+        require(nonce.isNotBlank())
         val credential = EventCheckInCredential(
             eventId = eventId,
             adminId = adminId,
-            issuedAt = issuedAt,
-            expiresAt = issuedAt + lifetimeMillis,
             nonce = nonce,
         )
         val data = encodeCredential(credential)
@@ -77,7 +70,6 @@ object EventCheckInCodec {
         payload: String,
         expectedEventId: String,
         publicKey: PublicKey,
-        now: Long = System.currentTimeMillis(),
     ): EventCheckInCredential? = runCatching {
         if (!payload.startsWith(PREFIX)) return null
         val parts = payload.removePrefix(PREFIX).split('.')
@@ -92,12 +84,7 @@ object EventCheckInCodec {
         if (!validSignature) return null
         val credential = decodeCredential(data) ?: return null
         if (credential.eventId != expectedEventId) return null
-        if (credential.expiresAt <= credential.issuedAt ||
-            credential.expiresAt - credential.issuedAt > MAX_CREDENTIAL_LIFETIME_MILLIS
-        ) return null
-        if (now + EventAccessPolicy.MAX_CLOCK_SKEW_MILLIS < credential.issuedAt ||
-            now - EventAccessPolicy.MAX_CLOCK_SKEW_MILLIS > credential.expiresAt
-        ) return null
+        if (credential.adminId.isBlank() || credential.nonce.isBlank()) return null
         credential
     }.getOrNull()
 
@@ -106,8 +93,6 @@ object EventCheckInCodec {
         DataOutputStream(bytes).use { output ->
             output.writeUTF(credential.eventId)
             output.writeUTF(credential.adminId)
-            output.writeLong(credential.issuedAt)
-            output.writeLong(credential.expiresAt)
             output.writeUTF(credential.nonce)
         }
         return bytes.toByteArray()
@@ -118,10 +103,8 @@ object EventCheckInCodec {
             EventCheckInCredential(
                 eventId = input.readUTF().take(128),
                 adminId = input.readUTF().take(128),
-                issuedAt = input.readLong(),
-                expiresAt = input.readLong(),
                 nonce = input.readUTF().take(128),
-            )
+            ).takeIf { input.available() == 0 }
         }
     }.getOrNull()
 }

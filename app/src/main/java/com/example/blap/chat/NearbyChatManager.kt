@@ -742,6 +742,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
                 adminPublicKeys = packet.adminPublicKeys,
                 visibility = EventVisibility.valueOf(packet.visibility),
                 requiresSignIn = packet.requiresSignIn,
+                venueCheckInPayload = packet.venueCheckInPayload,
                 privateMeshSecret = if (packet.visibility == EventVisibility.PRIVATE.name) {
                     "pending-verification"
                 } else "",
@@ -899,6 +900,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
         adminPublicKeys = event.adminPublicKeys,
         visibility = event.visibility.name,
         requiresSignIn = event.requiresSignIn,
+        venueCheckInPayload = event.venueCheckInPayload,
         createdAt = event.createdAt,
         updatedAt = event.updatedAt,
         deletedAt = event.deletedAt,

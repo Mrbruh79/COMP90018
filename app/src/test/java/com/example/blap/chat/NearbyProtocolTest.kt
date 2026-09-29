@@ -105,6 +105,7 @@ class NearbyProtocolTest {
             adminPublicKeys = mapOf("admin-1" to "public-key"),
             visibility = "PRIVATE",
             requiresSignIn = false,
+            venueCheckInPayload = "",
             createdAt = 100L,
             updatedAt = 200L,
             deletedAt = 200L,

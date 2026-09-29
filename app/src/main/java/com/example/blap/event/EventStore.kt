@@ -103,7 +103,7 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     context,
     "community_events$scope.db",
     null,
-    5,
+    6,
 ), EventStore {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -125,6 +125,7 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
                 visibility INTEGER NOT NULL,
                 requires_sign_in INTEGER NOT NULL,
                 private_mesh_secret TEXT NOT NULL,
+                venue_check_in_payload TEXT NOT NULL,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 deleted_at INTEGER
@@ -197,6 +198,9 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
         if (oldVersion < 5) {
             db.execSQL("ALTER TABLE events ADD COLUMN requires_sign_in INTEGER NOT NULL DEFAULT 0")
         }
+        if (oldVersion < 6) {
+            db.execSQL("ALTER TABLE events ADD COLUMN venue_check_in_payload TEXT NOT NULL DEFAULT ''")
+        }
     }
 
     @Synchronized
@@ -223,6 +227,7 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             put("visibility", event.visibility.ordinal)
             put("requires_sign_in", if (event.requiresSignIn) 1 else 0)
             put("private_mesh_secret", event.privateMeshSecret)
+            put("venue_check_in_payload", event.venueCheckInPayload)
             put("created_at", event.createdAt)
             put("updated_at", event.updatedAt)
             putNullableLong("deleted_at", event.deletedAt)
@@ -465,9 +470,10 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
         visibility = EventVisibility.entries[cursor.getInt(13)],
         requiresSignIn = cursor.getInt(14) != 0,
         privateMeshSecret = cursor.getString(15),
-        createdAt = cursor.getLong(16),
-        updatedAt = cursor.getLong(17),
-        deletedAt = cursor.nullableLong(18),
+        venueCheckInPayload = cursor.getString(16),
+        createdAt = cursor.getLong(17),
+        updatedAt = cursor.getLong(18),
+        deletedAt = cursor.nullableLong(19),
     )
 
     private fun readAnnouncement(cursor: android.database.Cursor) = EventAnnouncement(
@@ -518,7 +524,8 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
         val EVENT_COLUMNS = arrayOf(
             "event_id", "title", "description", "venue_name", "latitude", "longitude", "radius_metres",
             "starts_at", "ends_at", "created_by", "admin_ids", "member_ids", "admin_public_keys",
-            "visibility", "requires_sign_in", "private_mesh_secret", "created_at", "updated_at", "deleted_at",
+            "visibility", "requires_sign_in", "private_mesh_secret", "venue_check_in_payload",
+            "created_at", "updated_at", "deleted_at",
         )
         val MEMBERSHIP_COLUMNS = arrayOf(
             "event_id", "user_id", "display_name", "role", "joined_at", "blocked_at", "left_at",

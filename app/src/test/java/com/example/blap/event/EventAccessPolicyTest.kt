@@ -95,4 +95,25 @@ class EventAccessPolicyTest {
         assertTrue(result is EventEntryDecision.Denied)
         assertTrue((result as EventEntryDecision.Denied).reason.contains("deleted"))
     }
+
+    @Test
+    fun staticQrWorksOnlyWhileEventIsActive() {
+        val credential = EventCheckInCredential(event.id, "admin-1", "static-nonce")
+
+        assertTrue(EventAccessPolicy.evaluateQr(event, membership, credential, now) is EventEntryDecision.Allowed)
+        assertTrue(
+            EventAccessPolicy.evaluateQr(event, membership, credential, event.endsAt + 1) is
+                EventEntryDecision.Denied,
+        )
+    }
+
+    @Test
+    fun qrFromRemovedAdminIsRejected() {
+        val credential = EventCheckInCredential(event.id, "former-admin", "static-nonce")
+
+        val result = EventAccessPolicy.evaluateQr(event, membership, credential, now)
+
+        assertTrue(result is EventEntryDecision.Denied)
+        assertTrue((result as EventEntryDecision.Denied).reason.contains("admin"))
+    }
 }

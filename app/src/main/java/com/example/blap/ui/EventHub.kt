@@ -120,11 +120,12 @@ fun EventHub(
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                     Image(
                         bitmap = createQrBitmap(payload, 700).asImageBitmap(),
-                        contentDescription = "Rotating venue check-in QR",
+                        contentDescription = "Static venue check-in QR",
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "This signed code expires after five minutes.",
+                        "This signed QR can be displayed again or printed. It works only while the event " +
+                            "is active, and attendees must still reach the event's Nearby mesh.",
                         modifier = Modifier.padding(top = 12.dp),
                         style = MaterialTheme.typography.bodySmall,
                     )
@@ -828,13 +829,6 @@ private fun EventDetailScreen(
                 item {
                     Button(onClick = onJoin, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) {
                         Text("Join event")
-                    }
-                }
-                if (event.isActive(now)) {
-                    item {
-                        OutlinedButton(onClick = onScanCheckInQr, modifier = Modifier.fillMaxWidth()) {
-                            Text("Join and check in with venue QR")
-                        }
                     }
                 }
             } else {

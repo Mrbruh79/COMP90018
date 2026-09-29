@@ -40,6 +40,7 @@ class EventSecurityTest {
             endsAt = 2_000L,
             createdBy = "admin-1",
             adminPublicKeys = mapOf("admin-1" to EventCheckInCodec.encodePublicKey(keys.public)),
+            venueCheckInPayload = "static-signed-qr",
             createdAt = 100L,
             updatedAt = 200L,
         )
@@ -49,6 +50,9 @@ class EventSecurityTest {
         assertTrue(EventMutationSigner.verify(signed, keys.public))
         assertFalse(EventMutationSigner.verify(signed.copy(event = event.copy(title = "Tampered")), keys.public))
         assertFalse(EventMutationSigner.verify(signed.copy(event = event.copy(requiresSignIn = true)), keys.public))
+        assertFalse(
+            EventMutationSigner.verify(signed.copy(event = event.copy(venueCheckInPayload = "replacement")), keys.public),
+        )
         assertFalse(EventMutationSigner.verify(signed.copy(event = event.copy(deletedAt = 201L)), keys.public))
     }
 

@@ -319,8 +319,12 @@ class EventCoordinator(
                 runCatching {
                     val userId = requireUserId()
                     val keys = adminKeyStore.getOrCreate(userId)
+                    val eventId = UUID.randomUUID().toString()
+                    val venueCheckInPayload = if (visibility == EventVisibility.PUBLIC) {
+                        EventCheckInCodec.create(eventId, userId, keys.private)
+                    } else ""
                     val event = CommunityEvent(
-                        id = UUID.randomUUID().toString(),
+                        id = eventId,
                         title = cleanTitle,
                         description = cleanDescription,
                         venueName = venueName.trim().take(200),
@@ -338,6 +342,7 @@ class EventCoordinator(
                         privateMeshSecret = if (visibility == EventVisibility.PRIVATE) {
                             EventSecrets.newMeshSecret()
                         } else "",
+                        venueCheckInPayload = venueCheckInPayload,
                         createdAt = clock(),
                     )
                     val membership = EventMembership(
@@ -1100,49 +1105,29 @@ class EventCoordinator(
             _uiState.update { it.copy(error = "Sign in with Email or Google to join this protected event.") }
             return
         }
+        if (event.venueCheckInPayload.isBlank() || payload != event.venueCheckInPayload) {
+            _uiState.update { it.copy(error = "This venue check-in QR is not valid for this event.") }
+            return
+        }
         val credential = event.adminPublicKeys.entries.firstNotNullOfOrNull { (adminId, encodedKey) ->
             runCatching {
                 EventCheckInCodec.verify(
                     payload,
                     event.id,
                     EventCheckInCodec.decodePublicKey(encodedKey),
-                    clock(),
                 )?.takeIf { it.adminId == adminId }
             }.getOrNull()
         }
         if (credential == null) {
-            _uiState.update { it.copy(error = "This venue check-in QR is invalid or expired.") }
+            _uiState.update { it.copy(error = "This venue check-in QR has an invalid signature.") }
             return
         }
-        val existing = _uiState.value.membership
-        if (existing != null && existing.leftAt == null) {
-            applyQrDecision(event, existing, credential)
+        val membership = _uiState.value.membership
+        if (membership == null || membership.leftAt != null) {
+            _uiState.update { it.copy(error = "Join this event before scanning its venue QR.") }
             return
         }
-        scope.launch {
-            val membership = runCatching {
-                val userId = requireUserId()
-                EventMembership(
-                    eventId = event.id,
-                    userId = userId,
-                    displayName = identityStore.getDisplayName(),
-                    role = EventRole.ATTENDEE,
-                    joinedAt = clock(),
-                )
-            }.getOrElse { failure ->
-                _uiState.update { it.copy(error = failure.readableMessage("The event could not be joined")) }
-                return@launch
-            }
-            eventStore.saveMembership(membership)
-            _uiState.update { it.copy(membership = membership) }
-            applyQrDecision(event, membership, credential)
-            runCatching { remoteRepository.joinEvent(membership) }
-                .onFailure {
-                    _uiState.update { state ->
-                        state.copy(notice = "Joined from the venue QR. Membership will sync when online.")
-                    }
-                }
-        }
+        applyQrDecision(event, membership, credential)
     }
 
     fun createVenueCheckInQr(): String? {
@@ -1150,14 +1135,37 @@ class EventCoordinator(
         if (event.visibility == EventVisibility.PRIVATE) return null
         val membership = _uiState.value.membership ?: return null
         if (!membership.isAdmin || !event.isAdmin(membership.userId) || !event.isActive(clock())) return null
+        if (event.venueCheckInPayload.isNotBlank()) return event.venueCheckInPayload
+        if (membership.role != EventRole.PRIMARY_ADMIN || event.createdBy != membership.userId) return null
         val keys = adminKeyStore.get(membership.userId) ?: return null
-        return EventCheckInCodec.create(event.id, membership.userId, keys.private, issuedAt = clock())
+        val payload = EventCheckInCodec.create(event.id, membership.userId, keys.private)
+        val updated = event.copy(
+            venueCheckInPayload = payload,
+            updatedAt = maxOf(clock(), event.updatedAt + 1),
+        )
+        val unsigned = EventMutation(updated, membership.userId)
+        val mutation = unsigned.copy(signature = EventMutationSigner.sign(unsigned, keys.private))
+        eventStore.saveEvent(updated)
+        _uiState.update { it.copy(events = eventStore.getEvents()) }
+        scope.launch {
+            runCatching { remoteRepository.updateEvent(updated) }
+                .onSuccess { nearbyController.sendEventMutation(mutation) }
+                .onFailure { failure ->
+                    _uiState.update {
+                        it.copy(notice = failure.readableMessage("The static QR was saved locally but could not be synced"))
+                    }
+                }
+        }
+        return payload
     }
 
     fun showVenueCheckInQr() {
         val payload = createVenueCheckInQr()
         _uiState.update {
-            if (payload == null) it.copy(error = "A check-in QR is available to admins while the event is active.")
+            if (payload == null) it.copy(
+                error = "The static check-in QR is available to event admins while the event is active. " +
+                    "For older events, the primary admin must create it first.",
+            )
             else it.copy(checkInQrPayload = payload, error = null)
         }
     }
