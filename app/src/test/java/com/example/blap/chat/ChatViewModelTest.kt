@@ -1051,6 +1051,62 @@ class ChatViewModelTest {
     }
 
     @Test
+    fun sendVoiceStoresAVoiceMessage() {
+        val store = FakeChatStore()
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        viewModel.openConversation(MeshGroup.ID)
+
+        viewModel.sendVoice(1_200, byteArrayOf(1, 2, 3, 4))
+
+        val stored = store.getMessages(MeshGroup.ID).single()
+        val content = ChatFeatures.decode(stored.text)
+        assertTrue(content is ChatContent.Voice)
+        assertEquals(1_200, (content as ChatContent.Voice).durationMs)
+        assertEquals("Voice message", ChatFeatures.preview(stored.text))
+        assertEquals("Voice message", viewModel.uiState.value.conversations
+            .first { it.peerId == MeshGroup.ID }.lastMessage)
+    }
+
+    @Test
+    fun oversizedVoiceNoteIsRejected() {
+        val store = FakeChatStore()
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        viewModel.openConversation(MeshGroup.ID)
+
+        viewModel.sendVoice(1_000, ByteArray(ChatViewModel.MAX_VOICE_ENCODED_LENGTH))
+
+        assertTrue(store.getMessages(MeshGroup.ID).isEmpty())
+        assertEquals("This message is too long.", viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun shortVoiceNoteIsRejected() {
+        val store = FakeChatStore()
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        viewModel.openConversation(MeshGroup.ID)
+
+        viewModel.sendVoice(200, byteArrayOf(1, 2, 3))
+
+        assertTrue(store.getMessages(MeshGroup.ID).isEmpty())
+        assertNull(viewModel.uiState.value.error)
+    }
+
+    @Test
+    fun replyToVoiceUsesVoiceMessageExcerpt() {
+        val store = FakeChatStore()
+        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        viewModel.openConversation(MeshGroup.ID)
+        viewModel.sendVoice(800, byteArrayOf(9, 8, 7))
+        val voice = store.getMessages(MeshGroup.ID).single()
+
+        viewModel.sendReply(voice.id, "Got it")
+
+        val reply = ChatTimeline.present(store.getMessages(MeshGroup.ID))
+            .first { it.content is ChatContent.Reply }.content as ChatContent.Reply
+        assertEquals("Voice message", reply.excerpt)
+    }
+
+    @Test
     fun structuredChatActionsAreUploadedThroughTheOnlineChat() {
         val store = FakeChatStore()
         val cloud = FakeCloudChatController()

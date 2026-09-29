@@ -3,6 +3,7 @@ package com.example.blap.chat
 import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
@@ -1103,6 +1104,7 @@ class ChatViewModel(
             is ChatContent.Text -> content.body
             is ChatContent.Reply -> content.body
             is ChatContent.Poll -> content.question
+            is ChatContent.Voice -> "Voice message"
             else -> return
         }.take(80)
         sendContent(ChatContent.Reply(text.trim().take(500), targetId, excerpt))
@@ -1140,12 +1142,19 @@ class ChatViewModel(
         sendContent(ChatContent.Delete(messageId))
     }
 
+    fun sendVoice(durationMs: Int, audio: ByteArray) {
+        if (durationMs < MIN_VOICE_DURATION_MS || audio.isEmpty()) return
+        val encoded = Base64.getUrlEncoder().withoutPadding().encodeToString(audio)
+        sendContent(ChatContent.Voice(durationMs.coerceAtMost(MAX_VOICE_DURATION_MS), encoded))
+    }
+
     private fun sendContent(content: ChatContent) {
         val peerId = _uiState.value.selectedPeerId ?: return
         val conversation = _uiState.value.conversations.firstOrNull { it.peerId == peerId } ?: return
         val cleanText = ChatFeatures.encode(content)
-        if (cleanText.isBlank() || cleanText.length > MAX_MESSAGE_LENGTH) {
-            if (cleanText.length > MAX_MESSAGE_LENGTH) showError("This message is too long.")
+        val maxLength = if (content is ChatContent.Voice) MAX_VOICE_ENCODED_LENGTH else MAX_MESSAGE_LENGTH
+        if (cleanText.isBlank() || cleanText.length > maxLength) {
+            if (cleanText.length > maxLength) showError("This message is too long.")
             return
         }
 
@@ -1894,6 +1903,9 @@ class ChatViewModel(
     companion object {
         const val MAX_NAME_LENGTH = 24
         const val MAX_MESSAGE_LENGTH = 1_000
+        const val MAX_VOICE_ENCODED_LENGTH = 28_000
+        const val MIN_VOICE_DURATION_MS = 400
+        const val MAX_VOICE_DURATION_MS = 10_000
         const val MAX_GROUP_NAME_LENGTH = 40
         const val MAX_PHONE_LENGTH = 24
         const val MAX_EMAIL_LENGTH = 120

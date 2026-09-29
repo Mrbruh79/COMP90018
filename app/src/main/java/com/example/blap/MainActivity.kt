@@ -67,6 +67,7 @@ class MainActivity : ComponentActivity() {
     private lateinit var notificationSettingsStore: ChatNotificationSettingsStore
     private var notificationSettings by mutableStateOf(ChatNotificationSettings())
     private var notificationPermissionGranted by mutableStateOf(false)
+    private var microphonePermissionGranted by mutableStateOf(false)
     private val privateProfileStore by lazy { FirebasePrivateProfileStore() }
 
     private val notificationPermissionLauncher = registerForActivityResult(
@@ -109,6 +110,13 @@ class MainActivity : ComponentActivity() {
         else viewModel.showError("Contacts permission is needed to import device contacts.")
     }
 
+    private val recordAudioPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        microphonePermissionGranted = granted
+        if (!granted) viewModel.showError("Microphone permission is needed to send voice messages.")
+    }
+
     private val eventLocationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) {
@@ -131,6 +139,7 @@ class MainActivity : ComponentActivity() {
         )
         notificationSettings = notificationSettingsStore.load()
         notificationPermissionGranted = hasNotificationPermission()
+        microphonePermissionGranted = hasMicrophonePermission()
         accountProfileLoading = authAccount.uid.isNotBlank()
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -184,6 +193,9 @@ class MainActivity : ComponentActivity() {
                     onVoteInPoll = viewModel::voteInPoll,
                     onEditMessage = viewModel::editMessage,
                     onDeleteMessage = viewModel::deleteMessage,
+                    onSendVoice = viewModel::sendVoice,
+                    microphonePermissionGranted = microphonePermissionGranted,
+                    onRequestMicrophonePermission = ::requestMicrophonePermission,
                     onOpenChatContactProfile = viewModel::openCurrentChatProfile,
                     onCloseChatContactProfile = viewModel::closeCurrentChatProfile,
                     onSaveCurrentChatContact = viewModel::saveCurrentChatContact,
@@ -448,6 +460,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         notificationPermissionGranted = hasNotificationPermission()
+        microphonePermissionGranted = hasMicrophonePermission()
         if (deniedPermissions.isNotEmpty()) deniedPermissions = NearbyPermissions.missing(this)
         if (authAccount.uid.isNotBlank() && !authAccount.emailVerified) {
             AuthManager.refreshAccount {
@@ -460,6 +473,18 @@ class MainActivity : ComponentActivity() {
     private fun hasNotificationPermission(): Boolean = Build.VERSION.SDK_INT < 33 ||
         ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) ==
             PackageManager.PERMISSION_GRANTED
+
+    private fun hasMicrophonePermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun requestMicrophonePermission() {
+        if (hasMicrophonePermission()) {
+            microphonePermissionGranted = true
+        } else {
+            recordAudioPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+        }
+    }
 
     private fun requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33 && !hasNotificationPermission()) {
