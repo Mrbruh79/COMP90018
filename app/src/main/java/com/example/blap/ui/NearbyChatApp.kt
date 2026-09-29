@@ -67,8 +67,10 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
@@ -79,6 +81,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.input.pointer.pointerInput
@@ -100,6 +103,7 @@ import com.example.blap.chat.ChatNotificationSettings
 import com.example.blap.chat.ChatContent
 import com.example.blap.chat.ChatTimeline
 import com.example.blap.chat.PresentedMessage
+import com.example.blap.chat.ChatViewModel
 import com.example.blap.chat.ChatUiState
 import com.example.blap.chat.ContactCardCodec
 import com.example.blap.chat.ContactProfile
@@ -113,6 +117,8 @@ import com.example.blap.chat.NearbyDevice
 import com.example.blap.chat.ProfileUrl
 import com.example.blap.chat.SavedContact
 import com.example.blap.chat.PhoneNumberParts
+import com.example.blap.chat.VoiceNotePlayback
+import com.example.blap.chat.VoiceNoteRecorder
 import com.example.blap.ui.theme.ButtonHeightExtraSmall
 import com.example.blap.ui.theme.ButtonHeightMedium
 import com.example.blap.auth.AuthAccount
@@ -121,10 +127,16 @@ import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventUiState
 import com.google.zxing.BarcodeFormat
 import com.google.zxing.qrcode.QRCodeWriter
+import android.media.MediaPlayer
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 @Composable
 fun NearbyChatApp(
@@ -155,6 +167,9 @@ fun NearbyChatApp(
     onVoteInPoll: (String, Int) -> Unit,
     onEditMessage: (String, String) -> Unit,
     onDeleteMessage: (String) -> Unit,
+    onSendVoice: (Int, ByteArray) -> Unit,
+    microphonePermissionGranted: Boolean,
+    onRequestMicrophonePermission: () -> Unit,
     onOpenChatContactProfile: () -> Unit,
     onCloseChatContactProfile: () -> Unit,
     onSaveCurrentChatContact: () -> Unit,
@@ -375,6 +390,9 @@ fun NearbyChatApp(
                                 onVote = onVoteInPoll,
                                 onEdit = onEditMessage,
                                 onDelete = onDeleteMessage,
+                                onSendVoice = onSendVoice,
+                                microphonePermissionGranted = microphonePermissionGranted,
+                                onRequestMicrophonePermission = onRequestMicrophonePermission,
                                 onOpenContactProfile = onOpenChatContactProfile,
                                 draft = uiState.messageDrafts[conversation.peerId].orEmpty(),
                                 onDraftChanged = onMessageDraftChanged,
@@ -2426,6 +2444,9 @@ private fun ChatScreen(
     onVote: (String, Int) -> Unit,
     onEdit: (String, String) -> Unit,
     onDelete: (String) -> Unit,
+    onSendVoice: (Int, ByteArray) -> Unit,
+    microphonePermissionGranted: Boolean,
+    onRequestMicrophonePermission: () -> Unit,
     onOpenContactProfile: () -> Unit,
     draft: String,
     onDraftChanged: (String) -> Unit,
@@ -2441,6 +2462,10 @@ private fun ChatScreen(
     var deletingId by rememberSaveable(conversation.peerId) { mutableStateOf<String?>(null) }
     var showPollDialog by rememberSaveable(conversation.peerId) { mutableStateOf(false) }
     var moreExpanded by remember { mutableStateOf(false) }
+    var recording by remember { mutableStateOf(false) }
+    var elapsedMs by remember { mutableIntStateOf(0) }
+    val context = LocalContext.current
+    val recorder = remember { VoiceNoteRecorder(context) }
     val density = LocalDensity.current
     val imeBottom = WindowInsets.ime.getBottom(density)
     LaunchedEffect(conversation.peerId) {
@@ -2450,6 +2475,29 @@ private fun ChatScreen(
         if (messages.isNotEmpty() &&
             (listState.firstVisibleItemIndex < 2 || messages.last().author == MessageAuthor.ME)
         ) listState.scrollToItem(0)
+    }
+    DisposableEffect(conversation.peerId) {
+        onDispose { recorder.cancel() }
+    }
+    val finishRecording: (Boolean) -> Unit = { send ->
+        recording = false
+        val note = if (send) recorder.stop() else {
+            recorder.cancel()
+            null
+        }
+        note?.let { onSendVoice(it.first, it.second) }
+    }
+    LaunchedEffect(recording) {
+        if (!recording) return@LaunchedEffect
+        val started = SystemClock.elapsedRealtime()
+        while (isActive) {
+            elapsedMs = (SystemClock.elapsedRealtime() - started).toInt()
+            if (elapsedMs >= ChatViewModel.MAX_VOICE_DURATION_MS) {
+                finishRecording(true)
+                break
+            }
+            delay(100)
+        }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -2567,22 +2615,42 @@ private fun ChatScreen(
                 .padding(7.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = { showPollDialog = true }) { Text("Poll") }
-            Box(Modifier.weight(1f)) {
-                MessageComposer(
-                    text = if (editingId != null) editingText else draft,
-                    onTextChanged = { if (editingId != null) editingText = it else onDraftChanged(it) },
-                    onSend = { text ->
-                        when {
-                            editingId != null -> onEdit(requireNotNull(editingId), text)
-                            replyingTo != null -> onReply(requireNotNull(replyingTo), text)
-                            else -> onSend(text)
-                        }
-                        replyingTo = null
-                        editingId = null
-                    },
-                    sendLabel = if (editingId != null) "Save" else "Send",
+            if (recording) {
+                Text(
+                    "Recording ${elapsedMs / 1000}s",
+                    modifier = Modifier.weight(1f).padding(start = 8.dp),
+                    color = MaterialTheme.colorScheme.primary,
                 )
+                TextButton(onClick = { finishRecording(false) }) { Text("Cancel") }
+                TextButton(onClick = { finishRecording(true) }) { Text("Send") }
+            } else {
+                TextButton(onClick = { showPollDialog = true }) { Text("Poll") }
+                TextButton(onClick = {
+                    if (!microphonePermissionGranted) {
+                        onRequestMicrophonePermission()
+                        return@TextButton
+                    }
+                    if (recorder.start()) {
+                        elapsedMs = 0
+                        recording = true
+                    }
+                }) { Text("Mic") }
+                Box(Modifier.weight(1f)) {
+                    MessageComposer(
+                        text = if (editingId != null) editingText else draft,
+                        onTextChanged = { if (editingId != null) editingText = it else onDraftChanged(it) },
+                        onSend = { text ->
+                            when {
+                                editingId != null -> onEdit(requireNotNull(editingId), text)
+                                replyingTo != null -> onReply(requireNotNull(replyingTo), text)
+                                else -> onSend(text)
+                            }
+                            replyingTo = null
+                            editingId = null
+                        },
+                        sendLabel = if (editingId != null) "Save" else "Send",
+                    )
+                }
             }
         }
         Spacer(Modifier.height(8.dp))
@@ -2735,6 +2803,12 @@ internal fun MessageBubble(
                             }
                         }
                     }
+                    is ChatContent.Voice -> VoiceMessageBubble(
+                        messageId = message.id,
+                        durationMs = content.durationMs,
+                        audioBase64 = content.audioBase64,
+                        textColor = textColor,
+                    )
                     else -> Unit
                 }
                 if (item.edited && !item.deleted) Text("Edited", color = textColor,
@@ -2776,6 +2850,57 @@ internal fun MessageBubble(
 
 private fun formatTimestamp(sentAt: Long): String =
     SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(sentAt))
+
+@Composable
+private fun VoiceMessageBubble(
+    messageId: String,
+    durationMs: Int,
+    audioBase64: String,
+    textColor: Color,
+) {
+    val context = LocalContext.current
+    var playing by remember(messageId) { mutableStateOf(false) }
+    val player = remember(messageId) { MediaPlayer() }
+    val handler = remember(messageId) { Handler(Looper.getMainLooper()) }
+    DisposableEffect(messageId, audioBase64) {
+        val file = VoiceNotePlayback.writeCacheFile(context, messageId, audioBase64)
+        val stopPlaying = Runnable { playing = false }
+        if (file != null) {
+            try {
+                player.setDataSource(file.absolutePath)
+                player.prepare()
+                player.setOnCompletionListener { handler.post(stopPlaying) }
+            } catch (_: Exception) {
+            }
+        }
+        onDispose {
+            handler.removeCallbacks(stopPlaying)
+            try {
+                if (player.isPlaying) player.stop()
+            } catch (_: Exception) {
+            }
+            player.release()
+        }
+    }
+    val seconds = ((durationMs + 500) / 1000).coerceAtLeast(1)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = {
+            try {
+                if (playing) {
+                    player.pause()
+                    player.seekTo(0)
+                    playing = false
+                } else {
+                    player.start()
+                    playing = true
+                }
+            } catch (_: Exception) {
+                playing = false
+            }
+        }) { Text(if (playing) "Stop" else "Play", color = textColor) }
+        Text("${seconds}s voice", color = textColor)
+    }
+}
 
 @Composable
 internal fun MessageComposer(

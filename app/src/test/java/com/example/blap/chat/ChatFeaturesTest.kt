@@ -21,6 +21,34 @@ class ChatFeaturesTest {
         )))
     }
 
+    @Test fun voiceNotesRoundTripAndPreviewAsVoiceMessage() {
+        val voice = ChatContent.Voice(1_500, "YWJjMTIz")
+        assertEquals(voice, ChatFeatures.decode(ChatFeatures.encode(voice)))
+        assertEquals("Voice message", ChatFeatures.preview(ChatFeatures.encode(voice)))
+        assertFalse(ChatFeatures.encode(voice).contains("+"))
+        assertFalse(ChatFeatures.encode(voice).contains("/"))
+    }
+
+    @Test fun voiceEncodingStaysUrlSafeForBinaryAudio() {
+        val encoded = java.util.Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(ByteArray(32) { 0xFF.toByte() })
+        val voice = ChatContent.Voice(1_000, encoded)
+        val packed = ChatFeatures.encode(voice)
+        assertFalse(packed.contains("+"))
+        assertFalse(packed.contains("/"))
+        assertEquals(voice, ChatFeatures.decode(packed))
+    }
+
+    @Test fun voiceNotesStayOnTheTimelineAndCannotBeEdited() {
+        val voice = message("voice", "alice", ChatFeatures.encode(ChatContent.Voice(2_000, "YWJj")))
+        val ignoredEdit = message("edit", "alice", ChatFeatures.encode(ChatContent.Edit("voice", "text")))
+        val shown = ChatTimeline.present(listOf(voice, ignoredEdit)).single()
+        assertEquals(ChatContent.Voice(2_000, "YWJj"), shown.content)
+        assertFalse(shown.edited)
+        assertTrue(ChatTimeline.present(listOf(voice, message("del", "alice",
+            ChatFeatures.encode(ChatContent.Delete("voice"))))).single().deleted)
+    }
+
     @Test fun onlyTheOriginalSenderCanEditOrDelete() {
         val original = message("one", "alice", "Hello")
         val invalidEdit = message("two", "bob", ChatFeatures.encode(ChatContent.Edit("one", "Tampered")))

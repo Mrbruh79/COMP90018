@@ -10,6 +10,7 @@ sealed interface ChatContent {
     data class Vote(val pollId: String, val option: Int) : ChatContent
     data class Edit(val targetId: String, val body: String) : ChatContent
     data class Delete(val targetId: String) : ChatContent
+    data class Voice(val durationMs: Int, val audioBase64: String) : ChatContent
 }
 
 /** Structured chat actions travel in the existing message text field on cloud and mesh. */
@@ -23,6 +24,7 @@ object ChatFeatures {
         is ChatContent.Vote -> pack("V", content.pollId, content.option.toString())
         is ChatContent.Edit -> pack("E", content.targetId, content.body)
         is ChatContent.Delete -> pack("D", content.targetId)
+        is ChatContent.Voice -> pack("A", content.durationMs.toString(), content.audioBase64)
     }
 
     fun decode(raw: String): ChatContent {
@@ -41,6 +43,9 @@ object ChatFeatures {
                 "E" -> if (values.size == 2 && values.all(String::isNotBlank))
                     ChatContent.Edit(values[0], values[1]) else null
                 "D" -> if (values.size == 1 && values[0].isNotBlank()) ChatContent.Delete(values[0]) else null
+                "A" -> if (values.size == 2 && values[1].isNotBlank()) {
+                    values[0].toIntOrNull()?.takeIf { it > 0 }?.let { ChatContent.Voice(it, values[1]) }
+                } else null
                 else -> null
             }
         }.getOrNull() ?: ChatContent.Text(raw)
@@ -53,6 +58,7 @@ object ChatFeatures {
         is ChatContent.Vote -> "Voted in a poll"
         is ChatContent.Edit -> "Edited a message"
         is ChatContent.Delete -> "Deleted a message"
+        is ChatContent.Voice -> "Voice message"
     }
 
     private fun pack(type: String, vararg values: String): String =
@@ -75,7 +81,7 @@ object ChatTimeline {
         val ordered = messages.sortedWith(compareBy(ChatMessage::sentAt, ChatMessage::id))
         val originals = ordered.mapNotNull { message ->
             when (val content = ChatFeatures.decode(message.text)) {
-                is ChatContent.Text, is ChatContent.Reply, is ChatContent.Poll ->
+                is ChatContent.Text, is ChatContent.Reply, is ChatContent.Poll, is ChatContent.Voice ->
                     PresentedMessage(message, content)
                 else -> null
             }
