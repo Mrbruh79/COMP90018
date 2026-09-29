@@ -240,6 +240,7 @@ const eventFor = (id, creator, visibility, requiresSignIn = false) => {
     adminPublicKeys: { [creator]: 'public-key' }, visibility,
     requiresSignIn: visibility === 'PUBLIC' && requiresSignIn,
     privateMeshSecret: visibility === 'PRIVATE' ? 's'.repeat(43) : '',
+    venueCheckInPayload: visibility === 'PUBLIC' ? `signed-static-qr-${id}` : '',
     createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null,
   };
 };
@@ -258,6 +259,22 @@ async function createEventAs(uid, eventId, visibility, requiresSignIn = false) {
   await assertSucceeds(batch.commit());
   return event;
 }
+
+test('public event venue QR is created once and cannot be replaced', async () => {
+  await publishAccount('alice');
+  const alice = client('alice');
+  const event = await createEventAs('alice', 'static-qr-event', 'PUBLIC');
+
+  await assertFails(updateDoc(doc(alice, 'events/static-qr-event'), {
+    venueCheckInPayload: 'replacement-qr', updatedAt: event.updatedAt + 1,
+  }));
+  await assertFails(setDoc(doc(alice, 'events/private-with-qr'), {
+    ...eventFor('private-with-qr', 'alice', 'PRIVATE'), venueCheckInPayload: 'not-allowed',
+  }));
+  await assertFails(setDoc(doc(alice, 'events/public-without-qr'), {
+    ...eventFor('public-without-qr', 'alice', 'PUBLIC'), venueCheckInPayload: '',
+  }));
+});
 
 test('private events are invisible until an in-app invitation is accepted', async () => {
   await publishAccount('alice');
