@@ -264,7 +264,7 @@ class FirebaseCloudChatController(
         if (senderUid.isBlank() || text.isBlank()) return null
         return CloudChatMessage(
             id, senderUid, getString("senderPeerId").orEmpty(),
-            getString("senderName").orEmpty().take(24), text.take(1_000),
+            getString("senderName").orEmpty().take(24), text.take(30_000),
             getLong("sentAt") ?: return null,
         )
     }

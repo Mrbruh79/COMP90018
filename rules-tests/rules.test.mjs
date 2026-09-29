@@ -189,7 +189,10 @@ test('direct chats are limited to two account UIDs, with immutable sender data',
     ...message, senderUid: 'carol', senderPeerId: 'carol-peer',
   }));
   await assertFails(setDoc(doc(alice, 'directChatsV2/chat-1/messages/m1'), { ...message, text: 'Changed' }));
-  await assertFails(setDoc(doc(alice, 'directChatsV2/chat-1/messages/m4'), { ...message, text: 'x'.repeat(1001) }));
+  await assertSucceeds(setDoc(doc(alice, 'directChatsV2/chat-1/messages/m4'), {
+    ...message, text: '\u001fCG2|A|1500|' + 'A'.repeat(20_000), sentAt: 103,
+  }));
+  await assertFails(setDoc(doc(alice, 'directChatsV2/chat-1/messages/m6'), { ...message, text: 'x'.repeat(30_001) }));
   await assertFails(setDoc(doc(alice, 'directChatsV2/chat-1/messages/m5'), { ...message, extra: true }));
 });
 
