@@ -9,7 +9,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -74,7 +73,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
@@ -95,7 +93,6 @@ import com.example.blap.chat.ChatContent
 import com.example.blap.chat.ChatTimeline
 import com.example.blap.chat.ChatViewModel
 import com.example.blap.chat.ChatUiState
-import com.example.blap.chat.ContactCardCodec
 import com.example.blap.chat.ContactProfile
 import com.example.blap.chat.ContactSource
 import com.example.blap.chat.ConversationSummary
@@ -103,7 +100,6 @@ import com.example.blap.chat.ConversationType
 import com.example.blap.chat.GroupContact
 import com.example.blap.chat.MessageAuthor
 import com.example.blap.chat.NearbyDevice
-import com.example.blap.chat.ProfileUrl
 import com.example.blap.chat.SavedContact
 import com.example.blap.chat.VoiceNoteRecorder
 import com.example.blap.ui.theme.ButtonHeightExtraSmall
@@ -123,7 +119,9 @@ import com.example.blap.ui.components.DeleteConfirmationDialog
 import com.example.blap.ui.components.MessageBubble
 import com.example.blap.ui.components.MessageComposer
 import com.example.blap.ui.components.PhoneNumberFields
-import com.example.blap.ui.components.createQrBitmap
+import com.example.blap.ui.screens.profile.ProfileForm
+import com.example.blap.ui.screens.profile.ProfileEditorScreen
+import com.example.blap.ui.screens.profile.MyCardScreen
 
 @Composable
 fun NearbyChatApp(
@@ -1591,330 +1589,6 @@ private fun ContactEditorScreen(
         isContact = true,
         allowQrOnly = source == ContactSource.QR,
     )
-}
-
-@Composable
-private fun ProfileEditorScreen(
-    profile: ContactProfile,
-    onChanged: (ContactProfile) -> Unit,
-    onSave: () -> Unit,
-    onBack: () -> Unit,
-) {
-    ProfileForm(
-        title = "Edit Profile Card",
-        subtitle = "These details appear on the QR card you choose to share. Online lookup is managed separately in Settings > Find me.",
-        profile = profile,
-        onChanged = onChanged,
-        onSave = onSave,
-        onBack = onBack,
-        saveLabel = "Save my card",
-    )
-}
-
-@Composable
-private fun ProfileForm(
-    title: String,
-    subtitle: String,
-    profile: ContactProfile,
-    onChanged: (ContactProfile) -> Unit,
-    onSave: () -> Unit,
-    onBack: () -> Unit,
-    saveLabel: String,
-    onDelete: (() -> Unit)? = null,
-    isContact: Boolean = false,
-    allowQrOnly: Boolean = false,
-) {
-    var confirmingDelete by rememberSaveable { mutableStateOf(false) }
-    Column(Modifier.fillMaxSize()) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            IconButton(onClick = onBack, modifier = Modifier.offset(x = (-12).dp)) {
-                Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = "Back")
-            }
-            Text(
-                title,
-                modifier = Modifier.weight(1f),
-                style = MaterialTheme.typography.titleLarge,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        Text(subtitle, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 10.dp))
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(9.dp),
-            contentPadding = PaddingValues(bottom = 12.dp),
-        ) {
-            item {
-                ProfileTextField("Name", profile.displayName) {
-                    onChanged(profile.copy(displayName = it))
-                }
-            }
-            if (isContact) item {
-                ProfileTextField("BLAP username", profile.username) {
-                    onChanged(profile.copy(username = it))
-                }
-            }
-            item {
-                PhoneNumberFields(profile.phoneNumber,
-                    if (isContact) "Contact phone" else "Phone shown on card") { number ->
-                    onChanged(profile.copy(
-                        phoneNumber = number,
-                    ))
-                }
-            }
-            item {
-                ProfileTextField("Email", profile.email, KeyboardType.Email) {
-                    onChanged(profile.copy(email = it))
-                }
-            }
-            item {
-                ProfileTextField("Google account email", profile.googleAccountEmail, KeyboardType.Email) {
-                    onChanged(profile.copy(googleAccountEmail = it))
-                }
-            }
-            item {
-                Text(
-                    "A Google account is added by its email address. A saved address does not prove the account belongs to that person.",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            item {
-                OutlinedTextField(
-                    value = profile.bio,
-                    onValueChange = { onChanged(profile.copy(bio = it)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    label = { Text("About") },
-                    placeholder = { Text("A short intro") },
-                    minLines = 2,
-                    maxLines = 4,
-                    shape = RoundedCornerShape(15.dp),
-                )
-            }
-            item {
-                Text(
-                    "Links & Social Media",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.padding(top = 16.dp),
-                )
-            }
-            item {
-                ProfileTextField("Website", profile.websiteUrl, KeyboardType.Uri) {
-                    onChanged(profile.copy(websiteUrl = it))
-                }
-            }
-            item {
-                ProfileTextField("Instagram URL", profile.instagramUrl, KeyboardType.Uri) {
-                    onChanged(profile.copy(instagramUrl = it))
-                }
-            }
-            item {
-                ProfileTextField("X / Twitter URL", profile.xUrl, KeyboardType.Uri) {
-                    onChanged(profile.copy(xUrl = it))
-                }
-            }
-            item {
-                ProfileTextField("LinkedIn URL", profile.linkedinUrl, KeyboardType.Uri) {
-                    onChanged(profile.copy(linkedinUrl = it))
-                }
-            }
-            item {
-                ProfileTextField("GitHub URL", profile.githubUrl, KeyboardType.Uri) {
-                    onChanged(profile.copy(githubUrl = it))
-                }
-            }
-        }
-        Button(
-            onClick = onSave,
-            enabled = profile.displayName.isNotBlank() &&
-                (!isContact || profile.phoneNumber.isNotBlank() || profile.email.isNotBlank() ||
-                    profile.googleAccountEmail.isNotBlank() || profile.username.isNotBlank() || allowQrOnly),
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(52.dp),
-            shape = RoundedCornerShape(15.dp),
-        ) { Text(saveLabel) }
-        if (onDelete != null) {
-            TextButton(
-                onClick = { confirmingDelete = true },
-                modifier = Modifier.align(Alignment.CenterHorizontally),
-            ) {
-                Text("Delete contact", color = MaterialTheme.colorScheme.error)
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-    }
-    if (confirmingDelete && onDelete != null) {
-        DeleteConfirmationDialog(
-            title = "Delete this contact?",
-            message = "Their saved contact card will be removed from BLAP.",
-            onConfirm = onDelete,
-            onDismiss = { confirmingDelete = false },
-        )
-    }
-}
-
-@Composable
-private fun ProfileTextField(
-    label: String,
-    value: String,
-    keyboardType: KeyboardType = KeyboardType.Text,
-    onValueChanged: (String) -> Unit,
-) {
-    OutlinedTextField(
-        value = value,
-        onValueChange = onValueChanged,
-        modifier = Modifier.fillMaxWidth(),
-        singleLine = true,
-        label = { Text(label) },
-        keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
-        shape = RoundedCornerShape(15.dp),
-    )
-}
-
-@Composable
-private fun MyCardScreen(profile: ContactProfile, peerId: String, onEdit: () -> Unit) {
-    val payload = remember(profile, peerId) { ContactCardCodec.encode(profile, peerId) }
-    val bitmap = remember(payload) { createQrBitmap(payload) }
-    LazyColumn(
-        modifier = Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        contentPadding = PaddingValues(bottom = 18.dp),
-    ) {
-        item {
-            Card(
-                modifier = Modifier.padding(top = 20.dp),
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                shape = RoundedCornerShape(24.dp),
-            ) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "QR code for ${profile.displayName}'s BLAP contact card",
-                    modifier = Modifier
-                        .size(248.dp)
-                        .padding(24.dp),
-                )
-            }
-        }
-        item {
-            Text(
-                "Share this QR to other CommonGround users to have them add you as a contact",
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 12.dp),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                textAlign = TextAlign.Center,
-            )
-        }
-        item {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 24.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(16.dp),
-            ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp),
-                ) {
-                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .padding(end = 12.dp),
-                            ) {
-                                Text(
-                                    profile.displayName.ifBlank { "Your name" },
-                                    style = MaterialTheme.typography.headlineSmall,
-                                )
-                                if (profile.username.isNotBlank()) Text(
-                                    "@${profile.username}",
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                if (profile.phoneNumber.isNotBlank()) Text(
-                                    profile.phoneNumber,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            OutlinedButton(
-                                onClick = onEdit,
-                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                                colors = ButtonDefaults.outlinedButtonColors(
-                                    contentColor = MaterialTheme.colorScheme.primary,
-                                ),
-                            ) {
-                                Text("Edit", style = MaterialTheme.typography.titleSmall)
-                            }
-                        }
-                        if (profile.bio.isNotBlank()) {
-                            Text(profile.bio, style = MaterialTheme.typography.bodyMedium,
-                                modifier = Modifier.padding(top = 8.dp))
-                        }
-                    }
-                    val items = listOf(
-                        ProfileItem("Email", profile.email, openable = false),
-                        ProfileItem("Google account", profile.googleAccountEmail, openable = false),
-                        ProfileItem("Website", profile.websiteUrl, ProfileUrl.isOpenable(profile.websiteUrl)),
-                        ProfileItem("Instagram", profile.instagramUrl, ProfileUrl.isOpenable(profile.instagramUrl)),
-                        ProfileItem("X / Twitter", profile.xUrl, ProfileUrl.isOpenable(profile.xUrl)),
-                        ProfileItem("LinkedIn", profile.linkedinUrl, ProfileUrl.isOpenable(profile.linkedinUrl)),
-                        ProfileItem("GitHub", profile.githubUrl, ProfileUrl.isOpenable(profile.githubUrl)),
-                    ).filter { it.value.isNotBlank() }
-                    if (items.isNotEmpty()) {
-                        HorizontalDivider()
-                        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            items.forEach { ProfileItemRow(it) }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-private data class ProfileItem(
-    val label: String,
-    val value: String,
-    val openable: Boolean = true,
-)
-
-@Composable
-private fun ProfileItemRow(item: ProfileItem) {
-    val uriHandler = LocalUriHandler.current
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Column(Modifier.weight(1f)) {
-            Text(
-                item.label,
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Text(
-                item.value,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-        }
-        if (item.openable) {
-            IconButton(
-                onClick = {
-                    runCatching { uriHandler.openUri(ProfileUrl.normalize(item.value)) }
-                },
-            ) {
-                Icon(
-                    painterResource(R.drawable.ic_open_in_new),
-                    contentDescription = "Open ${item.label}",
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-        }
-    }
 }
 
 @Composable
