@@ -34,8 +34,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.AlertDialog
@@ -43,7 +41,6 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.FloatingActionButton
@@ -79,10 +76,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.example.blap.R
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.blap.chat.ChatScreen
@@ -121,6 +115,9 @@ import com.example.blap.ui.screens.profile.MyCardScreen
 import com.example.blap.ui.screens.contacts.ContactsScreen
 import com.example.blap.ui.screens.contacts.ContactEditorScreen
 import com.example.blap.ui.screens.contacts.ChatContactProfileScreen
+import com.example.blap.ui.screens.auth.AccountAccess
+import com.example.blap.ui.screens.auth.AccountGate
+import com.example.blap.ui.screens.auth.WelcomeScreen
 
 @Composable
 fun NearbyChatApp(
@@ -693,196 +690,6 @@ private fun NearbyPill(state: ChatUiState) {
 }
 
 @Composable
-private fun AccountGate(
-    modifier: Modifier,
-    signedIn: Boolean,
-    loading: Boolean,
-    onRegisterEmail: (String, String, String, String) -> Unit,
-    onSignInWithEmail: (String, String) -> Unit,
-    onSignInWithGoogle: () -> Unit,
-    onCompleteProfile: (String, String) -> Unit,
-    onRetry: () -> Unit,
-    onSignOut: () -> Unit,
-) {
-    var email by rememberSaveable { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var username by rememberSaveable { mutableStateOf("") }
-    var displayName by rememberSaveable { mutableStateOf("") }
-    var creatingAccount by rememberSaveable { mutableStateOf(false) }
-    Column(
-        modifier = modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Spacer(Modifier.height(28.dp))
-        Text("CommonGround", style = MaterialTheme.typography.headlineMedium)
-        if (signedIn) {
-            Text("Set up your profile", style = MaterialTheme.typography.titleLarge)
-            Text("Choose a unique username. Your display name can be shared by other people.")
-            if (loading) {
-                Text("Loading your account...")
-            } else {
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it.take(20) },
-                    label = { Text("Username") },
-                    supportingText = { Text("3 to 20 letters, numbers or underscores") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it.take(24) },
-                    label = { Text("Display name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                Button(onClick = { onCompleteProfile(username, displayName) }, modifier = Modifier.fillMaxWidth()) {
-                    Text("Save and continue")
-                }
-                TextButton(onClick = onRetry) { Text("Retry loading my profile") }
-            }
-            TextButton(onClick = onSignOut) { Text("Sign out") }
-        } else {
-            Text("Sign in to see your chats and contacts on this phone.")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                FilterChip(selected = !creatingAccount, onClick = { creatingAccount = false }, label = { Text("Sign in") })
-                FilterChip(selected = creatingAccount, onClick = { creatingAccount = true }, label = { Text("Create account") })
-            }
-            if (creatingAccount) {
-                OutlinedTextField(
-                    value = username,
-                    onValueChange = { username = it.take(20) },
-                    label = { Text("Unique username") },
-                    supportingText = { Text("3 to 20 letters, numbers or underscores") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it.take(24) },
-                    label = { Text("Display name") },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            }
-            OutlinedTextField(
-                value = email,
-                onValueChange = { email = it.take(120) },
-                label = { Text("Email") },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            OutlinedTextField(
-                value = password,
-                onValueChange = { password = it },
-                label = { Text("Password") },
-                visualTransformation = PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-            Button(
-                onClick = {
-                    if (creatingAccount) onRegisterEmail(email, password, username, displayName)
-                    else onSignInWithEmail(email, password)
-                },
-                modifier = Modifier.fillMaxWidth(),
-            ) { Text(if (creatingAccount) "Create account" else "Sign in with email") }
-            OutlinedButton(onClick = onSignInWithGoogle, modifier = Modifier.fillMaxWidth()) {
-                Text("Continue with Google")
-            }
-            Text(
-                "Phone numbers are optional contact details, not a sign-in method.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-@Composable
-private fun WelcomeScreen(
-    authAccount: AuthAccount,
-    onCreateEmailAccount: (String, String) -> Unit,
-    onSignInWithEmail: (String, String) -> Unit,
-    onSignInWithGoogle: () -> Unit,
-    name: String,
-    nameError: String?,
-    deniedPermissions: List<String>,
-    onNameChanged: (String) -> Unit,
-    onStart: () -> Unit,
-    onOpenSettings: () -> Unit,
-) {
-    Column(Modifier.fillMaxSize()) {
-        Text("Join CommonGround", style = MaterialTheme.typography.headlineSmall)
-        Text(
-            "Your profile is ready. Nearby messaging works without an Internet connection.",
-            modifier = Modifier.padding(top = 8.dp, bottom = 16.dp),
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Column(
-            modifier = Modifier
-                .weight(1f)
-                .verticalScroll(rememberScrollState()),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
-        ) {
-            AccountAccess(
-                authAccount = authAccount,
-                onCreateEmailAccount = onCreateEmailAccount,
-                onSignInWithEmail = onSignInWithEmail,
-                onSignInWithGoogle = onSignInWithGoogle,
-            )
-            Text("Your nearby profile", style = MaterialTheme.typography.titleMedium)
-            OutlinedTextField(
-                value = name,
-                onValueChange = onNameChanged,
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true,
-                isError = nameError != null,
-                label = { Text("Display Name") },
-                supportingText = nameError?.let { message ->
-                    { Text(message) }
-                },
-                trailingIcon = if (nameError != null) {
-                    { Icon(painterResource(R.drawable.ic_error), contentDescription = null) }
-                } else {
-                    null
-                },
-                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                keyboardActions = KeyboardActions(onDone = { onStart() }),
-            )
-
-            if (deniedPermissions.isNotEmpty()) {
-                Card(
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer),
-                    shape = RoundedCornerShape(18.dp),
-                ) {
-                    Column(Modifier.padding(16.dp)) {
-                        Text("Permissions needed", style = MaterialTheme.typography.titleMedium)
-                        deniedPermissions.forEach { permission ->
-                            Text("• $permission", modifier = Modifier.padding(top = 4.dp))
-                        }
-                        TextButton(onClick = onOpenSettings, modifier = Modifier.align(Alignment.End)) {
-                            Text("Open settings")
-                        }
-                    }
-                }
-            }
-        }
-        Button(
-            onClick = onStart,
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 24.dp)
-                .height(ButtonHeightMedium),
-        ) {
-            Text("Continue to chats")
-        }
-    }
-}
-
-@Composable
 private fun ConversationList(
     conversations: List<ConversationSummary>,
     devices: List<NearbyDevice>,
@@ -1353,86 +1160,6 @@ private fun CreateGroupScreen(
             onConfirm = onDelete,
             onDismiss = { confirmingDelete = false },
         )
-    }
-}
-
-@Composable
-private fun AccountAccess(
-    authAccount: AuthAccount,
-    onCreateEmailAccount: (String, String) -> Unit,
-    onSignInWithEmail: (String, String) -> Unit,
-    onSignInWithGoogle: () -> Unit,
-) {
-    var accountEmail by rememberSaveable { mutableStateOf("") }
-    var accountPassword by remember { mutableStateOf("") }
-    var selectedMethod by rememberSaveable { mutableStateOf(0) }
-    LaunchedEffect(authAccount) { accountPassword = "" }
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(18.dp),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("Sign in or link an account", style = MaterialTheme.typography.titleMedium)
-            if (authAccount.email.isNotBlank()) {
-                Text(authAccount.email, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                listOf("Email", "Google").forEachIndexed { index, label ->
-                    FilterChip(
-                        selected = selectedMethod == index,
-                        onClick = { selectedMethod = index },
-                        label = { Text(label) },
-                    )
-                }
-            }
-            when (selectedMethod) {
-                0 -> {
-                    if (authAccount.hasPassword) {
-                        Text("Email and password connected", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        OutlinedTextField(
-                            value = accountEmail,
-                            onValueChange = { accountEmail = it.take(120) },
-                            label = { Text("Email") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        OutlinedTextField(
-                            value = accountPassword,
-                            onValueChange = { accountPassword = it },
-                            label = { Text("Password") },
-                            visualTransformation = PasswordVisualTransformation(),
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { onCreateEmailAccount(accountEmail, accountPassword) }) {
-                                Text(if (authAccount.hasGoogle) "Add email sign-in" else "Create account")
-                            }
-                            if (!authAccount.hasGoogle) {
-                                TextButton(onClick = { onSignInWithEmail(accountEmail, accountPassword) }) {
-                                    Text("Sign in")
-                                }
-                            }
-                        }
-                    }
-                }
-                1 -> {
-                    if (authAccount.hasGoogle) {
-                        Text("Google connected", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    } else {
-                        OutlinedButton(onClick = onSignInWithGoogle) { Text("Continue with Google") }
-                    }
-                }
-            }
-            Text(
-                "Nearby chat works offline after sign-in. Phone numbers can be kept on contact cards, but are not used to sign in.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
     }
 }
 
