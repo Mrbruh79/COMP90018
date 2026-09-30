@@ -75,7 +75,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -94,13 +93,11 @@ import com.example.blap.chat.ChatTimeline
 import com.example.blap.chat.ChatViewModel
 import com.example.blap.chat.ChatUiState
 import com.example.blap.chat.ContactProfile
-import com.example.blap.chat.ContactSource
 import com.example.blap.chat.ConversationSummary
 import com.example.blap.chat.ConversationType
 import com.example.blap.chat.GroupContact
 import com.example.blap.chat.MessageAuthor
 import com.example.blap.chat.NearbyDevice
-import com.example.blap.chat.SavedContact
 import com.example.blap.chat.VoiceNoteRecorder
 import com.example.blap.ui.theme.ButtonHeightExtraSmall
 import com.example.blap.ui.theme.ButtonHeightMedium
@@ -119,9 +116,11 @@ import com.example.blap.ui.components.DeleteConfirmationDialog
 import com.example.blap.ui.components.MessageBubble
 import com.example.blap.ui.components.MessageComposer
 import com.example.blap.ui.components.PhoneNumberFields
-import com.example.blap.ui.screens.profile.ProfileForm
 import com.example.blap.ui.screens.profile.ProfileEditorScreen
 import com.example.blap.ui.screens.profile.MyCardScreen
+import com.example.blap.ui.screens.contacts.ContactsScreen
+import com.example.blap.ui.screens.contacts.ContactEditorScreen
+import com.example.blap.ui.screens.contacts.ChatContactProfileScreen
 
 @Composable
 fun NearbyChatApp(
@@ -1358,240 +1357,6 @@ private fun CreateGroupScreen(
 }
 
 @Composable
-private fun ContactsScreen(
-    contacts: List<SavedContact>,
-    onlineReady: Boolean,
-    search: String,
-    onSearchChanged: (String) -> Unit,
-    onAdd: () -> Unit,
-    onOpen: (String) -> Unit,
-    onScan: () -> Unit,
-    onImport: () -> Unit,
-    onMessage: (String) -> Unit,
-    onCheckOnline: (String) -> Unit,
-    onOpenCreateGroup: () -> Unit,
-    onDiscoverNearby: () -> Unit,
-) {
-    val filtered = contacts.filter { contact ->
-        search.isBlank() || listOf(
-            contact.name,
-            contact.phoneNumber,
-            contact.email,
-            contact.googleAccountEmail,
-            contact.username,
-            contact.instagramUrl,
-            contact.linkedinUrl,
-        ).any { it.contains(search, ignoreCase = true) }
-    }
-    Column(Modifier.fillMaxSize()) {
-        Text("Add new contacts", style = MaterialTheme.typography.titleMedium)
-        ContactActionRow(R.drawable.ic_contact_add, "Manually add contact", onAdd)
-        ContactActionRow(R.drawable.ic_contact_import, "Import phone contacts", onImport)
-        ContactActionRow(R.drawable.ic_scan_qr, "Scan QR Code", onScan)
-        Text(
-            "Saved Contacts",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(top = 16.dp, bottom = 12.dp),
-        )
-        OutlinedTextField(
-            value = search,
-            onValueChange = onSearchChanged,
-            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-            singleLine = true,
-            placeholder = { Text("Search contacts") },
-            leadingIcon = { Icon(painterResource(R.drawable.ic_search), contentDescription = null) },
-            shape = CircleShape,
-        )
-        ContactActionRow(R.drawable.ic_group_add, "Create group chat", onOpenCreateGroup)
-        LazyColumn(
-            modifier = Modifier.weight(1f),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-            contentPadding = PaddingValues(top = 8.dp, bottom = 12.dp),
-        ) {
-            if (filtered.isEmpty()) {
-                item {
-                    if (contacts.isEmpty()) {
-                        NoSavedContactsCard(onDiscoverNearby)
-                    } else {
-                        Text(
-                            "No contacts match your search",
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(vertical = 8.dp),
-                        )
-                    }
-                }
-            } else {
-                items(filtered, key = SavedContact::id) { contact ->
-                    val linked = contact.linkedPeerId != null || contact.cloudUserId.isNotBlank()
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable { onOpen(contact.id) },
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                        ),
-                        shape = RoundedCornerShape(16.dp),
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Avatar(contact.name, contact.linkedPeerId != null)
-                                Column(
-                                    Modifier
-                                        .padding(horizontal = 16.dp)
-                                        .weight(1f),
-                                ) {
-                                    Text(contact.name, style = MaterialTheme.typography.titleMedium)
-                                    if (contact.username.isNotBlank()) {
-                                        Text("@${contact.username}", color = MaterialTheme.colorScheme.primary)
-                                    }
-                                    Text(
-                                        contact.email.ifBlank {
-                                            contact.googleAccountEmail.ifBlank {
-                                                contact.phoneNumber.ifBlank { "BLAP contact" }
-                                            }
-                                        },
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                IconButton(onClick = { onMessage(contact.id) }) {
-                                    Icon(
-                                        painterResource(R.drawable.ic_send),
-                                        contentDescription = "Message ${contact.name}",
-                                        tint = MaterialTheme.colorScheme.primary,
-                                    )
-                                }
-                            }
-                            HorizontalDivider()
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    when {
-                                        contact.cloudUserId.isNotBlank() && contact.username.isNotBlank() ->
-                                            "Online as @${contact.username}"
-                                        contact.cloudUserId.isNotBlank() -> "Online account found. Confirm a number match by QR."
-                                        contact.linkedPeerId != null -> "Recognized on mesh"
-                                        onlineReady && contact.username.isNotBlank() -> "Can find @${contact.username} online"
-                                        onlineReady && (contact.email.isNotBlank() || contact.googleAccountEmail.isNotBlank()) ->
-                                            "Can look up a verified account email online"
-                                        onlineReady && contact.phoneNumber.isNotBlank() ->
-                                            "Can look up this number online. Match is unverified"
-                                        else -> "Saved locally. Sign in or pair by QR or Nearby to chat"
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    style = MaterialTheme.typography.labelLarge,
-                                    color = if (linked) MaterialTheme.colorScheme.primary
-                                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                if (onlineReady && (contact.phoneNumber.isNotBlank() ||
-                                        contact.email.isNotBlank() || contact.googleAccountEmail.isNotBlank() ||
-                                        contact.username.isNotBlank())) {
-                                    TextButton(
-                                        onClick = { onCheckOnline(contact.id) },
-                                        modifier = Modifier.padding(start = 12.dp),
-                                    ) { Text("Find online") }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun NoSavedContactsCard(onDiscoverNearby: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
-        shape = RoundedCornerShape(16.dp),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            Text("No saved CommonGround contacts", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Add a new contact using the menu above, or try our nearby discovery feature!",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            OutlinedButton(
-                onClick = onDiscoverNearby,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 4.dp),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.primary,
-                ),
-            ) { Text("Go to Discover Nearby", style = MaterialTheme.typography.titleSmall) }
-        }
-    }
-}
-
-@Composable
-private fun ContactActionRow(@DrawableRes iconRes: Int, label: String, onClick: () -> Unit) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .padding(vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Box(
-            modifier = Modifier
-                .size(48.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primary),
-            contentAlignment = Alignment.Center,
-        ) {
-            Icon(
-                painterResource(iconRes),
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimary,
-            )
-        }
-        Text(
-            label,
-            modifier = Modifier.padding(start = 16.dp),
-            style = MaterialTheme.typography.bodyLarge,
-        )
-    }
-}
-
-@Composable
-private fun ContactEditorScreen(
-    profile: ContactProfile,
-    source: ContactSource,
-    isExisting: Boolean,
-    onChanged: (ContactProfile) -> Unit,
-    onSave: () -> Unit,
-    onDelete: () -> Unit,
-    onBack: () -> Unit,
-) {
-    ProfileForm(
-        title = if (isExisting) "Edit contact" else if (source == ContactSource.QR) "Review scanned card" else "New contact",
-        subtitle = if (source == ContactSource.QR) {
-            "Check the username before saving. It links this card to their online account."
-        } else {
-            "Add contact details and any social profiles you want to keep together."
-        },
-        profile = profile,
-        onChanged = onChanged,
-        onSave = onSave,
-        onBack = onBack,
-        saveLabel = if (isExisting) "Save changes" else "Save contact",
-        onDelete = if (isExisting) onDelete else null,
-        isContact = true,
-        allowQrOnly = source == ContactSource.QR,
-    )
-}
-
-@Composable
 private fun AccountAccess(
     authAccount: AuthAccount,
     onCreateEmailAccount: (String, String) -> Unit,
@@ -1913,57 +1678,6 @@ private fun NotificationSettingRow(label: String, checked: Boolean, onCheckedCha
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(label, modifier = Modifier.weight(1f))
         Switch(checked = checked, onCheckedChange = onCheckedChange)
-    }
-}
-
-@Composable
-private fun ChatContactProfileScreen(
-    conversation: ConversationSummary?,
-    contact: SavedContact?,
-    onEdit: () -> Unit,
-    onSaveContact: () -> Unit,
-    onBack: () -> Unit,
-) {
-    val uriHandler = LocalUriHandler.current
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        TextButton(onClick = onBack) { Text("Back to chat") }
-        Text(contact?.name ?: conversation?.name.orEmpty(), style = MaterialTheme.typography.headlineSmall)
-        if (contact == null) {
-            Text("This person is not in your saved contacts yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = onSaveContact, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-                Text("Save contact")
-            }
-            return@Column
-        }
-        Text(
-            when {
-                contact.cloudUserId.isNotBlank() -> "Online account linked"
-                contact.linkedPeerId != null -> "Paired nearby"
-                else -> "Saved on this phone"
-            }, color = MaterialTheme.colorScheme.primary,
-        )
-        listOf(
-            "BLAP username" to contact.username.takeIf(String::isNotBlank)?.let { "@$it" }.orEmpty(),
-            "Phone" to contact.phoneNumber,
-            "Email" to contact.email,
-            "Google account" to contact.googleAccountEmail,
-            "About" to contact.bio,
-        ).filter { it.second.isNotBlank() }.forEach { (label, value) ->
-            Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 16.dp))
-            Text(value)
-        }
-        listOf(
-            "Website" to contact.websiteUrl,
-            "Instagram" to contact.instagramUrl,
-            "X" to contact.xUrl,
-            "LinkedIn" to contact.linkedinUrl,
-            "GitHub" to contact.githubUrl,
-        ).filter { it.second.isNotBlank() }.forEach { (label, value) ->
-            TextButton(onClick = { runCatching { uriHandler.openUri(value) } }) { Text("Open $label") }
-        }
-        Button(onClick = onEdit, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-            Text("Edit saved contact")
-        }
     }
 }
 
