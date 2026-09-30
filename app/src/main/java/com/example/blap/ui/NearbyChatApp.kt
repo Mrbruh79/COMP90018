@@ -1,19 +1,16 @@
 package com.example.blap.ui
 
-import android.graphics.Bitmap
 import androidx.annotation.DrawableRes
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -31,8 +28,6 @@ import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -72,7 +67,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -84,13 +78,10 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import com.example.blap.R
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -102,7 +93,6 @@ import com.example.blap.chat.ChatMessage
 import com.example.blap.chat.ChatNotificationSettings
 import com.example.blap.chat.ChatContent
 import com.example.blap.chat.ChatTimeline
-import com.example.blap.chat.PresentedMessage
 import com.example.blap.chat.ChatViewModel
 import com.example.blap.chat.ChatUiState
 import com.example.blap.chat.ContactCardCodec
@@ -112,12 +102,9 @@ import com.example.blap.chat.ConversationSummary
 import com.example.blap.chat.ConversationType
 import com.example.blap.chat.GroupContact
 import com.example.blap.chat.MessageAuthor
-import com.example.blap.chat.MessageStatus
 import com.example.blap.chat.NearbyDevice
 import com.example.blap.chat.ProfileUrl
 import com.example.blap.chat.SavedContact
-import com.example.blap.chat.PhoneNumberParts
-import com.example.blap.chat.VoiceNotePlayback
 import com.example.blap.chat.VoiceNoteRecorder
 import com.example.blap.ui.theme.ButtonHeightExtraSmall
 import com.example.blap.ui.theme.ButtonHeightMedium
@@ -125,18 +112,18 @@ import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventUiState
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.qrcode.QRCodeWriter
-import android.media.MediaPlayer
-import android.os.Handler
-import android.os.Looper
 import android.os.SystemClock
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import com.example.blap.ui.components.Avatar
+import com.example.blap.ui.components.DeleteConfirmationDialog
+import com.example.blap.ui.components.MessageBubble
+import com.example.blap.ui.components.MessageComposer
+import com.example.blap.ui.components.PhoneNumberFields
+import com.example.blap.ui.components.createQrBitmap
 
 @Composable
 fun NearbyChatApp(
@@ -1216,45 +1203,6 @@ private fun formatConversationTime(time: Long): String {
 }
 
 @Composable
-private fun Avatar(
-    name: String,
-    connected: Boolean,
-    @DrawableRes iconRes: Int? = null,
-) {
-    val content = if (connected) {
-        MaterialTheme.colorScheme.onTertiary
-    } else {
-        MaterialTheme.colorScheme.onSurface
-    }
-    Box(
-        modifier = Modifier
-            .size(44.dp)
-            .clip(CircleShape)
-            .background(
-                if (connected) {
-                    MaterialTheme.colorScheme.tertiary
-                } else {
-                    MaterialTheme.colorScheme.surfaceContainerHighest
-                },
-            ),
-        contentAlignment = Alignment.Center,
-    ) {
-        if (iconRes != null) {
-            Icon(painterResource(iconRes), contentDescription = null, tint = content)
-        } else {
-            Text(initialsOf(name), color = content, fontWeight = FontWeight.Bold)
-        }
-    }
-}
-
-private fun initialsOf(name: String) = name
-    .split(' ')
-    .filter(String::isNotBlank)
-    .take(2)
-    .map { it.first().uppercaseChar() }
-    .joinToString("")
-
-@Composable
 private fun ConnectingScreen(authenticationDigits: String?, onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize(),
@@ -1808,58 +1756,6 @@ private fun ProfileForm(
 }
 
 @Composable
-private fun DeleteConfirmationDialog(
-    title: String,
-    message: String,
-    onConfirm: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(title) },
-        text = { Text(message) },
-        confirmButton = {
-            TextButton(onClick = onConfirm) {
-                Text("Delete", color = MaterialTheme.colorScheme.error)
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
-    )
-}
-
-@Composable
-private fun PhoneNumberFields(number: String, label: String = "Phone number (optional)", onChanged: (String) -> Unit) {
-    val initial = remember { PhoneNumberParts.from(number) }
-    var countryCode by rememberSaveable { mutableStateOf(initial.countryCode) }
-    var nationalNumber by rememberSaveable { mutableStateOf(initial.nationalNumber) }
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-        OutlinedTextField(
-            value = countryCode,
-            onValueChange = { value ->
-                countryCode = value.filter(Char::isDigit).take(3)
-                onChanged(PhoneNumberParts(countryCode, nationalNumber).combined())
-            },
-            modifier = Modifier.width(104.dp),
-            label = { Text("Code") },
-            prefix = { Text("+") },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-        )
-        OutlinedTextField(
-            value = nationalNumber,
-            onValueChange = { value ->
-                nationalNumber = value.filter(Char::isDigit).take(15)
-                onChanged(PhoneNumberParts(countryCode, nationalNumber).combined())
-            },
-            modifier = Modifier.weight(1f),
-            label = { Text(label) },
-            singleLine = true,
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-        )
-    }
-}
-
-@Composable
 private fun ProfileTextField(
     label: String,
     value: String,
@@ -2019,17 +1915,6 @@ private fun ProfileItemRow(item: ProfileItem) {
             }
         }
     }
-}
-
-internal fun createQrBitmap(payload: String, size: Int = 900): Bitmap {
-    val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size)
-    val pixels = IntArray(size * size)
-    val dark = android.graphics.Color.BLACK
-    val light = android.graphics.Color.WHITE
-    for (y in 0 until size) {
-        for (x in 0 until size) pixels[y * size + x] = if (matrix[x, y]) dark else light
-    }
-    return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
 }
 
 @Composable
@@ -2698,245 +2583,6 @@ private fun PollComposerDialog(onCreate: (String, List<String>) -> Unit, onDismi
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
-}
-
-@Composable
-internal fun MessageBubble(message: ChatMessage, showSender: Boolean) {
-    MessageBubble(
-        item = PresentedMessage(message, ChatContent.Text(message.text)),
-        showSender = showSender,
-        onReply = {},
-        onEdit = {},
-        onDelete = {},
-        onVote = {},
-        showActions = false,
-    )
-}
-
-@Composable
-internal fun MessageBubble(
-    item: PresentedMessage,
-    showSender: Boolean,
-    onReply: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
-    onVote: (Int) -> Unit,
-    showActions: Boolean = true,
-) {
-    val message = item.message
-    val mine = message.author == MessageAuthor.ME
-    var menuExpanded by remember { mutableStateOf(false) }
-    var swipeOffset by remember(message.id) { mutableFloatStateOf(0f) }
-    val visibleSwipeOffset by animateFloatAsState(swipeOffset, label = "Reply swipe")
-    val replyThreshold = with(LocalDensity.current) { 68.dp.toPx() }
-    val swipeLimit = with(LocalDensity.current) { 88.dp.toPx() }
-    Column(
-        Modifier.fillMaxWidth(),
-        horizontalAlignment = if (mine) Alignment.End else Alignment.Start,
-    ) {
-        if (!mine && showSender) {
-            Text(
-                message.senderName.ifBlank { "Mesh member" },
-                modifier = Modifier.padding(start = 4.dp, bottom = 3.dp),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        Box {
-            if (showActions && !item.deleted) {
-                Text(
-                    "↩",
-                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 12.dp),
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.titleLarge,
-                )
-            }
-            Column(
-            modifier = Modifier
-                .widthIn(max = 310.dp)
-                .offset { IntOffset(visibleSwipeOffset.roundToInt(), 0) }
-                .pointerInput(message.id, showActions, item.deleted) {
-                    if (showActions && !item.deleted) {
-                        detectHorizontalDragGestures(
-                            onHorizontalDrag = { change, amount ->
-                                swipeOffset = (swipeOffset + amount).coerceIn(0f, swipeLimit)
-                                change.consume()
-                            },
-                            onDragEnd = {
-                                if (swipeOffset >= replyThreshold) onReply()
-                                swipeOffset = 0f
-                            },
-                            onDragCancel = { swipeOffset = 0f },
-                        )
-                    }
-                }
-                .clip(RoundedCornerShape(17.dp))
-                .border(
-                    1.dp,
-                    if (mine) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.outline,
-                    RoundedCornerShape(17.dp),
-                )
-                .background(
-                    if (mine) {
-                        MaterialTheme.colorScheme.tertiary
-                    } else {
-                        MaterialTheme.colorScheme.surface
-                    },
-                )
-                .clickable(enabled = showActions && !item.deleted) { menuExpanded = true }
-                .padding(horizontal = 14.dp, vertical = 10.dp),
-            ) {
-                val textColor = if (mine) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSurface
-                if (item.deleted) Text("Message deleted", color = textColor)
-                else when (val content = item.content) {
-                    is ChatContent.Text -> Text(content.body, color = textColor)
-                    is ChatContent.Reply -> {
-                        Text("Reply to: ${content.excerpt}", color = textColor,
-                            style = MaterialTheme.typography.labelMedium)
-                        Text(content.body, color = textColor)
-                    }
-                    is ChatContent.Poll -> {
-                        Text(content.question, color = textColor, style = MaterialTheme.typography.titleMedium)
-                        content.options.forEachIndexed { index, option ->
-                            TextButton(onClick = { onVote(index) }) {
-                                Text("${if (item.myVote == index) "✓ " else ""}$option · ${item.votes.getOrElse(index) { 0 }}")
-                            }
-                        }
-                    }
-                    is ChatContent.Voice -> VoiceMessageBubble(
-                        messageId = message.id,
-                        durationMs = content.durationMs,
-                        audioBase64 = content.audioBase64,
-                        textColor = textColor,
-                    )
-                    else -> Unit
-                }
-                if (item.edited && !item.deleted) Text("Edited", color = textColor,
-                    style = MaterialTheme.typography.labelSmall)
-            }
-            DropdownMenu(expanded = showActions && menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                DropdownMenuItem(text = { Text("Reply") }, onClick = { menuExpanded = false; onReply() })
-                if (mine) {
-                    if (item.content is ChatContent.Text || item.content is ChatContent.Reply) {
-                        DropdownMenuItem(text = { Text("Edit") }, onClick = { menuExpanded = false; onEdit() })
-                    }
-                    DropdownMenuItem(text = { Text("Delete") }, onClick = { menuExpanded = false; onDelete() })
-                }
-            }
-        }
-        val timestamp = formatTimestamp(message.sentAt)
-        if (mine) {
-            val status = when (message.status) {
-                MessageStatus.PENDING -> "Waiting"
-                MessageStatus.SENT -> "Sent"
-                MessageStatus.DELIVERED -> "Delivered"
-            }
-            Text(
-                "$timestamp · $status",
-                modifier = Modifier.padding(top = 3.dp, end = 4.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        } else {
-            Text(
-                timestamp,
-                modifier = Modifier.padding(top = 3.dp, start = 4.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
-
-private fun formatTimestamp(sentAt: Long): String =
-    SimpleDateFormat("MMM d, h:mm a", Locale.getDefault()).format(Date(sentAt))
-
-@Composable
-private fun VoiceMessageBubble(
-    messageId: String,
-    durationMs: Int,
-    audioBase64: String,
-    textColor: Color,
-) {
-    val context = LocalContext.current
-    var playing by remember(messageId) { mutableStateOf(false) }
-    val player = remember(messageId) { MediaPlayer() }
-    val handler = remember(messageId) { Handler(Looper.getMainLooper()) }
-    DisposableEffect(messageId, audioBase64) {
-        val file = VoiceNotePlayback.writeCacheFile(context, messageId, audioBase64)
-        val stopPlaying = Runnable { playing = false }
-        if (file != null) {
-            try {
-                player.setDataSource(file.absolutePath)
-                player.prepare()
-                player.setOnCompletionListener { handler.post(stopPlaying) }
-            } catch (_: Exception) {
-            }
-        }
-        onDispose {
-            handler.removeCallbacks(stopPlaying)
-            try {
-                if (player.isPlaying) player.stop()
-            } catch (_: Exception) {
-            }
-            player.release()
-        }
-    }
-    val seconds = ((durationMs + 500) / 1000).coerceAtLeast(1)
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        TextButton(onClick = {
-            try {
-                if (playing) {
-                    player.pause()
-                    player.seekTo(0)
-                    playing = false
-                } else {
-                    player.start()
-                    playing = true
-                }
-            } catch (_: Exception) {
-                playing = false
-            }
-        }) { Text(if (playing) "Stop" else "Play", color = textColor) }
-        Text("${seconds}s voice", color = textColor)
-    }
-}
-
-@Composable
-internal fun MessageComposer(
-    text: String,
-    onTextChanged: (String) -> Unit,
-    onSend: (String) -> Unit,
-    sendLabel: String = "Send",
-) {
-    val send = {
-        if (text.isNotBlank()) {
-            onSend(text)
-        }
-    }
-
-    Row(
-        Modifier
-            .fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        OutlinedTextField(
-            value = text,
-            onValueChange = {
-                onTextChanged(it.take(1_000))
-            },
-            modifier = Modifier.weight(1f),
-            placeholder = { Text("Message") },
-            maxLines = 4,
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-            keyboardActions = KeyboardActions(onSend = { send() }),
-            shape = RoundedCornerShape(17.dp),
-        )
-        Spacer(Modifier.width(9.dp))
-        Button(onClick = send, enabled = text.isNotBlank(), modifier = Modifier.height(52.dp)) {
-            Text(sendLabel)
-        }
-    }
 }
 
 @Composable

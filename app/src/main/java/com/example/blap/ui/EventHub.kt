@@ -74,6 +74,9 @@ import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.launch
+import com.example.blap.ui.components.MessageBubble
+import com.example.blap.ui.components.MessageComposer
+import com.example.blap.ui.components.createQrBitmap
 
 @Composable
 fun EventHub(
