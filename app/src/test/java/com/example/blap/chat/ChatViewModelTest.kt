@@ -1,14 +1,108 @@
 package com.example.blap.chat
 
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelStore
 import kotlinx.coroutines.Dispatchers
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertNotSame
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ChatViewModelTest {
+    @Test
+    fun factoryRejectsUnknownViewModelsWithoutCreatingResources() {
+        var created = false
+        val factory = ChatViewModelFactory {
+            created = true
+            error("Dependencies should not be constructed")
+        }
+
+        assertThrows(IllegalArgumentException::class.java) {
+            factory.create(UnsupportedViewModel::class.java)
+        }
+        assertFalse(created)
+    }
+
+    @Test
+    fun factoryWiresAccountIdentityStoresAndTransportListeners() {
+        val nearby = FakeNearbyChatController()
+        val store = FakeChatStore()
+        val identity = SnapshotIdentityStore(ContactProfile(displayName = "Alice", username = "alice"), 10)
+        val cloud = FakeCloudChatController()
+        val factory = ChatViewModelFactory {
+            ChatDependencies(nearby, store, identity, accountId = "alice-account",
+                cloudChatController = cloud, ioDispatcher = Dispatchers.Unconfined)
+        }
+        val owner = ViewModelStore()
+
+        try {
+            val viewModel = factory.create(ChatViewModel::class.java)
+            owner.put("chat", viewModel)
+            assertEquals("alice-account", viewModel.uiState.value.onlineAccountId)
+            assertEquals("Alice", viewModel.uiState.value.displayName)
+            assertEquals(identity.getPeerId(), viewModel.uiState.value.myPeerId)
+            assertEquals("alice-account", cloud.startedAccountId)
+            assertSame(viewModel, nearby.listener)
+            assertSame(viewModel, cloud.listener)
+            assertEquals(MeshGroup.ID, store.getConversations().single().peerId)
+        } finally {
+            owner.clear()
+        }
+    }
+
+    @Test
+    fun factoryCreatesFreshResourcesForEachViewModel() {
+        val transports = mutableListOf<FakeNearbyChatController>()
+        val factory = ChatViewModelFactory {
+            val nearby = FakeNearbyChatController().also(transports::add)
+            ChatDependencies(nearby, FakeChatStore(), FakeIdentityStore(),
+                ioDispatcher = Dispatchers.Unconfined)
+        }
+        val owner = ViewModelStore()
+
+        try {
+            assertTrue(transports.isEmpty())
+            val first = factory.create(ChatViewModel::class.java)
+            owner.put("first", first)
+            val second = factory.create(ChatViewModel::class.java)
+            owner.put("second", second)
+            assertEquals(2, transports.size)
+            assertNotSame(first, second)
+            assertNotSame(transports[0], transports[1])
+            assertSame(first, transports[0].listener)
+            assertSame(second, transports[1].listener)
+        } finally {
+            owner.clear()
+        }
+        assertTrue(transports.all { it.closed })
+    }
+
+    @Test
+    fun factoryResourcesAreReleasedWhenViewModelOwnerIsCleared() {
+        val nearby = FakeNearbyChatController()
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        val factory = ChatViewModelFactory {
+            ChatDependencies(nearby, store, FakeIdentityStore(), accountId = "alice-account",
+                cloudChatController = cloud, ioDispatcher = Dispatchers.Unconfined)
+        }
+        val owner = ViewModelStore()
+        owner.put("chat", factory.create(ChatViewModel::class.java))
+
+        owner.clear()
+
+        assertTrue(nearby.closed)
+        assertTrue(store.closed)
+        assertNull(cloud.listener)
+    }
+
+    private class UnsupportedViewModel : ViewModel()
+
     @Test
     fun reloginRestoresCardAndOptInDiscoveryFromNewerPrivateCopy() {
         val identity = SnapshotIdentityStore(ContactProfile(displayName = "Alice", username = "alice"), 10)
@@ -1214,6 +1308,7 @@ class ChatViewModelTest {
     }
 
     private class FakeChatStore : ChatStore {
+        var closed = false
         private val peers = linkedMapOf<String, String>()
         private val messages = linkedMapOf<String, ChatMessage>()
         private val groups = linkedMapOf<String, PrivateGroup>()
@@ -1330,11 +1425,12 @@ class ChatViewModelTest {
             peers.remove(fromPeerId)
         }
 
-        override fun close() = Unit
+        override fun close() { closed = true }
     }
 
     private class FakeNearbyChatController : NearbyChatController {
-        override var listener: NearbyChatController.Listener? = null
+        override var listener: NearbyTransport.Listener? = null
+        var closed = false
         var advertisingStarted = false
         var advertisedName: String? = null
         var advertisedPeerId: String? = null
@@ -1379,11 +1475,12 @@ class ChatViewModelTest {
         override fun stop() {
             stopped = true
         }
-        override fun close() = Unit
+        override fun close() { closed = true }
     }
 
     private class FakeCloudChatController : CloudChatController {
         var listener: CloudChatController.Listener? = null
+        var startedAccountId: String? = null
         var failAccountFetch = false
         val directMessages = mutableListOf<Pair<String, CloudChatMessage>>()
         val groups = mutableListOf<CloudPrivateGroup>()
@@ -1400,6 +1497,7 @@ class ChatViewModelTest {
         }
 
         override fun start(accountUid: String, listener: CloudChatController.Listener) {
+            startedAccountId = accountUid
             this.listener = listener
         }
 

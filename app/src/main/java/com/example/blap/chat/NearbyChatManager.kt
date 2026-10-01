@@ -56,7 +56,7 @@ class NearbyChatManager(context: Context) : NearbyChatController {
     private var advertisingRequested = false
     private var discoveryRequested = false
 
-    override var listener: NearbyChatController.Listener? = null
+    override var listener: NearbyTransport.Listener? = null
 
     private val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {

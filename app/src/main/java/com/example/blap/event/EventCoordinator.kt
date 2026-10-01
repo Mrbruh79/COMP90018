@@ -1,7 +1,6 @@
 package com.example.blap.event
 
 import com.example.blap.chat.IdentityStore
-import com.example.blap.chat.NearbyChatController
 import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -58,7 +57,7 @@ class EventCoordinator(
     private val remoteRepository: EventRemoteRepository,
     private val adminKeyStore: EventAdminKeyStore,
     private val identityStore: IdentityStore,
-    private val nearbyController: NearbyChatController,
+    private val nearbyController: EventMeshGateway,
     private val scope: CoroutineScope,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {

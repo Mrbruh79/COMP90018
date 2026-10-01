@@ -1,8 +1,6 @@
 package com.example.blap.chat
 
-import android.content.Context
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import java.util.Base64
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -31,13 +29,10 @@ import com.example.blap.event.EventCoordinator
 import com.example.blap.event.EventRemoteRepository
 import com.example.blap.event.EventStore
 import com.example.blap.event.EventUiState
-import com.example.blap.event.FirebaseEventRemoteRepository
-import com.example.blap.event.LocalEventAdminKeyStore
-import com.example.blap.event.SqliteEventStore
-import com.example.blap.auth.AuthManager
+import com.example.blap.event.EventMeshGateway
 
 class ChatViewModel(
-    private val nearbyChatController: NearbyChatController,
+    private val nearbyChatController: NearbyTransport,
     private val chatStore: ChatStore,
     private val identityStore: IdentityStore,
     ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
@@ -48,7 +43,8 @@ class ChatViewModel(
     private val chatNotifier: ChatNotifier = NoopChatNotifier,
     initialAccountId: String = "",
     private val privateProfileStore: PrivateProfileStore? = null,
-) : ViewModel(), NearbyChatController.Listener, CloudChatController.Listener {
+    eventMeshGateway: EventMeshGateway? = nearbyChatController as? EventMeshGateway,
+) : ViewModel(), NearbyTransport.Listener, CloudChatController.Listener {
     private val workScope = CoroutineScope(SupervisorJob() + ioDispatcher)
     private val privateProfileWriteMutex = Mutex()
     private val newestPrivateProfileVersion = AtomicLong(0)
@@ -66,14 +62,15 @@ class ChatViewModel(
     private var scannedEmail: String? = null
     private var pairedFromOpenChat = false
     private val eventCoordinator = if (
-        eventStore != null && eventRemoteRepository != null && eventAdminKeyStore != null
+        eventStore != null && eventRemoteRepository != null && eventAdminKeyStore != null &&
+        eventMeshGateway != null
     ) {
         EventCoordinator(
             eventStore = eventStore,
             remoteRepository = eventRemoteRepository,
             adminKeyStore = eventAdminKeyStore,
             identityStore = identityStore,
-            nearbyController = nearbyChatController,
+            nearbyController = eventMeshGateway,
             scope = workScope,
         )
     } else null
@@ -1912,28 +1909,5 @@ class ChatViewModel(
         const val MAX_BIO_LENGTH = 240
         const val MAX_URL_LENGTH = 200
 
-        fun factory(context: Context): ViewModelProvider.Factory = object : ViewModelProvider.Factory {
-            @Suppress("UNCHECKED_CAST")
-            override fun <T : ViewModel> create(modelClass: Class<T>): T {
-                val appContext = context.applicationContext
-                val accountId = AuthManager.onlineUserId
-                val scope = LocalDataScope.forAccount(appContext, accountId)
-                return ChatViewModel(
-                    nearbyChatController = NearbyChatManager(appContext),
-                    chatStore = SqliteChatStore(appContext, scope),
-                    identityStore = LocalIdentityStore(appContext, scope),
-                    eventStore = SqliteEventStore(appContext, scope),
-                    eventRemoteRepository = FirebaseEventRemoteRepository(),
-                    eventAdminKeyStore = LocalEventAdminKeyStore(appContext),
-                    cloudChatController = FirebaseCloudChatController(),
-                    privateProfileStore = FirebasePrivateProfileStore(),
-                    chatNotifier = AndroidChatNotifier(
-                        appContext,
-                        ChatNotificationSettingsStore(appContext, scope),
-                    ),
-                    initialAccountId = accountId,
-                ) as T
-            }
-        }
     }
 }

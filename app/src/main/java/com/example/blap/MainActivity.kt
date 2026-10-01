@@ -33,11 +33,9 @@ import com.example.blap.auth.AccountProfileManager
 import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.chat.ChatViewModel
 import com.example.blap.chat.ChatNotificationSettings
-import com.example.blap.chat.ChatNotificationSettingsStore
+import com.example.blap.chat.NotificationSettingsRepository
 import com.example.blap.chat.ContactProfile
-import com.example.blap.chat.LocalDataScope
-import com.example.blap.chat.LocalIdentityStore
-import com.example.blap.chat.FirebasePrivateProfileStore
+import com.example.blap.chat.IdentityStore
 import com.example.blap.chat.PrivateProfileSnapshot
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
@@ -48,13 +46,13 @@ import com.example.blap.ui.NearbyChatApp
 import com.example.blap.ui.screens.onboarding.OnboardingPreferences
 import com.example.blap.ui.screens.onboarding.OnboardingScreen
 import com.example.blap.ui.theme.CommonGroundTheme
-import com.example.blap.venue.VenueManager
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 
 class MainActivity : ComponentActivity() {
+    private val appContainer get() = (application as BlapApplication).appContainer
     private val viewModel: ChatViewModel by viewModels {
-        ChatViewModel.factory(applicationContext)
+        appContainer.chatViewModelFactory(AuthManager.onlineUserId)
     }
 
     private var deniedPermissions by mutableStateOf<List<String>>(emptyList())
@@ -64,11 +62,11 @@ class MainActivity : ComponentActivity() {
     private var authAccount by mutableStateOf(AuthAccount())
     private var accountProfile by mutableStateOf<PublicAccountProfile?>(null)
     private var accountProfileLoading by mutableStateOf(false)
-    private lateinit var notificationSettingsStore: ChatNotificationSettingsStore
+    private lateinit var notificationSettingsStore: NotificationSettingsRepository
     private var notificationSettings by mutableStateOf(ChatNotificationSettings())
     private var notificationPermissionGranted by mutableStateOf(false)
     private var microphonePermissionGranted by mutableStateOf(false)
-    private val privateProfileStore by lazy { FirebasePrivateProfileStore() }
+    private val privateProfileStore get() = appContainer.privateProfiles
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -133,10 +131,7 @@ class MainActivity : ComponentActivity() {
         installSplashScreen()
         super.onCreate(savedInstanceState)
         authAccount = AuthManager.account
-        notificationSettingsStore = ChatNotificationSettingsStore(
-            applicationContext,
-            LocalDataScope.forAccount(applicationContext, AuthManager.onlineUserId),
-        )
+        notificationSettingsStore = appContainer.notificationSettingsFor(AuthManager.onlineUserId)
         notificationSettings = notificationSettingsStore.load()
         notificationPermissionGranted = hasNotificationPermission()
         microphonePermissionGranted = hasMicrophonePermission()
@@ -305,10 +300,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun localIdentity(): LocalIdentityStore {
-        val scope = LocalDataScope.forAccount(applicationContext, AuthManager.onlineUserId)
-        return LocalIdentityStore(applicationContext, scope)
-    }
+    private fun localIdentity(): IdentityStore = appContainer.identityFor(AuthManager.onlineUserId)
 
     private fun loadAccountProfile() {
         if (authAccount.uid.isBlank()) return
@@ -363,8 +355,7 @@ class MainActivity : ComponentActivity() {
                 lifecycleScope.launch {
                     try {
                         val profile = AccountProfileManager.claim(username, displayName)
-                        val scope = LocalDataScope.forAccount(applicationContext, authAccount.uid)
-                        val identity = LocalIdentityStore(applicationContext, scope)
+                        val identity = appContainer.identityFor(authAccount.uid)
                         val saved = identity.getProfile().copy(
                             displayName = profile.displayName, username = profile.username,
                         )
@@ -548,7 +539,7 @@ class MainActivity : ComponentActivity() {
     private fun checkEventLocation() {
         lifecycleScope.launch {
             try {
-                val location = VenueManager.getFreshLocation(applicationContext)
+                val location = appContainer.locationProvider.getFreshLocation()
                 if (location == null) {
                     viewModel.showError(
                         "A current location was not available. Use admin approval for a private event or the venue QR for a public event.",
@@ -557,7 +548,7 @@ class MainActivity : ComponentActivity() {
                     viewModel.enterEventWithGps(
                         location.latitude,
                         location.longitude,
-                        location.accuracy.toDouble(),
+                        location.accuracyMetres,
                     )
                 }
             } catch (_: Exception) {
@@ -642,7 +633,7 @@ class MainActivity : ComponentActivity() {
         viewModel.updateVenueStatus("Looking for a nearby place...", checking = true)
         lifecycleScope.launch {
             val result = try {
-                val venue = VenueManager.findNearbyVenue(applicationContext)
+                val venue = appContainer.venues.findNearbyVenue()
                 if (venue == null) "No places found nearby." else "Nearby: ${venue.name}"
             } catch (exception: Exception) {
                 "Could not find nearby places. Check your internet and location settings."

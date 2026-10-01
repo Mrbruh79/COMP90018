@@ -7,31 +7,8 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 import androidx.core.database.sqlite.transaction
 
-interface ChatStore {
-    fun savePeer(peerId: String, name: String, phoneHash: String = "")
-    fun saveMeshPeer(peerId: String, name: String, phoneHash: String = "")
-    fun saveContact(contact: SavedContact)
-    fun getSavedContacts(): List<SavedContact>
-    fun deleteContact(contactId: String) = Unit
-    fun linkContact(phoneHash: String, peerId: String)
-    fun getKnownContacts(): List<GroupMember>
-    fun saveGroup(group: PrivateGroup)
-    fun getGroups(): List<PrivateGroup>
-    fun getCloudPendingGroups(): List<PrivateGroup> = emptyList()
-    fun markGroupCloudSynced(groupId: String, revision: Long) = Unit
-    fun deleteGroup(groupId: String) = Unit
-    fun isGroupMember(groupId: String, peerId: String, phoneHash: String = ""): Boolean
-    fun saveMessage(message: ChatMessage): Boolean
-    fun updateMessageStatus(messageId: String, status: MessageStatus)
-    fun getConversations(): List<ConversationSummary>
-    fun getMessages(peerId: String): List<ChatMessage>
-    fun hasCloudPeerMessage(peerId: String): Boolean = getMessages(peerId).any {
-        it.author == MessageAuthor.PEER && it.senderAccountId.isNotBlank()
-    }
-    fun getPendingMessages(peerId: String): List<ChatMessage>
-    fun getCloudPendingMessages(): List<ChatMessage> = emptyList()
-    fun markCloudSynced(messageId: String) = Unit
-    fun moveConversation(fromPeerId: String, toPeerId: String) = Unit
+/** Compatibility contract while the chat coordinator still uses a single store. */
+interface ChatStore : ContactRepository, GroupRepository, ChatRepository {
     fun close()
 }
 

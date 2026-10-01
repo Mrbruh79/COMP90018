@@ -22,10 +22,10 @@ data class ChatNotificationSettings(
     val showPreview: Boolean = true,
 )
 
-class ChatNotificationSettingsStore(context: Context, scope: String) {
+class ChatNotificationSettingsStore(context: Context, scope: String) : NotificationSettingsRepository {
     private val preferences = context.getSharedPreferences("chat_notifications$scope", Context.MODE_PRIVATE)
 
-    fun load(): ChatNotificationSettings = ChatNotificationSettings(
+    override fun load(): ChatNotificationSettings = ChatNotificationSettings(
         enabled = preferences.getBoolean("enabled", true),
         direct = preferences.getBoolean("direct", true),
         privateGroups = preferences.getBoolean("private_groups", true),
@@ -33,7 +33,7 @@ class ChatNotificationSettingsStore(context: Context, scope: String) {
         showPreview = preferences.getBoolean("show_preview", true),
     )
 
-    fun save(value: ChatNotificationSettings) {
+    override fun save(value: ChatNotificationSettings) {
         preferences.edit {
             putBoolean("enabled", value.enabled)
             putBoolean("direct", value.direct)
@@ -74,7 +74,7 @@ object ChatNotificationPolicy {
 
 class AndroidChatNotifier(
     private val context: Context,
-    private val settingsStore: ChatNotificationSettingsStore,
+    private val settingsStore: NotificationSettingsRepository,
 ) : ChatNotifier {
     private val manager = context.getSystemService(NotificationManager::class.java)
 
