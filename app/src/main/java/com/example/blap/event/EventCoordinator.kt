@@ -89,6 +89,18 @@ class EventCoordinator(
         closeEventObservers = discussionCoordinator::closeObservers,
         clock = clock,
     )
+    private val membershipCoordinator = EventMembershipCoordinator(
+        eventStore = eventStore,
+        remoteRepository = remoteRepository,
+        identityStore = identityStore,
+        meshGateway = nearbyController,
+        scope = scope,
+        requireUserId = { requireUserId() },
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        deletePrimaryAdminEvent = { deleteSelectedEvent() },
+        clock = clock,
+    )
 
     init {
         scope.launch {
@@ -525,302 +537,23 @@ class EventCoordinator(
         }
     }
 
-    fun joinSelectedEvent() {
-        val event = _uiState.value.selectedEvent ?: return
-        if (event.visibility == EventVisibility.PRIVATE) {
-            _uiState.update { it.copy(error = "Private events can only be joined by accepting an invitation.") }
-            return
-        }
-        if (event.requiresSignIn && !remoteRepository.hasSignedInAccount()) {
-            _uiState.update { it.copy(error = "Sign in with Email or Google to join this protected event.") }
-            return
-        }
-        if (event.isDeleted) {
-            _uiState.update { it.copy(error = "This event has been deleted by its admin.") }
-            return
-        }
-        _uiState.update { it.copy(loading = true, error = null) }
-        scope.launch {
-            runCatching {
-                val userId = requireUserId()
-                val existing = eventStore.getMembership(event.id, userId)
-                val membership = EventMembership(
-                    eventId = event.id,
-                    userId = userId,
-                    displayName = identityStore.getDisplayName(),
-                    role = existing?.role ?: EventRole.ATTENDEE,
-                    joinedAt = existing?.joinedAt ?: clock(),
-                )
-                eventStore.saveMembership(membership)
-                remoteRepository.joinEvent(membership)
-                membership
-            }.onSuccess { membership ->
-                _uiState.update { it.copy(membership = membership, loading = false, notice = "Joined event.") }
-            }.onFailure { failure ->
-                _uiState.update { it.copy(loading = false, error = failure.readableMessage("Could not join event")) }
-            }
-        }
-    }
+    fun joinSelectedEvent() = membershipCoordinator.joinSelectedEvent()
 
-    fun inviteToSelectedEvent(identifier: String) {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        if (event.visibility != EventVisibility.PRIVATE || !membership.isAdmin || !event.isAdmin(membership.userId)) {
-            _uiState.update { it.copy(error = "Only a private-event admin can send invitations.") }
-            return
-        }
-        if (identifier.isBlank()) return
-        _uiState.update { it.copy(loading = true, error = null) }
-        scope.launch {
-            runCatching {
-                val invitee = remoteRepository.findInvitee(identifier)
-                    ?: throw IllegalArgumentException("No CommonGround account matched that exact username or verified email.")
-                if (invitee.uid in event.memberIds) {
-                    throw IllegalArgumentException("That account is already an event member.")
-                }
-                val invitation = EventInvitation(
-                    id = "${event.id}_${invitee.uid}",
-                    eventId = event.id,
-                    eventTitle = event.title,
-                    inviterUid = membership.userId,
-                    inviterName = membership.displayName,
-                    recipientUid = invitee.uid,
-                    recipientName = invitee.displayName,
-                    recipientUsername = invitee.username,
-                    startsAt = event.startsAt,
-                    endsAt = event.endsAt,
-                    createdAt = clock(),
-                    expiresAt = event.endsAt,
-                )
-                remoteRepository.invite(invitation)
-                invitation
-            }.onSuccess { invitation ->
-                _uiState.update {
-                    it.copy(
-                        eventInvitations = (it.eventInvitations.filterNot { old -> old.id == invitation.id } + invitation)
-                            .sortedBy(EventInvitation::recipientName),
-                        loading = false,
-                        notice = "Invitation sent to @${invitation.recipientUsername}.",
-                    )
-                }
-            }.onFailure { failure ->
-                _uiState.update { it.copy(loading = false, error = failure.readableMessage("Invitation could not be sent")) }
-            }
-        }
-    }
+    fun inviteToSelectedEvent(identifier: String) = membershipCoordinator.invite(identifier)
 
-    fun searchSelectedEventParticipant(identifier: String) {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val localMembership = state.membership ?: return
-        if (!localMembership.isAdmin || !event.isAdmin(localMembership.userId)) {
-            _uiState.update { it.copy(error = "Only event admins can search participants.") }
-            return
-        }
-        if (identifier.isBlank()) return
-        _uiState.update { it.copy(loading = true, error = null, participantSearchResult = null) }
-        scope.launch {
-            runCatching {
-                val account = remoteRepository.findInvitee(identifier)
-                    ?: throw IllegalArgumentException(
-                        "No CommonGround account matched that exact username or verified email.",
-                    )
-                val members = remoteRepository.listMembers(event.id)
-                val target = members.firstOrNull { member ->
-                    member.userId == account.uid && member.canParticipate
-                } ?: throw IllegalArgumentException("That account is not an active participant in this event.")
-                if (target.role == EventRole.PRIMARY_ADMIN || target.userId == localMembership.userId) {
-                    throw IllegalArgumentException("The primary admin cannot be removed.")
-                }
-                members to EventParticipantSearchResult(target, account.username)
-            }.onSuccess { (members, result) ->
-                _uiState.update {
-                    it.copy(
-                        members = members,
-                        participantSearchResult = result,
-                        loading = false,
-                        notice = "Participant found.",
-                    )
-                }
-            }.onFailure { failure ->
-                _uiState.update {
-                    it.copy(
-                        participantSearchResult = null,
-                        loading = false,
-                        error = failure.readableMessage("Participant search failed"),
-                    )
-                }
-            }
-        }
-    }
+    fun searchSelectedEventParticipant(identifier: String) = membershipCoordinator.searchParticipant(identifier)
 
-    fun acceptInvitation(invitationId: String) {
-        val invitation = _uiState.value.invitations.firstOrNull { it.id == invitationId } ?: return
-        if (!invitation.isPending) {
-            _uiState.update { it.copy(error = "This invitation is no longer available.") }
-            return
-        }
-        _uiState.update { it.copy(loading = true, error = null) }
-        scope.launch {
-            runCatching {
-                val userId = requireUserId()
-                require(userId == invitation.recipientUid)
-                val membership = EventMembership(
-                    eventId = invitation.eventId,
-                    userId = userId,
-                    displayName = identityStore.getDisplayName(),
-                    role = EventRole.ATTENDEE,
-                    joinedAt = clock(),
-                )
-                remoteRepository.acceptInvitation(invitation, membership)
-                eventStore.saveMembership(membership)
-                remoteRepository.listEvents().forEach(eventStore::saveEvent)
-                membership
-            }.onSuccess {
-                _uiState.update { state ->
-                    state.copy(
-                        events = eventStore.getEvents(),
-                        invitations = state.invitations.filterNot { it.id == invitationId },
-                        loading = false,
-                        notice = "Private event invitation accepted.",
-                    )
-                }
-            }.onFailure { failure ->
-                _uiState.update { it.copy(loading = false, error = failure.readableMessage("Invitation could not be accepted")) }
-            }
-        }
-    }
+    fun acceptInvitation(invitationId: String) = membershipCoordinator.acceptInvitation(invitationId)
 
-    fun declineInvitation(invitationId: String) {
-        val invitation = _uiState.value.invitations.firstOrNull { it.id == invitationId } ?: return
-        scope.launch {
-            runCatching { remoteRepository.declineInvitation(invitation) }
-                .onSuccess {
-                    _uiState.update { state ->
-                        state.copy(
-                            invitations = state.invitations.filterNot { it.id == invitationId },
-                            notice = "Invitation declined.",
-                        )
-                    }
-                }
-                .onFailure { failure ->
-                    _uiState.update { it.copy(error = failure.readableMessage("Invitation could not be declined")) }
-                }
-        }
-    }
+    fun declineInvitation(invitationId: String) = membershipCoordinator.declineInvitation(invitationId)
 
-    fun revokeInvitation(invitationId: String) {
-        val invitation = _uiState.value.eventInvitations.firstOrNull { it.id == invitationId } ?: return
-        scope.launch {
-            runCatching { remoteRepository.revokeInvitation(invitation) }
-                .onSuccess {
-                    _uiState.update { state ->
-                        state.copy(
-                            eventInvitations = state.eventInvitations.map {
-                                if (it.id == invitationId) it.copy(status = EventInvitationStatus.REVOKED) else it
-                            },
-                            notice = "Invitation revoked.",
-                        )
-                    }
-                }
-                .onFailure { failure ->
-                    _uiState.update { it.copy(error = failure.readableMessage("Invitation could not be revoked")) }
-                }
-        }
-    }
+    fun revokeInvitation(invitationId: String) = membershipCoordinator.revokeInvitation(invitationId)
 
-    fun leaveSelectedEvent() {
-        val event = _uiState.value.selectedEvent ?: return
-        val membership = _uiState.value.membership ?: return
-        if (membership.role == EventRole.PRIMARY_ADMIN && event.createdBy == membership.userId) {
-            deleteSelectedEvent()
-            return
-        }
-        val leftAt = clock()
-        val updated = membership.copy(leftAt = leftAt, checkedInAt = null, accessMethod = null)
-        eventStore.saveMembership(updated)
-        nearbyController.setActiveEvent(null)
-        _uiState.update {
-            it.copy(membership = updated, activeEventId = null, page = EventPage.DETAIL, notice = "You left the event.")
-        }
-        scope.launch {
-            runCatching { remoteRepository.leaveEvent(event.id, membership.userId, leftAt) }
-                .onFailure { failure ->
-                    _uiState.update { it.copy(error = failure.readableMessage("Leaving could not be synced")) }
-                }
-        }
-    }
+    fun leaveSelectedEvent() = membershipCoordinator.leaveSelectedEvent()
 
-    fun promoteMemberToCoAdmin(userId: String) {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val localMembership = state.membership ?: return
-        if (localMembership.role != EventRole.PRIMARY_ADMIN || event.createdBy != localMembership.userId) {
-            _uiState.update { it.copy(error = "Only the primary admin can appoint co-admins.") }
-            return
-        }
-        val target = state.members.firstOrNull { it.userId == userId && it.canParticipate } ?: return
-        scope.launch {
-            runCatching { remoteRepository.promoteToCoAdmin(event.id, userId) }
-                .onSuccess {
-                    val updatedEvent = event.copy(adminIds = event.adminIds + userId)
-                    eventStore.saveEvent(updatedEvent)
-                    _uiState.update {
-                        it.copy(
-                            events = eventStore.getEvents(),
-                            members = it.members.map { member ->
-                                if (member.userId == userId) member.copy(role = EventRole.CO_ADMIN) else member
-                            },
-                            notice = "${target.displayName} is now a co-admin.",
-                        )
-                    }
-                }
-                .onFailure { failure ->
-                    _uiState.update { it.copy(error = failure.readableMessage("Co-admin could not be added")) }
-                }
-        }
-    }
+    fun promoteMemberToCoAdmin(userId: String) = membershipCoordinator.promoteToCoAdmin(userId)
 
-    fun blockMember(userId: String) {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val localMembership = state.membership ?: return
-        if (!localMembership.isAdmin || !event.isAdmin(localMembership.userId)) {
-            _uiState.update { it.copy(error = "Only event admins can remove members.") }
-            return
-        }
-        val target = state.members.firstOrNull { it.userId == userId } ?: return
-        if (target.role == EventRole.PRIMARY_ADMIN || target.userId == localMembership.userId) {
-            _uiState.update { it.copy(error = "The primary admin cannot be removed.") }
-            return
-        }
-        val blockedAt = clock()
-        scope.launch {
-            runCatching { remoteRepository.blockMember(event.id, userId, blockedAt) }
-                .onSuccess {
-                    val updatedEvent = event.copy(
-                        adminIds = event.adminIds - userId,
-                        memberIds = event.memberIds - userId,
-                    )
-                    eventStore.saveEvent(updatedEvent)
-                    _uiState.update {
-                        it.copy(
-                            events = eventStore.getEvents(),
-                            members = it.members.map { member ->
-                                if (member.userId == userId) member.copy(blockedAt = blockedAt) else member
-                            },
-                            participantSearchResult = it.participantSearchResult
-                                ?.takeUnless { result -> result.membership.userId == userId },
-                            notice = "${target.displayName} was removed from the event.",
-                        )
-                    }
-                }
-                .onFailure { failure ->
-                    _uiState.update { it.copy(error = failure.readableMessage("Member could not be removed")) }
-                }
-        }
-    }
+    fun blockMember(userId: String) = membershipCoordinator.blockMember(userId)
 
     fun deleteSelectedEventData() {
         val event = _uiState.value.selectedEvent ?: return
