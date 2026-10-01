@@ -54,6 +54,7 @@ import com.example.blap.ui.screens.auth.AuthActions
 import com.example.blap.ui.screens.groups.GroupsActions
 import com.example.blap.ui.screens.profile.ProfileActions
 import com.example.blap.ui.screens.contacts.ContactsActions
+import com.example.blap.ui.screens.chat.ChatActions
 
 class MainActivity : ComponentActivity() {
     private val appContainer get() = (application as BlapApplication).appContainer
@@ -232,6 +233,24 @@ class MainActivity : ComponentActivity() {
                         onSelectOnlineAccount = contactsViewModel::selectOnlineAccount,
                         onCancelAccountSelection = contactsViewModel::cancelAccountSelection,
                     ),
+                    chatActions = ChatActions(
+                        onStartChat = ::requestNearbyPermissionsAndStart,
+                        onStopChat = viewModel::stopChat,
+                        onConnect = viewModel::connectToDevice,
+                        onOpenConversation = viewModel::openConversation,
+                        onBackToChats = viewModel::showConversationList,
+                        onConversationSearchChanged = viewModel::updateConversationSearch,
+                        onMessageDraftChanged = viewModel::updateMessageDraft,
+                        onSendMessage = viewModel::sendMessage,
+                        onSendReply = viewModel::sendReply,
+                        onSendVoice = viewModel::sendVoice,
+                        onEditMessage = viewModel::editMessage,
+                        onDeleteMessage = viewModel::deleteMessage,
+                        onCreatePoll = viewModel::createPoll,
+                        onVoteInPoll = viewModel::voteInPoll,
+                        onDisconnect = viewModel::disconnect,
+                        onDismissError = viewModel::dismissError,
+                    ),
                     authActions = AuthActions(
                         onCreateEmailAccount = authViewModel::createEmailAccount,
                         onSignInWithEmail = authViewModel::signInWithEmail,
@@ -241,23 +260,9 @@ class MainActivity : ComponentActivity() {
                         onRetryAccountProfile = authViewModel::loadAccountProfile,
                         onSignOut = ::signOut,
                     ),
-                    onStartChat = ::requestNearbyPermissionsAndStart,
-                    onStopChat = viewModel::stopChat,
                     onCheckVenue = ::requestVenueCheck,
-                    onConnect = viewModel::connectToDevice,
-                    onOpenConversation = viewModel::openConversation,
-                    onBackToChats = viewModel::showConversationList,
-                    onSendMessage = viewModel::sendMessage,
-                    onSendReply = viewModel::sendReply,
-                    onCreatePoll = viewModel::createPoll,
-                    onVoteInPoll = viewModel::voteInPoll,
-                    onEditMessage = viewModel::editMessage,
-                    onDeleteMessage = viewModel::deleteMessage,
-                    onSendVoice = viewModel::sendVoice,
                     microphonePermissionGranted = microphonePermissionGranted,
                     onRequestMicrophonePermission = ::requestMicrophonePermission,
-                    onMessageDraftChanged = viewModel::updateMessageDraft,
-                    onDisconnect = viewModel::disconnect,
                     notificationSettings = notificationSettings,
                     notificationPermissionGranted = notificationPermissionGranted,
                     onNotificationSettingsChanged = ::updateNotificationSettings,
@@ -311,9 +316,7 @@ class MainActivity : ComponentActivity() {
                     onEventBack = eventViewModel::eventBack,
                     getCurrentLocation = appContainer.locationProvider::getFreshLocation,
                     searchPlaces = appContainer.placeSearch::search,
-                    onConversationSearchChanged = viewModel::updateConversationSearch,
                     onSystemBack = sessionOwner.session.navigation::handleBack,
-                    onDismissError = viewModel::dismissError,
                     onDismissEventMessage = eventViewModel::dismissEventMessage,
                     onOpenSettings = ::openAppSettings,
                 )

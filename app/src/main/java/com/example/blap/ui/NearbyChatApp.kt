@@ -74,6 +74,7 @@ import com.example.blap.ui.screens.auth.AuthActions
 import com.example.blap.ui.screens.groups.GroupsActions
 import com.example.blap.ui.screens.profile.ProfileActions
 import com.example.blap.ui.screens.contacts.ContactsActions
+import com.example.blap.ui.screens.chat.ChatActions
 
 @Composable
 fun NearbyChatApp(
@@ -84,25 +85,12 @@ fun NearbyChatApp(
     accountProfile: PublicAccountProfile?,
     accountProfileLoading: Boolean,
     authActions: AuthActions,
+    chatActions: ChatActions,
     contactsActions: ContactsActions,
     profileActions: ProfileActions,
-    onStartChat: () -> Unit,
-    onStopChat: () -> Unit,
     onCheckVenue: () -> Unit,
-    onConnect: (String) -> Unit,
-    onOpenConversation: (String) -> Unit,
-    onBackToChats: () -> Unit,
-    onSendMessage: (String) -> Unit,
-    onSendReply: (String, String) -> Unit,
-    onCreatePoll: (String, List<String>) -> Unit,
-    onVoteInPoll: (String, Int) -> Unit,
-    onEditMessage: (String, String) -> Unit,
-    onDeleteMessage: (String) -> Unit,
-    onSendVoice: (Int, ByteArray) -> Unit,
     microphonePermissionGranted: Boolean,
     onRequestMicrophonePermission: () -> Unit,
-    onMessageDraftChanged: (String) -> Unit,
-    onDisconnect: (String) -> Unit,
     groupsActions: GroupsActions,
     notificationSettings: ChatNotificationSettings,
     notificationPermissionGranted: Boolean,
@@ -144,9 +132,7 @@ fun NearbyChatApp(
     onEventBack: () -> Unit,
     getCurrentLocation: suspend () -> LocationFix?,
     searchPlaces: suspend (String) -> List<PlaceSearchResult>,
-    onConversationSearchChanged: (String) -> Unit,
     onSystemBack: () -> Unit,
-    onDismissError: () -> Unit,
     onDismissEventMessage: () -> Unit,
     onOpenSettings: () -> Unit,
 ) {
@@ -159,7 +145,7 @@ fun NearbyChatApp(
         val message = uiState.error ?: uiState.notice ?: eventUiState.error ?: eventUiState.notice
             ?: return@LaunchedEffect
         snackbar.showSnackbar(message)
-        onDismissError()
+        chatActions.onDismissError()
         onDismissEventMessage()
     }
 
@@ -208,7 +194,7 @@ fun NearbyChatApp(
                 if (uiState.screen in TOP_LEVEL_SCREENS) {
                     AppNavigationBar(
                         state = uiState.screen,
-                        onChats = onBackToChats,
+                        onChats = chatActions.onBackToChats,
                         onEvents = onShowEvents,
                         onContacts = contactsActions.onManageContacts,
                         onMyCard = profileActions.onShowMyCard,
@@ -246,16 +232,16 @@ fun NearbyChatApp(
                     ChatScreen.CHATS -> ConversationList(
                         conversations = uiState.conversations,
                         devices = uiState.discoveredDevices,
-                        onOpenConversation = onOpenConversation,
-                        onConnect = onConnect,
+                        onOpenConversation = chatActions.onOpenConversation,
+                        onConnect = chatActions.onConnect,
                         onManageContacts = contactsActions.onManageContacts,
                         search = uiState.conversationSearch,
-                        onSearchChanged = onConversationSearchChanged,
+                        onSearchChanged = chatActions.onConversationSearchChanged,
                         nearbyActive = uiState.nearbyActive,
                         connectionCount = uiState.directConnectionCount,
                         deniedPermissions = deniedPermissions,
-                        onStartNearby = onStartChat,
-                        onStopNearby = onStopChat,
+                        onStartNearby = chatActions.onStartChat,
+                        onStopNearby = chatActions.onStopChat,
                         onOpenSettings = onOpenSettings,
                         showAccountPrompt = !authAccount.hasPassword && !authAccount.hasGoogle,
                         onOpenAccount = profileActions.onShowSettingsScreen,
@@ -263,7 +249,7 @@ fun NearbyChatApp(
 
                     ChatScreen.CONNECTING -> ConnectingScreen(
                         authenticationDigits = uiState.authenticationDigits,
-                        onBack = onBackToChats,
+                        onBack = chatActions.onBackToChats,
                     )
 
                     ChatScreen.CONVERSATION -> {
@@ -271,26 +257,26 @@ fun NearbyChatApp(
                             it.peerId == uiState.selectedPeerId
                         }
                         if (conversation == null) {
-                            EmptyChat(onBackToChats)
+                            EmptyChat(chatActions.onBackToChats)
                         } else {
                             ChatScreen(
                                 conversation = conversation,
                                 messages = uiState.messages,
                                 directConnectionCount = uiState.directConnectionCount,
-                                onSend = onSendMessage,
-                                onReply = onSendReply,
-                                onCreatePoll = onCreatePoll,
-                                onVote = onVoteInPoll,
-                                onEdit = onEditMessage,
-                                onDelete = onDeleteMessage,
-                                onSendVoice = onSendVoice,
+                                onSend = chatActions.onSendMessage,
+                                onReply = chatActions.onSendReply,
+                                onCreatePoll = chatActions.onCreatePoll,
+                                onVote = chatActions.onVoteInPoll,
+                                onEdit = chatActions.onEditMessage,
+                                onDelete = chatActions.onDeleteMessage,
+                                onSendVoice = chatActions.onSendVoice,
                                 microphonePermissionGranted = microphonePermissionGranted,
                                 onRequestMicrophonePermission = onRequestMicrophonePermission,
                                 onOpenContactProfile = contactsActions.onOpenChatContactProfile,
                                 draft = uiState.messageDrafts[conversation.peerId].orEmpty(),
-                                onDraftChanged = onMessageDraftChanged,
-                                onBack = onBackToChats,
-                                onDisconnect = { onDisconnect(conversation.peerId) },
+                                onDraftChanged = chatActions.onMessageDraftChanged,
+                                onBack = chatActions.onBackToChats,
+                                onDisconnect = { chatActions.onDisconnect(conversation.peerId) },
                                 onOpenGroupSettings = groupsActions.onBeginGroupSettings,
                             )
                         }
@@ -318,7 +304,7 @@ fun NearbyChatApp(
                         onMessage = contactsActions.onMessageContact,
                         onCheckOnline = contactsActions.onCheckContactOnline,
                         onOpenCreateGroup = groupsActions.onOpenCreateGroup,
-                        onDiscoverNearby = onBackToChats,
+                        onDiscoverNearby = chatActions.onBackToChats,
                     )
 
                     ChatScreen.EDITING_CONTACT -> ContactEditorScreen(
@@ -362,8 +348,8 @@ fun NearbyChatApp(
                         onShowDiscoverySettings = profileActions.onShowDiscoverySettings,
                         onOpenAppSettings = onOpenSettings,
                         nearbyActive = uiState.nearbyActive,
-                        onStartNearby = onStartChat,
-                        onStopNearby = onStopChat,
+                        onStartNearby = chatActions.onStartChat,
+                        onStopNearby = chatActions.onStopChat,
                         venueStatus = uiState.venueStatus,
                         checkingVenue = uiState.checkingVenue,
                         onCheckVenue = onCheckVenue,
@@ -433,13 +419,13 @@ fun NearbyChatApp(
                         onNameChanged = groupsActions.onGroupNameChanged,
                         onToggleMember = groupsActions.onToggleGroupMember,
                         onCreate = groupsActions.onSaveGroupSettings,
-                        onBack = { uiState.selectedPeerId?.let(onOpenConversation) ?: onBackToChats() },
+                        onBack = { uiState.selectedPeerId?.let(chatActions.onOpenConversation) ?: chatActions.onBackToChats() },
                         title = "Group settings",
                         actionLabel = "Save changes",
                         editable = uiState.canEditGroup,
                     )
 
-                    ChatScreen.ERROR -> ErrorScreen(onStartChat)
+                    ChatScreen.ERROR -> ErrorScreen(chatActions.onStartChat)
                 }
                 }
             }
