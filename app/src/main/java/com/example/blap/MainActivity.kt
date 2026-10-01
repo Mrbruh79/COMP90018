@@ -19,24 +19,26 @@ import androidx.credentials.CustomCredential
 import androidx.credentials.GetCredentialRequest
 import androidx.credentials.exceptions.GetCredentialCancellationException
 import androidx.credentials.exceptions.NoCredentialException
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.core.content.ContextCompat
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
-import com.example.blap.auth.AuthManager
-import com.example.blap.auth.AuthAccount
-import com.example.blap.auth.AccountProfileManager
-import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.chat.ChatViewModel
+import com.example.blap.chat.ContactsViewModel
+import com.example.blap.chat.GroupsViewModel
+import com.example.blap.chat.ProfileViewModel
+import com.example.blap.chat.MessagingSessionOwner
+import com.example.blap.chat.MessagingViewModelFactory
+import com.example.blap.auth.AuthViewModel
+import com.example.blap.event.EventViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.example.blap.chat.ChatNotificationSettings
 import com.example.blap.chat.NotificationSettingsRepository
-import com.example.blap.chat.ContactProfile
-import com.example.blap.chat.IdentityStore
-import com.example.blap.chat.PrivateProfileSnapshot
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
@@ -51,22 +53,25 @@ import kotlinx.coroutines.Dispatchers
 
 class MainActivity : ComponentActivity() {
     private val appContainer get() = (application as BlapApplication).appContainer
-    private val viewModel: ChatViewModel by viewModels {
-        appContainer.chatViewModelFactory(AuthManager.onlineUserId)
+    private val sessionOwner: MessagingSessionOwner by viewModels {
+        appContainer.messagingSessionFactory(appContainer.authentication.account.uid)
     }
+    private val featureFactory get() = MessagingViewModelFactory(sessionOwner.session)
+    private val viewModel: ChatViewModel by viewModels { featureFactory }
+    private val contactsViewModel: ContactsViewModel by viewModels { featureFactory }
+    private val groupsViewModel: GroupsViewModel by viewModels { featureFactory }
+    private val profileViewModel: ProfileViewModel by viewModels { featureFactory }
+    private val authViewModel: AuthViewModel by viewModels { featureFactory }
+    private val eventViewModel: EventViewModel by viewModels { featureFactory }
 
     private var deniedPermissions by mutableStateOf<List<String>>(emptyList())
     private var pendingEventGpsEntry = false
     private var pendingEventQrScan = false
     private var pendingEventAdminAccess = false
-    private var authAccount by mutableStateOf(AuthAccount())
-    private var accountProfile by mutableStateOf<PublicAccountProfile?>(null)
-    private var accountProfileLoading by mutableStateOf(false)
     private lateinit var notificationSettingsStore: NotificationSettingsRepository
     private var notificationSettings by mutableStateOf(ChatNotificationSettings())
     private var notificationPermissionGranted by mutableStateOf(false)
     private var microphonePermissionGranted by mutableStateOf(false)
-    private val privateProfileStore get() = appContainer.privateProfiles
 
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -84,7 +89,7 @@ class MainActivity : ComponentActivity() {
                 pendingEventQrScan -> scanEventCheckInQrNow()
                 pendingEventAdminAccess -> {
                     pendingEventAdminAccess = false
-                    viewModel.requestEventAdminAccess()
+                    eventViewModel.requestEventAdminAccess()
                 }
             }
         } else {
@@ -130,12 +135,22 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         installSplashScreen()
         super.onCreate(savedInstanceState)
-        authAccount = AuthManager.account
-        notificationSettingsStore = appContainer.notificationSettingsFor(AuthManager.onlineUserId)
+        notificationSettingsStore = appContainer.notificationSettingsFor(sessionOwner.session.dependencies.accountId)
         notificationSettings = notificationSettingsStore.load()
         notificationPermissionGranted = hasNotificationPermission()
         microphonePermissionGranted = hasMicrophonePermission()
-        accountProfileLoading = authAccount.uid.isNotBlank()
+        authViewModel.initialize()
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                authViewModel.accountChanges.collect { change ->
+                    change.setupError?.let { intent.putExtra(ACCOUNT_SETUP_ERROR, it) }
+                    if (change.clearCredentials) runCatching {
+                        CredentialManager.create(this@MainActivity).clearCredentialState(ClearCredentialStateRequest())
+                    }
+                    restartForAccountChange()
+                }
+            }
+        }
         enableEdgeToEdge(
             statusBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
             navigationBarStyle = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT),
@@ -159,24 +174,28 @@ class MainActivity : ComponentActivity() {
                 }
 
                 val uiState by viewModel.uiState.collectAsStateWithLifecycle()
-                val eventUiState by viewModel.eventUiState.collectAsStateWithLifecycle()
+                val eventUiState by eventViewModel.uiState.collectAsStateWithLifecycle()
+                val authUiState by authViewModel.uiState.collectAsStateWithLifecycle()
+                val authAccount = authUiState.account
+                val accountProfile = authUiState.profile
+                val accountProfileLoading = authUiState.profileLoading
                 NearbyChatApp(
                     uiState = uiState,
                     eventUiState = eventUiState,
                     deniedPermissions = deniedPermissions.map(NearbyPermissions::displayName),
-                    onNameChanged = viewModel::updateDisplayName,
+                    onNameChanged = profileViewModel::updateDisplayName,
                     authAccount = authAccount,
                     accountProfile = accountProfile,
                     accountProfileLoading = accountProfileLoading,
-                    onRegisterEmail = ::registerEmail,
-                    onCompleteAccountProfile = ::completeAccountProfile,
-                    onRetryAccountProfile = ::loadAccountProfile,
+                    onRegisterEmail = authViewModel::registerEmail,
+                    onCompleteAccountProfile = authViewModel::completeAccountProfile,
+                    onRetryAccountProfile = authViewModel::loadAccountProfile,
                     onSignOut = ::signOut,
-                    onCreateEmailAccount = ::createEmailAccount,
-                    onSignInWithEmail = ::signInWithEmail,
+                    onCreateEmailAccount = authViewModel::createEmailAccount,
+                    onSignInWithEmail = authViewModel::signInWithEmail,
                     onSignInWithGoogle = ::signInWithGoogle,
                     onStartChat = ::requestNearbyPermissionsAndStart,
-                    onCompleteSetup = viewModel::completeSetup,
+                    onCompleteSetup = profileViewModel::completeSetup,
                     onStopChat = viewModel::stopChat,
                     onCheckVenue = ::requestVenueCheck,
                     onConnect = viewModel::connectToDevice,
@@ -191,48 +210,48 @@ class MainActivity : ComponentActivity() {
                     onSendVoice = viewModel::sendVoice,
                     microphonePermissionGranted = microphonePermissionGranted,
                     onRequestMicrophonePermission = ::requestMicrophonePermission,
-                    onOpenChatContactProfile = viewModel::openCurrentChatProfile,
-                    onCloseChatContactProfile = viewModel::closeCurrentChatProfile,
-                    onSaveCurrentChatContact = viewModel::saveCurrentChatContact,
+                    onOpenChatContactProfile = contactsViewModel::openCurrentChatProfile,
+                    onCloseChatContactProfile = contactsViewModel::closeCurrentChatProfile,
+                    onSaveCurrentChatContact = contactsViewModel::saveCurrentChatContact,
                     onMessageDraftChanged = viewModel::updateMessageDraft,
                     onDisconnect = viewModel::disconnect,
-                    onOpenCreateGroup = viewModel::beginCreateGroup,
-                    onGroupNameChanged = viewModel::updateGroupName,
-                    onToggleGroupMember = viewModel::toggleGroupMember,
-                    onCreateGroup = viewModel::createPrivateGroup,
-                    onManageContacts = viewModel::beginManageContacts,
-                    onBeginAddContact = viewModel::beginAddContact,
-                    onOpenContact = viewModel::openContact,
-                    onCloseContactEditor = viewModel::closeContactEditor,
-                    onMessageContact = viewModel::messageContact,
-                    onCheckContactOnline = viewModel::checkContactOnline,
-                    onSelectOnlineAccount = viewModel::selectOnlineAccount,
-                    onCancelAccountSelection = viewModel::cancelAccountSelection,
-                    onContactDraftChanged = viewModel::updateContactDraft,
-                    onDeleteContact = viewModel::deleteContact,
+                    onOpenCreateGroup = groupsViewModel::beginCreateGroup,
+                    onGroupNameChanged = groupsViewModel::updateGroupName,
+                    onToggleGroupMember = groupsViewModel::toggleGroupMember,
+                    onCreateGroup = groupsViewModel::createPrivateGroup,
+                    onManageContacts = contactsViewModel::beginManageContacts,
+                    onBeginAddContact = contactsViewModel::beginAddContact,
+                    onOpenContact = contactsViewModel::openContact,
+                    onCloseContactEditor = contactsViewModel::closeContactEditor,
+                    onMessageContact = contactsViewModel::messageContact,
+                    onCheckContactOnline = contactsViewModel::checkContactOnline,
+                    onSelectOnlineAccount = contactsViewModel::selectOnlineAccount,
+                    onCancelAccountSelection = contactsViewModel::cancelAccountSelection,
+                    onContactDraftChanged = contactsViewModel::updateContactDraft,
+                    onDeleteContact = contactsViewModel::deleteContact,
                     onScanContact = ::scanContactCard,
-                    onSaveContact = viewModel::saveContact,
+                    onSaveContact = contactsViewModel::saveContact,
                     onImportContacts = ::requestContactImport,
-                    onShowMyCard = viewModel::showMyCard,
-                    onEditProfile = viewModel::editProfile,
-                    onProfileChanged = viewModel::updateProfile,
-                    onSaveProfile = viewModel::saveProfile,
-                    onCancelProfile = viewModel::cancelProfileEdit,
-                    onShowSettingsScreen = viewModel::showSettings,
+                    onShowMyCard = profileViewModel::showMyCard,
+                    onEditProfile = profileViewModel::editProfile,
+                    onProfileChanged = profileViewModel::updateProfile,
+                    onSaveProfile = profileViewModel::saveProfile,
+                    onCancelProfile = profileViewModel::cancelProfileEdit,
+                    onShowSettingsScreen = profileViewModel::showSettings,
                     notificationSettings = notificationSettings,
                     notificationPermissionGranted = notificationPermissionGranted,
                     onNotificationSettingsChanged = ::updateNotificationSettings,
                     onRequestNotificationPermission = ::requestNotificationPermission,
-                    onShowDiscoverySettings = viewModel::showDiscoverySettings,
-                    onDiscoveryPhoneChanged = viewModel::updateDiscoveryPhone,
-                    onDiscoveryEnabledChanged = viewModel::updateDiscoveryEnabled,
-                    onSaveDiscoverySettings = viewModel::saveDiscoverySettings,
-                    onCancelDiscoverySettings = viewModel::cancelDiscoveryEdit,
-                    onShowEvents = viewModel::showEvents,
-                    onBeginCreateEvent = viewModel::beginCreateEvent,
-                    onBeginEditEvent = viewModel::beginEditEvent,
+                    onShowDiscoverySettings = profileViewModel::showDiscoverySettings,
+                    onDiscoveryPhoneChanged = profileViewModel::updateDiscoveryPhone,
+                    onDiscoveryEnabledChanged = profileViewModel::updateDiscoveryEnabled,
+                    onSaveDiscoverySettings = profileViewModel::saveDiscoverySettings,
+                    onCancelDiscoverySettings = profileViewModel::cancelDiscoveryEdit,
+                    onShowEvents = eventViewModel::showEvents,
+                    onBeginCreateEvent = eventViewModel::beginCreateEvent,
+                    onBeginEditEvent = eventViewModel::beginEditEvent,
                     onCreateEvent = { request ->
-                        viewModel.createEvent(
+                        eventViewModel.createEvent(
                             request.title,
                             request.description,
                             request.venueName,
@@ -245,45 +264,45 @@ class MainActivity : ComponentActivity() {
                             request.requiresSignIn,
                         )
                     },
-                    onOpenEvent = viewModel::openEvent,
-                    onUpdateEvent = viewModel::updateSelectedEvent,
-                    onDeleteEvent = viewModel::deleteSelectedEvent,
-                    onJoinEvent = viewModel::joinSelectedEvent,
-                    onInviteToEvent = viewModel::inviteToSelectedEvent,
-                    onSearchEventParticipant = viewModel::searchSelectedEventParticipant,
-                    onAcceptEventInvitation = viewModel::acceptEventInvitation,
-                    onDeclineEventInvitation = viewModel::declineEventInvitation,
-                    onRevokeEventInvitation = viewModel::revokeEventInvitation,
-                    onLeaveEvent = viewModel::leaveSelectedEvent,
-                    onPromoteEventMember = viewModel::promoteEventMember,
-                    onRemoveEventMember = viewModel::removeEventMember,
-                    onDeleteEventData = viewModel::deleteSelectedEventData,
-                    onShowEventAnnouncements = viewModel::showEventAnnouncements,
-                    onPublishEventAnnouncement = viewModel::publishEventAnnouncement,
-                    onShowEventDiscussion = viewModel::showEventDiscussion,
-                    onLoadMoreEventDiscussion = viewModel::loadMoreEventDiscussion,
-                    onOpenEventDiscussionThread = viewModel::openEventDiscussionThread,
-                    onCreateEventDiscussionComment = viewModel::createEventDiscussionComment,
-                    onToggleEventDiscussionLike = viewModel::toggleEventDiscussionLike,
-                    onDeleteEventDiscussionComment = viewModel::deleteEventDiscussionComment,
+                    onOpenEvent = eventViewModel::openEvent,
+                    onUpdateEvent = eventViewModel::updateSelectedEvent,
+                    onDeleteEvent = eventViewModel::deleteSelectedEvent,
+                    onJoinEvent = eventViewModel::joinSelectedEvent,
+                    onInviteToEvent = eventViewModel::inviteToSelectedEvent,
+                    onSearchEventParticipant = eventViewModel::searchSelectedEventParticipant,
+                    onAcceptEventInvitation = eventViewModel::acceptEventInvitation,
+                    onDeclineEventInvitation = eventViewModel::declineEventInvitation,
+                    onRevokeEventInvitation = eventViewModel::revokeEventInvitation,
+                    onLeaveEvent = eventViewModel::leaveSelectedEvent,
+                    onPromoteEventMember = eventViewModel::promoteEventMember,
+                    onRemoveEventMember = eventViewModel::removeEventMember,
+                    onDeleteEventData = eventViewModel::deleteSelectedEventData,
+                    onShowEventAnnouncements = eventViewModel::showEventAnnouncements,
+                    onPublishEventAnnouncement = eventViewModel::publishEventAnnouncement,
+                    onShowEventDiscussion = eventViewModel::showEventDiscussion,
+                    onLoadMoreEventDiscussion = eventViewModel::loadMoreEventDiscussion,
+                    onOpenEventDiscussionThread = eventViewModel::openEventDiscussionThread,
+                    onCreateEventDiscussionComment = eventViewModel::createEventDiscussionComment,
+                    onToggleEventDiscussionLike = eventViewModel::toggleEventDiscussionLike,
+                    onDeleteEventDiscussionComment = eventViewModel::deleteEventDiscussionComment,
                     onRequestEventGpsEntry = ::requestEventGpsEntry,
                     onRequestEventAdminAccess = ::requestEventAdminAccess,
-                    onApproveEventAdminAccess = viewModel::approveEventAdminAccess,
+                    onApproveEventAdminAccess = eventViewModel::approveEventAdminAccess,
                     onScanEventQr = ::requestEventQrScan,
-                    onShowEventQr = viewModel::showEventCheckInQr,
-                    onHideEventQr = viewModel::hideEventCheckInQr,
-                    onShowSavedEventChat = viewModel::showSavedEventChat,
-                    onSendEventMessage = viewModel::sendEventMessage,
-                    onEventBack = viewModel::eventBack,
+                    onShowEventQr = eventViewModel::showEventCheckInQr,
+                    onHideEventQr = eventViewModel::hideEventCheckInQr,
+                    onShowSavedEventChat = eventViewModel::showSavedEventChat,
+                    onSendEventMessage = eventViewModel::sendEventMessage,
+                    onEventBack = eventViewModel::eventBack,
                     getCurrentLocation = appContainer.locationProvider::getFreshLocation,
                     searchPlaces = appContainer.placeSearch::search,
                     onConversationSearchChanged = viewModel::updateConversationSearch,
-                    onContactSearchChanged = viewModel::updateContactSearch,
-                    onBeginGroupSettings = viewModel::beginGroupSettings,
-                    onSaveGroupSettings = viewModel::saveGroupSettings,
-                    onSystemBack = viewModel::handleBack,
+                    onContactSearchChanged = contactsViewModel::updateContactSearch,
+                    onBeginGroupSettings = groupsViewModel::beginGroupSettings,
+                    onSaveGroupSettings = groupsViewModel::saveGroupSettings,
+                    onSystemBack = sessionOwner.session.navigation::handleBack,
                     onDismissError = viewModel::dismissError,
-                    onDismissEventMessage = viewModel::dismissEventMessage,
+                    onDismissEventMessage = eventViewModel::dismissEventMessage,
                     onOpenSettings = ::openAppSettings,
                 )
             }
@@ -292,103 +311,9 @@ class MainActivity : ComponentActivity() {
             intent.removeExtra(ACCOUNT_SETUP_ERROR)
             viewModel.showError(message)
         }
-        if (authAccount.uid.isNotBlank()) {
-            loadAccountProfile()
-        } else if (!authAccount.isAnonymous) {
-            AuthManager.ensureGuestSession {
-                authAccount = AuthManager.account
-                viewModel.accountChanged(authAccount.uid)
-            }
-        }
     }
 
-    private fun localIdentity(): IdentityStore = appContainer.identityFor(AuthManager.onlineUserId)
-
-    private fun loadAccountProfile() {
-        if (authAccount.uid.isBlank()) return
-        val loadingUid = authAccount.uid
-        accountProfileLoading = true
-        lifecycleScope.launch {
-            val local = localIdentity().getProfile()
-            val remote = runCatching { AccountProfileManager.load() }
-            val profile = remote.getOrNull() ?: if (local.username.isNotBlank() && local.displayName.isNotBlank()) {
-                runCatching { AccountProfileManager.claim(local.username, local.displayName) }.getOrNull()
-                    ?: if (remote.isFailure) PublicAccountProfile(local.username, local.displayName) else null
-            } else null
-            if (authAccount.uid != loadingUid) return@launch
-            if (profile != null) {
-                val privateCopy = runCatching { privateProfileStore.load(loadingUid) }
-                if (privateCopy.isSuccess) {
-                    viewModel.restorePrivateProfile(
-                        privateCopy.getOrNull(), profile.username, profile.displayName,
-                    )
-                }
-                viewModel.applyAccountProfile(profile.username, profile.displayName)
-            } else if (remote.isFailure) {
-                viewModel.showError("Could not load your account. Check your connection and retry.")
-            }
-            accountProfile = profile
-            accountProfileLoading = false
-        }
-    }
-
-    private fun completeAccountProfile(username: String, displayName: String) {
-        lifecycleScope.launch {
-            try {
-                val profile = AccountProfileManager.claim(username, displayName)
-                val identity = localIdentity()
-                identity.saveProfile(identity.getProfile().copy(
-                    username = profile.username, displayName = profile.displayName,
-                ))
-                accountProfile = profile
-                viewModel.restorePrivateProfile(null, profile.username, profile.displayName)
-                viewModel.applyAccountProfile(profile.username, profile.displayName)
-            } catch (error: Exception) {
-                viewModel.showError(error.localizedMessage ?: "Could not save your username.")
-            }
-        }
-    }
-
-    private fun registerEmail(email: String, password: String, username: String, displayName: String) {
-        AccountProfileManager.validate(username, displayName)?.let { viewModel.showError(it); return }
-        AuthManager.createEmailAccount(email, password,
-            onSuccess = {
-                authAccount = AuthManager.account
-                lifecycleScope.launch {
-                    try {
-                        val profile = AccountProfileManager.claim(username, displayName)
-                        val identity = appContainer.identityFor(authAccount.uid)
-                        val saved = identity.getProfile().copy(
-                            displayName = profile.displayName, username = profile.username,
-                        )
-                        identity.saveProfile(saved)
-                        runCatching { privateProfileStore.save(authAccount.uid,
-                            PrivateProfileSnapshot(saved, identity.profileUpdatedAt())) }
-                        AuthManager.sendVerificationEmail { }
-                        restartForAccountChange()
-                    } catch (error: Exception) {
-                        intent.putExtra(ACCOUNT_SETUP_ERROR,
-                            error.localizedMessage ?: "Account created, but username setup failed. Try another.")
-                        restartForAccountChange()
-                    }
-                }
-            },
-            onError = viewModel::showError,
-        )
-    }
-
-    private fun signOut() {
-        viewModel.stopChat()
-        AuthManager.signOut()
-        authAccount = AuthAccount()
-        accountProfile = null
-        lifecycleScope.launch {
-            runCatching {
-                CredentialManager.create(this@MainActivity).clearCredentialState(ClearCredentialStateRequest())
-            }
-            restartForAccountChange()
-        }
-    }
+    private fun signOut() = authViewModel.signOut()
 
     private fun restartForAccountChange() {
         viewModelStore.clear()
@@ -397,23 +322,6 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val ACCOUNT_SETUP_ERROR = "account_setup_error"
-    }
-
-    private fun createEmailAccount(email: String, password: String) {
-        AuthManager.createEmailAccount(email, password,
-            onSuccess = {
-                authAccount = AuthManager.account
-                AuthManager.sendVerificationEmail { restartForAccountChange() }
-            },
-            onError = viewModel::showError,
-        )
-    }
-
-    private fun signInWithEmail(email: String, password: String) {
-        AuthManager.signInWithEmail(email, password,
-            onSuccess = ::restartForAccountChange,
-            onError = viewModel::showError,
-        )
     }
 
     private fun signInWithGoogle() {
@@ -436,10 +344,7 @@ class MainActivity : ComponentActivity() {
                     return@launch
                 }
                 val token = GoogleIdTokenCredential.createFrom(credential.data).idToken
-                AuthManager.signInWithGoogleToken(token,
-                    onSuccess = ::restartForAccountChange,
-                    onError = viewModel::showError,
-                )
+                authViewModel.signInWithGoogleToken(token)
             } catch (_: GetCredentialCancellationException) {
                 viewModel.showNotice("Google sign-in cancelled.")
             } catch (_: NoCredentialException) {
@@ -455,12 +360,7 @@ class MainActivity : ComponentActivity() {
         notificationPermissionGranted = hasNotificationPermission()
         microphonePermissionGranted = hasMicrophonePermission()
         if (deniedPermissions.isNotEmpty()) deniedPermissions = NearbyPermissions.missing(this)
-        if (authAccount.uid.isNotBlank() && !authAccount.emailVerified) {
-            AuthManager.refreshAccount {
-                authAccount = AuthManager.account
-                viewModel.accountChanged(authAccount.uid)
-            }
-        }
+        authViewModel.refreshAccount()
     }
 
     private fun hasNotificationPermission(): Boolean = Build.VERSION.SDK_INT < 33 ||
@@ -526,7 +426,7 @@ class MainActivity : ComponentActivity() {
         if (missingNearby.isEmpty()) {
             viewModel.startChat()
             pendingEventAdminAccess = false
-            viewModel.requestEventAdminAccess()
+            eventViewModel.requestEventAdminAccess()
         } else {
             nearbyPermissionLauncher.launch(missingNearby.toTypedArray())
         }
@@ -547,7 +447,7 @@ class MainActivity : ComponentActivity() {
                         "A current location was not available. Use admin approval for a private event or the venue QR for a public event.",
                     )
                 } else {
-                    viewModel.enterEventWithGps(
+                    eventViewModel.enterEventWithGps(
                         location.latitude,
                         location.longitude,
                         location.accuracyMetres,
@@ -586,7 +486,7 @@ class MainActivity : ComponentActivity() {
                 pendingEventQrScan = false
                 val payload = barcode.rawValue
                 if (payload.isNullOrBlank()) viewModel.showError("This QR code has no check-in data.")
-                else viewModel.enterEventWithQr(payload)
+                else eventViewModel.enterEventWithQr(payload)
             }
             .addOnFailureListener { error ->
                 pendingEventQrScan = false
@@ -611,7 +511,7 @@ class MainActivity : ComponentActivity() {
 
     private fun importDeviceContacts() {
         lifecycleScope.launch(Dispatchers.IO) {
-            viewModel.importDeviceContacts(DeviceContactsReader.read(applicationContext))
+            contactsViewModel.importDeviceContacts(DeviceContactsReader.read(applicationContext))
         }
     }
 
@@ -624,7 +524,7 @@ class MainActivity : ComponentActivity() {
             .addOnSuccessListener { barcode ->
                 val payload = barcode.rawValue
                 if (payload.isNullOrBlank()) viewModel.showError("This QR code has no readable contact data.")
-                else viewModel.importScannedContactCard(payload)
+                else contactsViewModel.importScannedContactCard(payload)
             }
             .addOnFailureListener { error ->
                 viewModel.showError(error.message ?: "The contact QR could not be scanned.")
@@ -646,7 +546,7 @@ class MainActivity : ComponentActivity() {
 
     private fun requestVenueCheck() {
         viewModel.updateVenueStatus("Connecting to nearby places...", checking = true)
-        AuthManager.ensureSignedIn { success ->
+        authViewModel.ensureSignedIn { success ->
             if (success) requestVenuePermissionAndCheck()
             else viewModel.updateVenueStatus("Could not connect. Check your internet and try again.")
         }

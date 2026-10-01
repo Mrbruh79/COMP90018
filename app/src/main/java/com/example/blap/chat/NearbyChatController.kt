@@ -7,5 +7,5 @@ interface NearbyChatGateway : NearbyTransport
 
 /** Existing managers continue to provide chat and event traffic on one session. */
 interface NearbyChatController : NearbyChatGateway, EventMeshGateway {
-    interface Listener : NearbyTransport.Listener
+    interface Listener : NearbyTransport.Listener, EventMeshGateway.Listener
 }

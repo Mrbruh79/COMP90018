@@ -4,7 +4,7 @@ Stage 6 keeps the existing event screens, Firestore schema, SQLite schema and Ne
 
 ## Runtime flow
 
-`ChatViewModel` continues to call the public methods on `EventCoordinator`. The coordinator owns the shared `EventUiState` and delegates work to four account-local components:
+Stage 6 originally kept event forwarding in `ChatViewModel`. Stage 7 moves those calls and incoming event callbacks to `EventViewModel`. The coordinator owns the shared `EventUiState` and delegates work to four account-local components:
 
 | Component | Responsibility |
 | --- | --- |
@@ -13,7 +13,7 @@ Stage 6 keeps the existing event screens, Firestore schema, SQLite schema and Ne
 | `EventOnSiteCoordinator` | GPS/QR admission, private-event admin approval, on-site messages and event-mesh packet handling |
 | `EventDiscussionCoordinator` | Discussion navigation, paging, observers, comments, replies, likes and deletion |
 
-`EventCoordinator` remains the stable facade used by `ChatViewModel`, so this stage does not require UI callback or navigation changes.
+`EventCoordinator` remains the stable facade used by `EventViewModel`. The Activity now wires event UI callbacks directly to that ViewModel.
 
 ## State and lifetime
 
@@ -21,7 +21,7 @@ Stage 6 keeps the existing event screens, Firestore schema, SQLite schema and Ne
 - Each child coordinator receives read/update access to that single state owner; no second event state store is created.
 - Firestore event and invitation listeners belong to `EventLifecycleCoordinator` and are restarted when the Firebase account changes.
 - Discussion listeners belong to `EventDiscussionCoordinator` and are closed when leaving an event, changing account, deleting an event or closing the parent coordinator.
-- The shared `EventMeshGateway` is not closed by a child coordinator because it is owned by the parent `ChatViewModel` transport session.
+- The shared `EventMeshGateway` is not closed by a child coordinator because the account-scoped `MessagingSessionOwner` owns the transport session. `EventViewModel` registers a separate event listener and disposes its coordinators when the owner is cleared.
 
 ## Preserved behavior and security rules
 

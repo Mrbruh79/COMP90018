@@ -17,6 +17,7 @@ class NearbyMeshCompatibilityTest {
     @Test
     fun groupRelayPreservesPacketFormatAndDecrementsHops() {
         manager.listener = listener
+        manager.eventListener = listener
         connectChatPeer()
 
         transport.receive(
@@ -45,6 +46,7 @@ class NearbyMeshCompatibilityTest {
     @Test
     fun duplicateMeshMessagesAreNotForwardedAgain() {
         manager.listener = listener
+        manager.eventListener = listener
         connectChatPeer()
         val packet = NearbyProtocol.encode(
             NearbyPacket.Message(
@@ -71,6 +73,7 @@ class NearbyMeshCompatibilityTest {
     @Test
     fun eventMeshDoesNotForwardOpenChatPackets() {
         manager.listener = listener
+        manager.eventListener = listener
         connectEventPeer()
 
         transport.receive(
@@ -95,8 +98,10 @@ class NearbyMeshCompatibilityTest {
     }
 
     @Test
-    fun eventChatStaysInsideTheActiveEventMesh() {
+    fun eventChatUsesItsOwnListenerAndStaysInsideTheActiveEventMesh() {
+        val eventListener = RecordingNearbyListener()
         manager.listener = listener
+        manager.eventListener = eventListener
         connectEventPeer()
 
         transport.receive(
@@ -118,7 +123,8 @@ class NearbyMeshCompatibilityTest {
             transport.payloadsTo("endpoint-dana").last(),
         ) as NearbyPacket.EventChatMessage
         assertEquals(3, forwarded.hopsRemaining)
-        assertEquals("Meet at the gate", listener.eventChats.single().text)
+        assertEquals("Meet at the gate", eventListener.eventChats.single().text)
+        assertTrue(listener.eventChats.isEmpty())
         assertTrue(transport.payloadsTo("endpoint-carol").isEmpty())
     }
 
@@ -178,7 +184,7 @@ class NearbyMeshCompatibilityTest {
         override fun disconnectAll() = Unit
     }
 
-    private class RecordingNearbyListener : NearbyTransport.Listener {
+    private class RecordingNearbyListener : NearbyChatController.Listener {
         val chatMessages = mutableListOf<IncomingNearbyMessage>()
         val eventChats = mutableListOf<EventChatMessage>()
 

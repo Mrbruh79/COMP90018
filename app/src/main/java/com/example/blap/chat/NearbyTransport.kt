@@ -1,6 +1,5 @@
 package com.example.blap.chat
 
-import com.example.blap.event.EventMeshGateway
 
 /** One transport per chat ViewModel. close() releases that session's resources. */
 interface NearbyTransport {
@@ -17,8 +16,7 @@ interface NearbyTransport {
     fun stop()
     fun close()
 
-    // Event callbacks share the current transport listener until coordinators are separated.
-    interface Listener : EventMeshGateway.Listener {
+    interface Listener {
         fun onDeviceFound(device: NearbyDevice)
         fun onDeviceLost(endpointId: String)
         fun onConnectionInitiated(device: NearbyDevice, authenticationDigits: String)

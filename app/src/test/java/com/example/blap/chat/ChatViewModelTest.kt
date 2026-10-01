@@ -2,7 +2,14 @@ package com.example.blap.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelStore
+import com.example.blap.auth.AuthAccount
+import com.example.blap.auth.AuthRepository
+import com.example.blap.auth.AccountProfileRepository
+import com.example.blap.auth.PublicAccountProfile
+import com.example.blap.auth.AuthViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -14,6 +21,99 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ChatViewModelTest {
+    @Test
+    fun splitFeatureModelsShareOneSessionAndDoNotCloseSiblingResources() {
+        val nearby = FakeNearbyChatController()
+        val store = FakeChatStore()
+        val session = MessagingSession(ChatDependencies(nearby, store, FakeIdentityStore(),
+            ioDispatcher = Dispatchers.Unconfined)).also(testSessions::add)
+        val factory = MessagingViewModelFactory(session)
+        val features = ViewModelStore()
+        val owner = ViewModelStore()
+        owner.put("session", MessagingSessionOwner(session))
+        val chat = factory.create(ChatViewModel::class.java).also { features.put("chat", it) }
+        val contacts = factory.create(ContactsViewModel::class.java).also { features.put("contacts", it) }
+        val groups = factory.create(GroupsViewModel::class.java).also { features.put("groups", it) }
+        val profile = factory.create(ProfileViewModel::class.java).also { features.put("profile", it) }
+        assertSame(chat.uiState, contacts.uiState)
+        assertSame(chat.uiState, groups.uiState)
+        assertSame(chat.uiState, profile.uiState)
+        profile.updateDisplayName("Alice")
+        assertEquals("Alice", chat.uiState.value.displayName)
+
+        features.clear()
+        assertFalse(store.closed)
+        assertFalse(nearby.closed)
+        owner.clear()
+        session.close()
+        assertEquals(1, store.closeCalls)
+        assertEquals(1, nearby.closeCalls)
+    }
+
+    @Test
+    fun signOutHidesChatsAndRetainsRestartUntilTheActivityHandlesIt() = runBlocking {
+        val nearby = FakeNearbyChatController()
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        val authentication = FakeAuthRepository(AuthAccount(uid = "alice"))
+        val session = MessagingSession(ChatDependencies(nearby, store, FakeIdentityStore(), accountId = "alice",
+            cloudChatController = cloud, authRepository = authentication,
+            accountProfileRepository = FakeAccountProfiles(), ioDispatcher = Dispatchers.Unconfined))
+            .also(testSessions::add)
+        val features = ViewModelStore()
+        val chat = ChatViewModel(session).also { features.put("chat", it) }
+        val auth = AuthViewModel(session).also { features.put("auth", it) }
+        chat.openConversation(MeshGroup.ID)
+        chat.sendMessage("A local message")
+        assertEquals(1, session.uiState.value.messages.size)
+
+        auth.signOut()
+
+        assertTrue(session.uiState.value.messages.isEmpty())
+        assertTrue(session.uiState.value.savedContacts.isEmpty())
+        assertEquals("", auth.uiState.value.account.uid)
+        assertTrue(auth.accountChanges.first().clearCredentials)
+        assertTrue(auth.accountChanges.first().clearCredentials)
+        assertTrue(store.closed)
+        assertTrue(nearby.closed)
+        assertNull(cloud.listener)
+        features.clear()
+    }
+
+    @Test
+    fun signupWritesTheNewAccountIdentityWithoutChangingTheOldScope() = runBlocking {
+        val oldIdentity = SnapshotIdentityStore(ContactProfile(displayName = "Guest"), 0)
+        val newIdentity = SnapshotIdentityStore(ContactProfile(), 0)
+        val authentication = FakeAuthRepository()
+        val backup = RecordingPrivateProfileStore()
+        val session = MessagingSession(ChatDependencies(FakeNearbyChatController(), FakeChatStore(), oldIdentity,
+            authRepository = authentication, accountProfileRepository = FakeAccountProfiles(),
+            privateProfileStore = backup, identityFor = { uid ->
+                assertEquals("new-account", uid)
+                newIdentity
+            }, ioDispatcher = Dispatchers.Unconfined)).also(testSessions::add)
+        val owner = ViewModelStore()
+        val auth = AuthViewModel(session).also { owner.put("auth", it) }
+
+        auth.registerEmail("alice@example.com", "password", "alice", "Alice")
+
+        assertEquals("alice", newIdentity.getProfile().username)
+        assertEquals("Alice", newIdentity.getProfile().displayName)
+        assertEquals("Guest", oldIdentity.getProfile().displayName)
+        assertEquals("", session.uiState.value.onlineAccountId)
+        assertEquals("alice", backup.saved?.profile?.username)
+        assertNull(auth.accountChanges.first().setupError)
+        owner.clear()
+    }
+
+    @Test
+    fun sessionFactoryRejectsUnknownTypesBeforeAllocatingResources() {
+        var created = false
+        val factory = MessagingSessionFactory { created = true; error("Not expected") }
+        assertThrows(IllegalArgumentException::class.java) { factory.create(ChatViewModel::class.java) }
+        assertFalse(created)
+    }
+
     @Test
     fun factoryRejectsUnknownViewModelsWithoutCreatingResources() {
         var created = false
@@ -48,7 +148,7 @@ class ChatViewModelTest {
             assertEquals(identity.getPeerId(), viewModel.uiState.value.myPeerId)
             assertEquals("alice-account", cloud.startedAccountId)
             assertSame(viewModel, nearby.listener)
-            assertSame(viewModel, cloud.listener)
+            assertTrue(cloud.listener is CloudChatSynchronizer)
             assertEquals(MeshGroup.ID, store.getConversations().single().peerId)
         } finally {
             owner.clear()
@@ -106,7 +206,7 @@ class ChatViewModelTest {
     @Test
     fun reloginRestoresCardAndOptInDiscoveryFromNewerPrivateCopy() {
         val identity = SnapshotIdentityStore(ContactProfile(displayName = "Alice", username = "alice"), 10)
-        val viewModel = ChatViewModel(
+        val viewModel = MessagingTestHarness(
             FakeNearbyChatController(), FakeChatStore(), identity, Dispatchers.Unconfined,
             initialAccountId = "alice",
         )
@@ -133,7 +233,7 @@ class ChatViewModelTest {
         )
         val identity = SnapshotIdentityStore(local, 30)
         val backup = RecordingPrivateProfileStore()
-        val viewModel = ChatViewModel(
+        val viewModel = MessagingTestHarness(
             FakeNearbyChatController(), FakeChatStore(), identity, Dispatchers.Unconfined,
             initialAccountId = "alice", privateProfileStore = backup,
         )
@@ -154,7 +254,7 @@ class ChatViewModelTest {
             discoverableByPhone = true)
         val identity = SnapshotIdentityStore(local, 0)
         val backup = RecordingPrivateProfileStore()
-        val viewModel = ChatViewModel(
+        val viewModel = MessagingTestHarness(
             FakeNearbyChatController(), FakeChatStore(), identity, Dispatchers.Unconfined,
             initialAccountId = "alice", privateProfileStore = backup,
         )
@@ -1273,13 +1373,119 @@ class ChatViewModelTest {
         assertEquals(store.getSavedContacts().single().id, viewModel.uiState.value.selectedContactId)
     }
 
+    private val testSessions = mutableListOf<MessagingSession>()
+
+    @org.junit.After
+    fun closeTestSessions() { testSessions.forEach(MessagingSession::close) }
+
+    /** Test-only convenience for existing end-to-end regression scenarios. Production has no forwarding facade. */
+    private inner class MessagingTestHarness(
+        nearbyChatController: NearbyTransport,
+        chatStore: ChatStore,
+        identityStore: IdentityStore,
+        ioDispatcher: kotlinx.coroutines.CoroutineDispatcher = Dispatchers.Unconfined,
+        cloudChatController: CloudChatController? = null,
+        chatNotifier: ChatNotifier = NoopChatNotifier,
+        initialAccountId: String = "",
+        privateProfileStore: PrivateProfileStore? = null,
+    ) {
+        val session = MessagingSession(ChatDependencies(nearbyChatController, chatStore, identityStore,
+            accountId = initialAccountId, cloudChatController = cloudChatController,
+            notifier = chatNotifier, privateProfileStore = privateProfileStore, ioDispatcher = ioDispatcher))
+        val chat = ChatViewModel(session)
+        val contacts = ContactsViewModel(session)
+        val groups = GroupsViewModel(session)
+        val profile = ProfileViewModel(session)
+        val uiState = session.uiState
+        init { testSessions += session }
+
+        fun startChat() = chat.startChat()
+        fun connectToDevice(endpointId: String) = chat.connectToDevice(endpointId)
+        fun updateConversationSearch(query: String) = chat.updateConversationSearch(query)
+        fun sendMessage(text: String) = chat.sendMessage(text)
+        fun sendReply(targetId: String, text: String) = chat.sendReply(targetId, text)
+        fun createPoll(question: String, options: List<String>) = chat.createPoll(question, options)
+        fun voteInPoll(pollId: String, option: Int) = chat.voteInPoll(pollId, option)
+        fun editMessage(messageId: String, text: String) = chat.editMessage(messageId, text)
+        fun deleteMessage(messageId: String) = chat.deleteMessage(messageId)
+        fun sendVoice(durationMs: Int, audio: ByteArray) = chat.sendVoice(durationMs, audio)
+        fun disconnect(peerId: String) = chat.disconnect(peerId)
+        fun dismissError() = chat.dismissError()
+        fun updateMessageDraft(text: String) = chat.updateMessageDraft(text)
+        fun updateVenueStatus(message: String, checking: Boolean = false) = chat.updateVenueStatus(message, checking)
+        fun onDeviceFound(device: NearbyDevice) = chat.onDeviceFound(device)
+        fun onDeviceLost(endpointId: String) = chat.onDeviceLost(endpointId)
+        fun onConnectionInitiated(device: NearbyDevice, authenticationDigits: String) = chat.onConnectionInitiated(device, authenticationDigits)
+        fun onConnected(peer: ConnectedPeer) = chat.onConnected(peer)
+        fun onMeshPeerFound(peer: GroupMember) = chat.onMeshPeerFound(peer)
+        fun onMessageReceived(message: IncomingNearbyMessage) = chat.onMessageReceived(message)
+        fun onMessageSent(peerId: String, messageId: String) = chat.onMessageSent(peerId, messageId)
+        fun onMessageDelivered(peerId: String, messageId: String) = chat.onMessageDelivered(peerId, messageId)
+        fun onDisconnected(peerId: String) = chat.onDisconnected(peerId)
+        fun onError(message: String) = chat.onError(message)
+        fun onNearbyUnavailable(message: String) = chat.onNearbyUnavailable(message)
+        fun stopChat() = chat.stopChat()
+        fun beginManageContacts() = contacts.beginManageContacts()
+        fun beginAddContact() = contacts.beginAddContact()
+        fun openContact(contactId: String) = contacts.openContact(contactId)
+        fun openCurrentChatProfile() = contacts.openCurrentChatProfile()
+        fun saveCurrentChatContact() = contacts.saveCurrentChatContact()
+        fun closeCurrentChatProfile() = contacts.closeCurrentChatProfile()
+        fun closeContactEditor() = contacts.closeContactEditor()
+        fun messageContact(contactId: String) = contacts.messageContact(contactId)
+        fun checkContactOnline(contactId: String) = contacts.checkContactOnline(contactId)
+        fun selectOnlineAccount(uid: String) = contacts.selectOnlineAccount(uid)
+        fun cancelAccountSelection() = contacts.cancelAccountSelection()
+        fun updateContactDraft(profile: ContactProfile) = contacts.updateContactDraft(profile)
+        fun importScannedContactCard(payload: String) = contacts.importScannedContactCard(payload)
+        fun updateContactName(name: String) = contacts.updateContactName(name)
+        fun updateContactPhone(phoneNumber: String) = contacts.updateContactPhone(phoneNumber)
+        fun saveContact() = contacts.saveContact()
+        fun deleteContact() = contacts.deleteContact()
+        fun importDeviceContacts(contacts: List<DeviceContact>) = this.contacts.importDeviceContacts(contacts)
+        fun updateContactSearch(query: String) = contacts.updateContactSearch(query)
+        fun beginCreateGroup() = groups.beginCreateGroup()
+        fun beginGroupSettings() = groups.beginGroupSettings()
+        fun updateGroupName(name: String) = groups.updateGroupName(name)
+        fun toggleGroupMember(peerId: String) = groups.toggleGroupMember(peerId)
+        fun createPrivateGroup() = groups.createPrivateGroup()
+        fun saveGroupSettings() = groups.saveGroupSettings()
+        fun deleteCurrentGroup() = groups.deleteCurrentGroup()
+        fun updateDisplayName(name: String) = profile.updateDisplayName(name)
+        fun updatePhoneNumber(phoneNumber: String) = profile.updatePhoneNumber(phoneNumber)
+        fun completeSetup() = profile.completeSetup()
+        fun showMyCard() = profile.showMyCard()
+        fun editProfile() = profile.editProfile()
+        fun showDiscoverySettings() = profile.showDiscoverySettings()
+        fun updateDiscoveryPhone(phoneNumber: String) = profile.updateDiscoveryPhone(phoneNumber)
+        fun updateDiscoveryEnabled(enabled: Boolean) = profile.updateDiscoveryEnabled(enabled)
+        fun cancelDiscoveryEdit() = profile.cancelDiscoveryEdit()
+        fun saveDiscoverySettings() = profile.saveDiscoverySettings()
+        fun updateProfile(profile: ContactProfile) = this.profile.updateProfile(profile)
+        fun cancelProfileEdit() = profile.cancelProfileEdit()
+        fun saveProfile() = profile.saveProfile()
+        fun showSettings() = profile.showSettings()
+        fun applyAccountProfile(username: String, displayName: String) = profile.applyAccountProfile(username, displayName)
+        fun restorePrivateProfile(snapshot: PrivateProfileSnapshot?, username: String, displayName: String) = profile.restorePrivateProfile(snapshot, username, displayName)
+        fun onDirectMessage(otherUid: String, message: CloudChatMessage) = session.cloudSync.onDirectMessage(otherUid, message)
+        fun onPrivateGroup(group: CloudPrivateGroup) = session.cloudSync.onPrivateGroup(group)
+        fun onGroupMessage(groupId: String, message: CloudChatMessage) = session.cloudSync.onGroupMessage(groupId, message)
+        fun onCloudError(message: String) = session.cloudSync.onCloudError(message)
+        fun openConversation(peerId: String) = session.navigation.openConversation(peerId)
+        fun showConversationList() = session.navigation.showConversationList()
+        fun handleBack() = session.navigation.handleBack()
+        fun showError(message: String) = session.showError(message)
+        fun showNotice(message: String) = session.showNotice(message)
+        fun accountChanged(accountId: String) = session.cloudSync.accountChanged(accountId)
+    }
+
     private fun makeViewModel(
         controller: FakeNearbyChatController,
         store: FakeChatStore = FakeChatStore(),
         identityStore: FakeIdentityStore = FakeIdentityStore(),
         cloud: FakeCloudChatController? = null,
         notifier: ChatNotifier = NoopChatNotifier,
-    ) = ChatViewModel(controller, store, identityStore, Dispatchers.Unconfined,
+    ) = MessagingTestHarness(controller, store, identityStore, Dispatchers.Unconfined,
         cloudChatController = cloud, chatNotifier = notifier)
 
     private class RecordingNotifier : ChatNotifier {
@@ -1309,6 +1515,7 @@ class ChatViewModelTest {
 
     private class FakeChatStore : ChatStore {
         var closed = false
+        var closeCalls = 0
         private val peers = linkedMapOf<String, String>()
         private val messages = linkedMapOf<String, ChatMessage>()
         private val groups = linkedMapOf<String, PrivateGroup>()
@@ -1425,12 +1632,13 @@ class ChatViewModelTest {
             peers.remove(fromPeerId)
         }
 
-        override fun close() { closed = true }
+        override fun close() { closed = true; closeCalls++ }
     }
 
     private class FakeNearbyChatController : NearbyChatController {
         override var listener: NearbyTransport.Listener? = null
         var closed = false
+        var closeCalls = 0
         var advertisingStarted = false
         var advertisedName: String? = null
         var advertisedPeerId: String? = null
@@ -1475,7 +1683,27 @@ class ChatViewModelTest {
         override fun stop() {
             stopped = true
         }
-        override fun close() { closed = true }
+        override fun close() { closed = true; closeCalls++ }
+    }
+
+    private class FakeAuthRepository(override var account: AuthAccount = AuthAccount()) : AuthRepository {
+        override fun ensureGuestSession(onComplete: () -> Unit) = onComplete()
+        override fun createEmailAccount(email: String, password: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+            account = AuthAccount(uid = "new-account", email = email, hasPassword = true)
+            onSuccess()
+        }
+        override fun signInWithEmail(email: String, password: String, onSuccess: () -> Unit, onError: (String) -> Unit) = onSuccess()
+        override fun signInWithGoogleToken(token: String, onSuccess: () -> Unit, onError: (String) -> Unit) = onSuccess()
+        override fun sendVerificationEmail(onComplete: (Boolean) -> Unit) = onComplete(true)
+        override fun refreshAccount(onComplete: () -> Unit) = onComplete()
+        override fun ensureSignedIn(onComplete: (Boolean) -> Unit) = onComplete(account.uid.isNotBlank())
+        override fun signOut() { account = AuthAccount() }
+    }
+
+    private class FakeAccountProfiles : AccountProfileRepository {
+        override fun validate(username: String, displayName: String): String? = null
+        override suspend fun load(): PublicAccountProfile? = null
+        override suspend fun claim(username: String, displayName: String) = PublicAccountProfile(username, displayName)
     }
 
     private class FakeCloudChatController : CloudChatController {

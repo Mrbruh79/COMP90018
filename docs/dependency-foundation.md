@@ -1,5 +1,7 @@
 # Dependency foundation
 
+This document records the initial foundation stage. The current ViewModel and session wiring is described in [Stage 7](chat-refactor.md), which supersedes the single-ViewModel and shared-listener descriptions below.
+
 This stage adds contracts and a composition root. It does not replace the chat, GPS, event or mesh algorithms. Feature development and screen decomposition remain separate work.
 
 ## Ownership and review

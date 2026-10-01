@@ -2,6 +2,9 @@ package com.example.blap.event
 
 /** Event traffic on the shared Nearby session. NearbyChatManager implements this via EventMeshSession. */
 interface EventMeshGateway {
+    var eventListener: Listener?
+        get() = null
+        set(value) = Unit
     fun setActiveEvent(
         eventId: String?,
         meshSecret: String = "",

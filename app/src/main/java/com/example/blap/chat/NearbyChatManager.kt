@@ -6,6 +6,7 @@ import com.example.blap.event.EventAccessRequest
 import com.example.blap.event.EventAnnouncement
 import com.example.blap.event.EventChatMessage
 import com.example.blap.event.EventMutation
+import com.example.blap.event.EventMeshGateway
 
 class NearbyChatManager internal constructor(
     private val connections: NearbyConnectionTransport,
@@ -27,6 +28,7 @@ class NearbyChatManager internal constructor(
     private var discoveryRequested = false
 
     override var listener: NearbyTransport.Listener? = null
+    override var eventListener: EventMeshGateway.Listener? = null
 
     init {
         connections.listener = this
@@ -171,7 +173,7 @@ class NearbyChatManager internal constructor(
         val packet = message.toPacket()
         meshRouter.noteOutgoingEventMessage(message.id)
         sendPacketToMany(eventSession.eventEndpoints(), packet) {
-            listener?.onEventMessageSent(message.eventId, message.id)
+            eventListener?.onEventMessageSent(message.eventId, message.id)
         }
     }
 
@@ -252,6 +254,7 @@ class NearbyChatManager internal constructor(
     override fun close() {
         stop()
         listener = null
+        eventListener = null
         connections.listener = null
     }
 
@@ -439,21 +442,21 @@ class NearbyChatManager internal constructor(
                     listener?.onMessageDelivered(delivery.conversationId, delivery.messageId)
                 is MeshLocalDelivery.Group -> listener?.onGroupReceived(delivery.group)
                 is MeshLocalDelivery.MeshPeer -> listener?.onMeshPeerFound(delivery.peer)
-                is MeshLocalDelivery.EventPeer -> listener?.onEventPeerAvailable(
+                is MeshLocalDelivery.EventPeer -> eventListener?.onEventPeerAvailable(
                     delivery.peerId,
                     delivery.eventId,
                     delivery.userId,
                     delivery.accessGranted,
                 )
-                is MeshLocalDelivery.EventChat -> listener?.onEventChatMessageReceived(delivery.message)
+                is MeshLocalDelivery.EventChat -> eventListener?.onEventChatMessageReceived(delivery.message)
                 is MeshLocalDelivery.IncomingEventAnnouncement ->
-                    listener?.onEventAnnouncementReceived(delivery.announcement)
+                    eventListener?.onEventAnnouncementReceived(delivery.announcement)
                 is MeshLocalDelivery.IncomingEventMutation ->
-                    listener?.onEventMutationReceived(delivery.mutation)
+                    eventListener?.onEventMutationReceived(delivery.mutation)
                 is MeshLocalDelivery.IncomingEventAccessRequest ->
-                    listener?.onEventAccessRequestReceived(delivery.request)
+                    eventListener?.onEventAccessRequestReceived(delivery.request)
                 is MeshLocalDelivery.IncomingEventAccessGrant ->
-                    listener?.onEventAccessGrantReceived(delivery.grant)
+                    eventListener?.onEventAccessGrantReceived(delivery.grant)
             }
         }
         val packet = decision.forwardPacket ?: return
