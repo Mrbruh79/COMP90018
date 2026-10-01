@@ -40,7 +40,7 @@ internal class EventMembershipCoordinator(
             }.onSuccess { membership ->
                 updateState { it.copy(membership = membership, loading = false, notice = "Joined event.") }
             }.onFailure { failure ->
-                updateState { it.copy(loading = false, error = failure.readableMessage("Could not join event")) }
+                updateState { it.copy(loading = false, error = failure.readableEventMessage("Could not join event")) }
             }
         }
     }
@@ -78,7 +78,7 @@ internal class EventMembershipCoordinator(
                 }
             }.onFailure { failure ->
                 updateState {
-                    it.copy(loading = false, error = failure.readableMessage("Invitation could not be sent"))
+                    it.copy(loading = false, error = failure.readableEventMessage("Invitation could not be sent"))
                 }
             }
         }
@@ -122,7 +122,7 @@ internal class EventMembershipCoordinator(
                     it.copy(
                         participantSearchResult = null,
                         loading = false,
-                        error = failure.readableMessage("Participant search failed"),
+                        error = failure.readableEventMessage("Participant search failed"),
                     )
                 }
             }
@@ -161,7 +161,7 @@ internal class EventMembershipCoordinator(
                 }
             }.onFailure { failure ->
                 updateState {
-                    it.copy(loading = false, error = failure.readableMessage("Invitation could not be accepted"))
+                    it.copy(loading = false, error = failure.readableEventMessage("Invitation could not be accepted"))
                 }
             }
         }
@@ -180,7 +180,7 @@ internal class EventMembershipCoordinator(
                     }
                 }
                 .onFailure { failure ->
-                    updateState { it.copy(error = failure.readableMessage("Invitation could not be declined")) }
+                    updateState { it.copy(error = failure.readableEventMessage("Invitation could not be declined")) }
                 }
         }
     }
@@ -200,7 +200,7 @@ internal class EventMembershipCoordinator(
                     }
                 }
                 .onFailure { failure ->
-                    updateState { it.copy(error = failure.readableMessage("Invitation could not be revoked")) }
+                    updateState { it.copy(error = failure.readableEventMessage("Invitation could not be revoked")) }
                 }
         }
     }
@@ -222,7 +222,7 @@ internal class EventMembershipCoordinator(
         scope.launch {
             runCatching { remoteRepository.leaveEvent(event.id, membership.userId, leftAt) }
                 .onFailure { failure ->
-                    updateState { it.copy(error = failure.readableMessage("Leaving could not be synced")) }
+                    updateState { it.copy(error = failure.readableEventMessage("Leaving could not be synced")) }
                 }
         }
     }
@@ -251,7 +251,7 @@ internal class EventMembershipCoordinator(
                     }
                 }
                 .onFailure { failure ->
-                    updateState { it.copy(error = failure.readableMessage("Co-admin could not be added")) }
+                    updateState { it.copy(error = failure.readableEventMessage("Co-admin could not be added")) }
                 }
         }
     }
@@ -292,13 +292,11 @@ internal class EventMembershipCoordinator(
                     }
                 }
                 .onFailure { failure ->
-                    updateState { it.copy(error = failure.readableMessage("Member could not be removed")) }
+                    updateState { it.copy(error = failure.readableEventMessage("Member could not be removed")) }
                 }
         }
     }
 
-    private fun Throwable.readableMessage(prefix: String): String =
-        "$prefix: ${localizedMessage?.takeIf(String::isNotBlank) ?: "unknown error"}"
 }
 
 /** Pure membership rules and model construction shared by membership operations. */

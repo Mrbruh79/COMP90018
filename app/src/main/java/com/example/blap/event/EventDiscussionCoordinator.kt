@@ -92,7 +92,7 @@ internal class EventDiscussionCoordinator(
                 }
             },
             onError = { failure ->
-                updateState { it.copy(error = failure.readableMessage("Discussion thread could not be updated")) }
+                updateState { it.copy(error = failure.readableEventMessage("Discussion thread could not be updated")) }
             },
         )
     }
@@ -136,7 +136,7 @@ internal class EventDiscussionCoordinator(
                 }
                 .onFailure { failure ->
                     updateState {
-                        it.copy(loading = false, error = failure.readableMessage("Comment could not be posted"))
+                        it.copy(loading = false, error = failure.readableEventMessage("Comment could not be posted"))
                     }
                 }
         }
@@ -156,7 +156,7 @@ internal class EventDiscussionCoordinator(
         scope.launch {
             runCatching { remoteRepository.setDiscussionLike(comment, shouldLike) }
                 .onFailure { failure ->
-                    updateState { it.copy(error = failure.readableMessage("Like could not be updated")) }
+                    updateState { it.copy(error = failure.readableEventMessage("Like could not be updated")) }
                 }
         }
     }
@@ -189,7 +189,7 @@ internal class EventDiscussionCoordinator(
                 }
             }.onFailure { failure ->
                 updateState {
-                    it.copy(loading = false, error = failure.readableMessage("Comment could not be deleted"))
+                    it.copy(loading = false, error = failure.readableEventMessage("Comment could not be deleted"))
                 }
             }
         }
@@ -232,7 +232,7 @@ internal class EventDiscussionCoordinator(
             },
             onError = { failure ->
                 updateState {
-                    it.copy(loading = false, error = failure.readableMessage("Discussion could not be updated"))
+                    it.copy(loading = false, error = failure.readableEventMessage("Discussion could not be updated"))
                 }
             },
         )
@@ -248,7 +248,7 @@ internal class EventDiscussionCoordinator(
                 }
             },
             onError = { failure ->
-                updateState { it.copy(notice = failure.readableMessage("Likes will refresh when online")) }
+                updateState { it.copy(notice = failure.readableEventMessage("Likes will refresh when online")) }
             },
         )
     }
@@ -257,9 +257,6 @@ internal class EventDiscussionCoordinator(
         threadObserver?.close()
         threadObserver = null
     }
-
-    private fun Throwable.readableMessage(prefix: String): String =
-        "$prefix: ${localizedMessage?.takeIf(String::isNotBlank) ?: "unknown error"}"
 
     private companion object {
         const val DISCUSSION_PAGE_SIZE = 20

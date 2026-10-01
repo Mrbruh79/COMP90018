@@ -35,7 +35,7 @@ internal class EventLifecycleCoordinator(
                 startInvitationObserver()
             }.onFailure { failure ->
                 updateState { state ->
-                    state.copy(error = failure.readableMessage("Could not connect to events"))
+                    state.copy(error = failure.readableEventMessage("Could not connect to events"))
                 }
             }
         }
@@ -53,7 +53,7 @@ internal class EventLifecycleCoordinator(
                 startInvitationObserver()
                 refreshEvents()
             }.onFailure { failure ->
-                updateState { it.copy(error = failure.readableMessage("Could not refresh events")) }
+                updateState { it.copy(error = failure.readableEventMessage("Could not refresh events")) }
             }
         }
     }
@@ -83,7 +83,7 @@ internal class EventLifecycleCoordinator(
                         loading = false,
                         notice = if (it.events.isEmpty()) null else "Showing cached events.",
                         error = if (it.events.isEmpty()) {
-                            failure.readableMessage("Events could not be loaded")
+                            failure.readableEventMessage("Events could not be loaded")
                         } else null,
                     )
                 }
@@ -167,7 +167,7 @@ internal class EventLifecycleCoordinator(
                     }
                 }.onFailure { failure ->
                     updateState {
-                        it.copy(loading = false, error = failure.readableMessage("Event could not be created"))
+                        it.copy(loading = false, error = failure.readableEventMessage("Event could not be created"))
                     }
                 }
             } finally {
@@ -216,7 +216,7 @@ internal class EventLifecycleCoordinator(
                     }
                     .onFailure { failure ->
                         updateState {
-                            it.copy(loading = false, error = failure.readableMessage("Event could not be updated"))
+                            it.copy(loading = false, error = failure.readableEventMessage("Event could not be updated"))
                         }
                     }
             } finally {
@@ -261,7 +261,7 @@ internal class EventLifecycleCoordinator(
                     }
                     .onFailure { failure ->
                         updateState {
-                            it.copy(loading = false, error = failure.readableMessage("Event could not be deleted"))
+                            it.copy(loading = false, error = failure.readableEventMessage("Event could not be deleted"))
                         }
                     }
             } finally {
@@ -389,7 +389,7 @@ internal class EventLifecycleCoordinator(
                 }
             },
             onError = { failure ->
-                updateState { it.copy(notice = failure.readableMessage("Invitations will refresh when online")) }
+                updateState { it.copy(notice = failure.readableEventMessage("Invitations will refresh when online")) }
             },
         )
     }
@@ -424,7 +424,7 @@ internal class EventLifecycleCoordinator(
             onError = { failure ->
                 updateState { state ->
                     if (state.events.isEmpty()) {
-                        state.copy(error = failure.readableMessage("Events could not be updated"))
+                        state.copy(error = failure.readableEventMessage("Events could not be updated"))
                     } else {
                         state.copy(notice = "Event updates will resume when you are online.")
                     }
@@ -449,7 +449,7 @@ internal class EventLifecycleCoordinator(
                     runCatching { remoteRepository.deleteEvent(event.id) }
                         .onFailure { failure ->
                             updateState {
-                                it.copy(error = failure.readableMessage("An older deleted event could not be cleaned up"))
+                                it.copy(error = failure.readableEventMessage("An older deleted event could not be cleaned up"))
                             }
                         }
                 }
@@ -530,8 +530,6 @@ internal class EventLifecycleCoordinator(
             }
     }
 
-    private fun Throwable.readableMessage(prefix: String): String =
-        "$prefix: ${localizedMessage?.takeIf(String::isNotBlank) ?: "unknown error"}"
 }
 
 internal data class EventCreation(

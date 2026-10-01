@@ -101,7 +101,7 @@ internal class EventOnSiteCoordinator(
                 .onSuccess { meshGateway.sendEventMutation(mutation) }
                 .onFailure { failure ->
                     updateState {
-                        it.copy(notice = failure.readableMessage("The static QR was saved locally but could not be synced"))
+                        it.copy(notice = failure.readableEventMessage("The static QR was saved locally but could not be synced"))
                     }
                 }
         }
@@ -342,8 +342,6 @@ internal class EventOnSiteCoordinator(
         }
     }
 
-    private fun Throwable.readableMessage(prefix: String): String =
-        "$prefix: ${localizedMessage?.takeIf(String::isNotBlank) ?: "unknown error"}"
 }
 
 /** Pure validation boundary for untrusted packets received from the event mesh. */
