@@ -179,14 +179,14 @@ class MainActivity : ComponentActivity() {
                     return@CommonGroundTheme
                 }
 
-                val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+                val chatUiState by viewModel.uiState.collectAsStateWithLifecycle()
                 val eventUiState by eventViewModel.uiState.collectAsStateWithLifecycle()
                 val authUiState by authViewModel.uiState.collectAsStateWithLifecycle()
                 val authAccount = authUiState.account
                 val accountProfile = authUiState.profile
                 val accountProfileLoading = authUiState.profileLoading
                 NearbyChatApp(
-                    uiState = uiState,
+                    chatUiState = chatUiState,
                     eventUiState = eventUiState,
                     deniedPermissions = deniedPermissions.map(NearbyPermissions::displayName),
                     authAccount = authAccount,

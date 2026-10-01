@@ -79,7 +79,7 @@ import com.example.blap.ui.screens.events.EventActions
 
 @Composable
 fun NearbyChatApp(
-    uiState: ChatUiState,
+    chatUiState: ChatUiState,
     eventUiState: EventUiState,
     deniedPermissions: List<String>,
     authAccount: AuthAccount,
@@ -106,12 +106,12 @@ fun NearbyChatApp(
     onOpenSettings: () -> Unit,
 ) {
     BackHandler(
-        enabled = uiState.screen != ChatScreen.WELCOME && uiState.screen != ChatScreen.CHATS,
-        onBack = { if (uiState.screen == ChatScreen.EVENTS) eventActions.onBack() else onSystemBack() },
+        enabled = chatUiState.screen != ChatScreen.WELCOME && chatUiState.screen != ChatScreen.CHATS,
+        onBack = { if (chatUiState.screen == ChatScreen.EVENTS) eventActions.onBack() else onSystemBack() },
     )
     val snackbar = remember { SnackbarHostState() }
-    LaunchedEffect(uiState.error, uiState.notice, eventUiState.error, eventUiState.notice) {
-        val message = uiState.error ?: uiState.notice ?: eventUiState.error ?: eventUiState.notice
+    LaunchedEffect(chatUiState.error, chatUiState.notice, eventUiState.error, eventUiState.notice) {
+        val message = chatUiState.error ?: chatUiState.notice ?: eventUiState.error ?: eventUiState.notice
             ?: return@LaunchedEffect
         snackbar.showSnackbar(message)
         chatActions.onDismissError()
@@ -130,7 +130,7 @@ fun NearbyChatApp(
         return
     }
     val visibleAccountProfile = accountProfile
-        ?: PublicAccountProfile(username = "", displayName = uiState.displayName)
+        ?: PublicAccountProfile(username = "", displayName = chatUiState.displayName)
 
     Box(
         Modifier
@@ -146,7 +146,7 @@ fun NearbyChatApp(
             contentWindowInsets = WindowInsets.safeDrawing,
             snackbarHost = { SnackbarHost(snackbar) },
             floatingActionButton = {
-                if (uiState.screen == ChatScreen.CHATS) {
+                if (chatUiState.screen == ChatScreen.CHATS) {
                     FloatingActionButton(
                         onClick = contactsActions.onManageContacts,
                         containerColor = MaterialTheme.colorScheme.primary,
@@ -160,9 +160,9 @@ fun NearbyChatApp(
                 }
             },
             bottomBar = {
-                if (uiState.screen in TOP_LEVEL_SCREENS) {
+                if (chatUiState.screen in TOP_LEVEL_SCREENS) {
                     AppNavigationBar(
-                        state = uiState.screen,
+                        state = chatUiState.screen,
                         onChats = chatActions.onBackToChats,
                         onEvents = onShowEvents,
                         onContacts = contactsActions.onManageContacts,
@@ -179,9 +179,9 @@ fun NearbyChatApp(
                     .consumeWindowInsets(padding)
                     .padding(horizontal = 18.dp),
             ) {
-                if (uiState.screen in TOP_LEVEL_SCREENS) Header(uiState)
+                if (chatUiState.screen in TOP_LEVEL_SCREENS) Header(chatUiState)
                 Crossfade(
-                    targetState = uiState.screen,
+                    targetState = chatUiState.screen,
                     animationSpec = tween(180),
                     modifier = Modifier.weight(1f),
                     label = "Screen transition",
@@ -190,8 +190,8 @@ fun NearbyChatApp(
                     ChatScreen.WELCOME -> WelcomeScreen(
                         authAccount = authAccount,
                         actions = authActions,
-                        name = uiState.displayName,
-                        nameError = uiState.nameError,
+                        name = chatUiState.displayName,
+                        nameError = chatUiState.nameError,
                         deniedPermissions = deniedPermissions,
                         onNameChanged = profileActions.onNameChanged,
                         onStart = profileActions.onCompleteSetup,
@@ -199,15 +199,15 @@ fun NearbyChatApp(
                     )
 
                     ChatScreen.CHATS -> ConversationList(
-                        conversations = uiState.conversations,
-                        devices = uiState.discoveredDevices,
+                        conversations = chatUiState.conversations,
+                        devices = chatUiState.discoveredDevices,
                         onOpenConversation = chatActions.onOpenConversation,
                         onConnect = chatActions.onConnect,
                         onManageContacts = contactsActions.onManageContacts,
-                        search = uiState.conversationSearch,
+                        search = chatUiState.conversationSearch,
                         onSearchChanged = chatActions.onConversationSearchChanged,
-                        nearbyActive = uiState.nearbyActive,
-                        connectionCount = uiState.directConnectionCount,
+                        nearbyActive = chatUiState.nearbyActive,
+                        connectionCount = chatUiState.directConnectionCount,
                         deniedPermissions = deniedPermissions,
                         onStartNearby = chatActions.onStartChat,
                         onStopNearby = chatActions.onStopChat,
@@ -217,21 +217,21 @@ fun NearbyChatApp(
                     )
 
                     ChatScreen.CONNECTING -> ConnectingScreen(
-                        authenticationDigits = uiState.authenticationDigits,
+                        authenticationDigits = chatUiState.authenticationDigits,
                         onBack = chatActions.onBackToChats,
                     )
 
                     ChatScreen.CONVERSATION -> {
-                        val conversation = uiState.conversations.firstOrNull {
-                            it.peerId == uiState.selectedPeerId
+                        val conversation = chatUiState.conversations.firstOrNull {
+                            it.peerId == chatUiState.selectedPeerId
                         }
                         if (conversation == null) {
                             EmptyChat(chatActions.onBackToChats)
                         } else {
                             ChatScreen(
                                 conversation = conversation,
-                                messages = uiState.messages,
-                                directConnectionCount = uiState.directConnectionCount,
+                                messages = chatUiState.messages,
+                                directConnectionCount = chatUiState.directConnectionCount,
                                 onSend = chatActions.onSendMessage,
                                 onReply = chatActions.onSendReply,
                                 onCreatePoll = chatActions.onCreatePoll,
@@ -242,7 +242,7 @@ fun NearbyChatApp(
                                 microphonePermissionGranted = microphonePermissionGranted,
                                 onRequestMicrophonePermission = onRequestMicrophonePermission,
                                 onOpenContactProfile = contactsActions.onOpenChatContactProfile,
-                                draft = uiState.messageDrafts[conversation.peerId].orEmpty(),
+                                draft = chatUiState.messageDrafts[conversation.peerId].orEmpty(),
                                 onDraftChanged = chatActions.onMessageDraftChanged,
                                 onBack = chatActions.onBackToChats,
                                 onDisconnect = { chatActions.onDisconnect(conversation.peerId) },
@@ -252,9 +252,9 @@ fun NearbyChatApp(
                     }
 
                     ChatScreen.CREATING_GROUP -> CreateGroupScreen(
-                        name = uiState.groupNameDraft,
-                        contacts = uiState.groupContacts,
-                        selectedIds = uiState.selectedGroupMemberIds,
+                        name = chatUiState.groupNameDraft,
+                        contacts = chatUiState.groupContacts,
+                        selectedIds = chatUiState.selectedGroupMemberIds,
                         onNameChanged = groupsActions.onGroupNameChanged,
                         onToggleMember = groupsActions.onToggleGroupMember,
                         onCreate = groupsActions.onCreateGroup,
@@ -262,9 +262,9 @@ fun NearbyChatApp(
                     )
 
                     ChatScreen.MANAGING_CONTACTS -> ContactsScreen(
-                        contacts = uiState.savedContacts,
+                        contacts = chatUiState.savedContacts,
                         onlineReady = authAccount.uid.isNotBlank(),
-                        search = uiState.contactSearch,
+                        search = chatUiState.contactSearch,
                         onSearchChanged = contactsActions.onContactSearchChanged,
                         onAdd = contactsActions.onBeginAddContact,
                         onOpen = contactsActions.onOpenContact,
@@ -277,9 +277,9 @@ fun NearbyChatApp(
                     )
 
                     ChatScreen.EDITING_CONTACT -> ContactEditorScreen(
-                        profile = uiState.contactDraftProfile(),
-                        source = uiState.contactSourceDraft,
-                        isExisting = uiState.selectedContactId != null,
+                        profile = chatUiState.contactDraftProfile(),
+                        source = chatUiState.contactSourceDraft,
+                        isExisting = chatUiState.selectedContactId != null,
                         onChanged = contactsActions.onContactDraftChanged,
                         onSave = contactsActions.onSaveContact,
                         onDelete = contactsActions.onDeleteContact,
@@ -287,21 +287,21 @@ fun NearbyChatApp(
                     )
 
                     ChatScreen.CONTACT_PROFILE -> ChatContactProfileScreen(
-                        conversation = uiState.conversations.firstOrNull { it.peerId == uiState.selectedPeerId },
-                        contact = uiState.savedContacts.firstOrNull { it.id == uiState.selectedContactId },
-                        onEdit = { uiState.selectedContactId?.let(contactsActions.onOpenContact) },
+                        conversation = chatUiState.conversations.firstOrNull { it.peerId == chatUiState.selectedPeerId },
+                        contact = chatUiState.savedContacts.firstOrNull { it.id == chatUiState.selectedContactId },
+                        onEdit = { chatUiState.selectedContactId?.let(contactsActions.onOpenContact) },
                         onSaveContact = contactsActions.onSaveCurrentChatContact,
                         onBack = contactsActions.onCloseChatContactProfile,
                     )
 
                     ChatScreen.SHOWING_MY_CARD -> MyCardScreen(
-                        profile = uiState.profile().copy(username = visibleAccountProfile.username),
-                        peerId = uiState.myPeerId,
+                        profile = chatUiState.profile().copy(username = visibleAccountProfile.username),
+                        peerId = chatUiState.myPeerId,
                         onEdit = profileActions.onEditProfile,
                     )
 
                     ChatScreen.EDITING_PROFILE -> ProfileEditorScreen(
-                        profile = uiState.profileDraft ?: uiState.profile(),
+                        profile = chatUiState.profileDraft ?: chatUiState.profile(),
                         onChanged = profileActions.onProfileChanged,
                         onSave = profileActions.onSaveProfile,
                         onBack = profileActions.onCancelProfile,
@@ -309,18 +309,18 @@ fun NearbyChatApp(
 
                     ChatScreen.SETTINGS -> SettingsScreen(
                         authAccount = authAccount,
-                        accountProfile = visibleAccountProfile.copy(displayName = uiState.displayName),
+                        accountProfile = visibleAccountProfile.copy(displayName = chatUiState.displayName),
                         authActions = authActions,
-                        contactCount = uiState.savedContacts.size,
-                        connectionCount = uiState.directConnectionCount,
+                        contactCount = chatUiState.savedContacts.size,
+                        connectionCount = chatUiState.directConnectionCount,
                         onEditProfile = profileActions.onEditProfile,
                         onShowDiscoverySettings = profileActions.onShowDiscoverySettings,
                         onOpenAppSettings = onOpenSettings,
-                        nearbyActive = uiState.nearbyActive,
+                        nearbyActive = chatUiState.nearbyActive,
                         onStartNearby = chatActions.onStartChat,
                         onStopNearby = chatActions.onStopChat,
-                        venueStatus = uiState.venueStatus,
-                        checkingVenue = uiState.checkingVenue,
+                        venueStatus = chatUiState.venueStatus,
+                        checkingVenue = chatUiState.checkingVenue,
                         onCheckVenue = onCheckVenue,
                         notificationSettings = notificationSettings,
                         notificationPermissionGranted = notificationPermissionGranted,
@@ -331,11 +331,11 @@ fun NearbyChatApp(
                     ChatScreen.DISCOVERY_SETTINGS -> DiscoverySettingsScreen(
                         authAccount = authAccount,
                         accountProfile = visibleAccountProfile,
-                        lookupPhoneNumber = (uiState.profileDraft ?: uiState.profile()).lookupPhoneNumber,
-                        enabled = (uiState.profileDraft ?: uiState.profile()).discoverableByPhone,
-                        savedLookupPhoneNumber = uiState.profileLookupPhoneNumber,
-                        savedEnabled = uiState.profileDiscoverableByPhone,
-                        onlineLookupStatus = uiState.onlineLookupStatus,
+                        lookupPhoneNumber = (chatUiState.profileDraft ?: chatUiState.profile()).lookupPhoneNumber,
+                        enabled = (chatUiState.profileDraft ?: chatUiState.profile()).discoverableByPhone,
+                        savedLookupPhoneNumber = chatUiState.profileLookupPhoneNumber,
+                        savedEnabled = chatUiState.profileDiscoverableByPhone,
+                        onlineLookupStatus = chatUiState.onlineLookupStatus,
                         onPhoneChanged = profileActions.onDiscoveryPhoneChanged,
                         onEnabledChanged = profileActions.onDiscoveryEnabledChanged,
                         onSave = profileActions.onSaveDiscoverySettings,
@@ -350,16 +350,16 @@ fun NearbyChatApp(
                     )
 
                     ChatScreen.GROUP_SETTINGS -> CreateGroupScreen(
-                        name = uiState.groupNameDraft,
-                        contacts = uiState.groupContacts,
-                        selectedIds = uiState.selectedGroupMemberIds,
+                        name = chatUiState.groupNameDraft,
+                        contacts = chatUiState.groupContacts,
+                        selectedIds = chatUiState.selectedGroupMemberIds,
                         onNameChanged = groupsActions.onGroupNameChanged,
                         onToggleMember = groupsActions.onToggleGroupMember,
                         onCreate = groupsActions.onSaveGroupSettings,
-                        onBack = { uiState.selectedPeerId?.let(chatActions.onOpenConversation) ?: chatActions.onBackToChats() },
+                        onBack = { chatUiState.selectedPeerId?.let(chatActions.onOpenConversation) ?: chatActions.onBackToChats() },
                         title = "Group settings",
                         actionLabel = "Save changes",
-                        editable = uiState.canEditGroup,
+                        editable = chatUiState.canEditGroup,
                     )
 
                     ChatScreen.ERROR -> ErrorScreen(chatActions.onStartChat)
@@ -367,14 +367,14 @@ fun NearbyChatApp(
                 }
             }
         }
-        if (uiState.accountCandidates.isNotEmpty()) {
+        if (chatUiState.accountCandidates.isNotEmpty()) {
             AlertDialog(
                 onDismissRequest = contactsActions.onCancelAccountSelection,
                 title = { Text("Choose the right account") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("These accounts match the contact details. Check the username before linking.")
-                        uiState.accountCandidates.forEach { account ->
+                        chatUiState.accountCandidates.forEach { account ->
                             OutlinedButton(
                                 onClick = { contactsActions.onSelectOnlineAccount(account.uid) },
                                 modifier = Modifier.fillMaxWidth(),
