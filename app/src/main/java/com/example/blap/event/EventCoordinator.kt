@@ -70,10 +70,13 @@ class EventCoordinator(
     private val tombstoneCleanupInFlight = mutableSetOf<String>()
     private var eventObserver: AutoCloseable? = null
     private var invitationObserver: AutoCloseable? = null
-    private var discussionRootsObserver: AutoCloseable? = null
-    private var discussionThreadObserver: AutoCloseable? = null
-    private var discussionLikesObserver: AutoCloseable? = null
-    private var discussionRootLimit = DISCUSSION_PAGE_SIZE
+    private val discussionCoordinator = EventDiscussionCoordinator(
+        remoteRepository = remoteRepository,
+        scope = scope,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        clock = clock,
+    )
     private var pendingAccessRequest: EventAccessRequest? = null
 
     init {
@@ -125,7 +128,7 @@ class EventCoordinator(
             activeRemoteEvents.forEach(eventStore::saveEvent)
             removedIds.forEach(eventStore::purgeEvent)
             if (_uiState.value.activeEventId in removedIds) nearbyController.setActiveEvent(null)
-            if (_uiState.value.selectedEventId in removedIds) closeDiscussionObservers()
+            if (_uiState.value.selectedEventId in removedIds) discussionCoordinator.closeObservers()
             _uiState.update { state ->
                 if (state.selectedEventId in removedIds) {
                     EventUiState(
@@ -153,7 +156,7 @@ class EventCoordinator(
     fun accountChanged() {
         eventObserver?.close()
         invitationObserver?.close()
-        closeDiscussionObservers()
+        discussionCoordinator.closeObservers()
         eventObserver = null
         invitationObserver = null
         cachedUserId = null
@@ -171,7 +174,7 @@ class EventCoordinator(
     }
 
     fun showList() {
-        closeDiscussionObservers()
+        discussionCoordinator.closeObservers()
         _uiState.update {
             it.copy(
                 page = EventPage.LIST,
@@ -225,7 +228,7 @@ class EventCoordinator(
             -> _uiState.update { it.copy(page = EventPage.DETAIL, checkInQrPayload = null, error = null) }
 
             EventPage.DISCUSSION -> {
-                closeDiscussionObservers()
+                discussionCoordinator.closeObservers()
                 _uiState.update {
                     it.copy(
                         page = EventPage.DETAIL,
@@ -236,18 +239,7 @@ class EventCoordinator(
                 }
             }
 
-            EventPage.DISCUSSION_THREAD -> {
-                discussionThreadObserver?.close()
-                discussionThreadObserver = null
-                _uiState.update {
-                    it.copy(
-                        page = EventPage.DISCUSSION,
-                        discussionReplies = emptyList(),
-                        selectedDiscussionThreadId = null,
-                        error = null,
-                    )
-                }
-            }
+            EventPage.DISCUSSION_THREAD -> discussionCoordinator.backToList()
         }
     }
 
@@ -471,7 +463,7 @@ class EventCoordinator(
             try {
                 runCatching { remoteRepository.deleteEvent(event.id) }
                     .onSuccess {
-                        closeDiscussionObservers()
+                        discussionCoordinator.closeObservers()
                         nearbyController.sendEventMutation(mutation)
                         nearbyController.setActiveEvent(null)
                         eventStore.purgeEvent(event.id)
@@ -495,7 +487,7 @@ class EventCoordinator(
 
     fun openEvent(eventId: String) {
         val event = eventStore.getEvent(eventId) ?: return
-        closeDiscussionObservers()
+        discussionCoordinator.closeObservers()
         _uiState.update {
             it.copy(
                 page = EventPage.DETAIL,
@@ -843,194 +835,18 @@ class EventCoordinator(
         refreshAnnouncements(event.id)
     }
 
-    fun showDiscussion() {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        if (state.membership?.canParticipate != true || state.currentUserId !in event.memberIds) {
-            _uiState.update { it.copy(error = "Join this event before opening its discussion.") }
-            return
-        }
-        discussionThreadObserver?.close()
-        discussionThreadObserver = null
-        discussionRootLimit = DISCUSSION_PAGE_SIZE
-        _uiState.update {
-            it.copy(
-                page = EventPage.DISCUSSION,
-                discussionReplies = emptyList(),
-                selectedDiscussionThreadId = null,
-                error = null,
-            )
-        }
-        startDiscussionRootsObserver(event.id)
-        startDiscussionLikesObserver(event.id)
-    }
+    fun showDiscussion() = discussionCoordinator.show()
 
-    fun loadMoreDiscussionRoots() {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        if (state.loading || !state.discussionHasMoreRoots) return
-        discussionRootLimit += DISCUSSION_PAGE_SIZE
-        _uiState.update { it.copy(loading = true, error = null) }
-        startDiscussionRootsObserver(event.id)
-    }
+    fun loadMoreDiscussionRoots() = discussionCoordinator.loadMoreRoots()
 
-    fun openDiscussionThread(threadId: String) {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        if (state.discussionRoots.none { it.id == threadId }) return
-        discussionThreadObserver?.close()
-        _uiState.update {
-            it.copy(
-                page = EventPage.DISCUSSION_THREAD,
-                selectedDiscussionThreadId = threadId,
-                discussionReplies = emptyList(),
-                error = null,
-            )
-        }
-        discussionThreadObserver = remoteRepository.observeDiscussionThread(
-            eventId = event.id,
-            threadId = threadId,
-            onComments = { comments ->
-                _uiState.update { current ->
-                    if (current.selectedEventId != event.id || current.selectedDiscussionThreadId != threadId) {
-                        current
-                    } else if (comments.isEmpty()) {
-                        current.copy(
-                            page = EventPage.DISCUSSION,
-                            discussionRoots = current.discussionRoots.filterNot { it.id == threadId },
-                            discussionReplies = emptyList(),
-                            selectedDiscussionThreadId = null,
-                            notice = "This discussion thread was removed by an admin.",
-                        )
-                    } else {
-                        val root = comments.first()
-                        current.copy(
-                            discussionRoots = current.discussionRoots.map { existing ->
-                                if (existing.id == root.id) root else existing
-                            },
-                            discussionReplies = comments.drop(1),
-                        )
-                    }
-                }
-            },
-            onError = { failure ->
-                _uiState.update { it.copy(error = failure.readableMessage("Discussion thread could not be updated")) }
-            },
-        )
-    }
+    fun openDiscussionThread(threadId: String) = discussionCoordinator.openThread(threadId)
 
-    fun createDiscussionComment(text: String, parentId: String? = null) {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        if (!canWriteDiscussion(event, membership)) return
+    fun createDiscussionComment(text: String, parentId: String? = null) =
+        discussionCoordinator.createComment(text, parentId)
 
-        val cleanText = text.trim()
-        val parent = parentId?.let { id ->
-            (listOfNotNull(state.selectedDiscussionRoot) + state.discussionReplies)
-                .firstOrNull { it.id == id }
-        }
-        if (parentId != null && parent == null) {
-            _uiState.update { it.copy(error = "That comment is no longer available.") }
-            return
-        }
-        if (parent != null && parent.depth >= EventDiscussionComment.MAX_DISCUSSION_DEPTH) {
-            _uiState.update { it.copy(error = "This reply chain has reached its nesting limit.") }
-            return
-        }
-        val maximumLength = if (parent == null) {
-            EventDiscussionComment.MAX_ROOT_BODY_LENGTH
-        } else EventDiscussionComment.MAX_REPLY_BODY_LENGTH
-        if (cleanText.isBlank() || cleanText.length > maximumLength) {
-            _uiState.update { it.copy(error = "Enter between 1 and $maximumLength characters.") }
-            return
-        }
+    fun toggleDiscussionLike(commentId: String) = discussionCoordinator.toggleLike(commentId)
 
-        val id = UUID.randomUUID().toString()
-        val comment = EventDiscussionComment(
-            id = id,
-            eventId = event.id,
-            threadId = parent?.threadId ?: id,
-            parentId = parent?.id,
-            ancestorIds = parent?.let { it.ancestorIds + it.id }.orEmpty(),
-            depth = (parent?.depth ?: -1) + 1,
-            authorId = membership.userId,
-            authorName = membership.displayName.trim().take(24).ifBlank { "Event member" },
-            body = cleanText,
-            createdAt = clock(),
-        )
-        _uiState.update { it.copy(loading = true, error = null) }
-        scope.launch {
-            runCatching { remoteRepository.createDiscussionComment(comment) }
-                .onSuccess {
-                    _uiState.update {
-                        it.copy(
-                            loading = false,
-                            notice = if (comment.isRoot) "Comment posted." else "Reply posted.",
-                        )
-                    }
-                }
-                .onFailure { failure ->
-                    _uiState.update {
-                        it.copy(loading = false, error = failure.readableMessage("Comment could not be posted"))
-                    }
-                }
-        }
-    }
-
-    fun toggleDiscussionLike(commentId: String) {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        if (!canWriteDiscussion(event, membership)) return
-        val comment = (state.discussionRoots + state.discussionReplies).firstOrNull { it.id == commentId }
-            ?: return
-        val shouldLike = commentId !in state.likedDiscussionCommentIds
-        scope.launch {
-            runCatching { remoteRepository.setDiscussionLike(comment, shouldLike) }
-                .onFailure { failure ->
-                    _uiState.update { it.copy(error = failure.readableMessage("Like could not be updated")) }
-                }
-        }
-    }
-
-    fun deleteDiscussionComment(commentId: String) {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        val comment = (state.discussionRoots + state.discussionReplies).firstOrNull { it.id == commentId }
-            ?: return
-        if (clock() > event.endsAt && !membership.isAdmin) {
-            _uiState.update { it.copy(error = "This discussion is read-only because the event has ended.") }
-            return
-        }
-        val adminRemoval = membership.isAdmin && event.isAdmin(membership.userId)
-        if (!adminRemoval && comment.authorId != membership.userId) {
-            _uiState.update { it.copy(error = "You can only delete your own comments.") }
-            return
-        }
-        _uiState.update { it.copy(loading = true, error = null) }
-        scope.launch {
-            runCatching {
-                if (adminRemoval) {
-                    remoteRepository.deleteDiscussionBranchAsAdmin(comment, clock())
-                } else {
-                    remoteRepository.deleteOwnDiscussionComment(comment, clock())
-                }
-            }.onSuccess {
-                _uiState.update {
-                    it.copy(
-                        loading = false,
-                        notice = if (adminRemoval) "Comment branch removed." else "Comment deleted.",
-                    )
-                }
-            }.onFailure { failure ->
-                _uiState.update {
-                    it.copy(loading = false, error = failure.readableMessage("Comment could not be deleted"))
-                }
-            }
-        }
-    }
+    fun deleteDiscussionComment(commentId: String) = discussionCoordinator.deleteComment(commentId)
 
     fun publishAnnouncement(text: String) {
         val event = _uiState.value.selectedEvent ?: return
@@ -1368,7 +1184,7 @@ class EventCoordinator(
             ?: return
         if (!EventMutationSigner.verify(normalizedMutation, publicKey)) return
         if (normalizedMutation.event.isDeleted) {
-            closeDiscussionObservers()
+            discussionCoordinator.closeObservers()
             eventStore.purgeEvent(normalizedMutation.event.id)
             nearbyController.setActiveEvent(null)
             _uiState.update {
@@ -1395,67 +1211,8 @@ class EventCoordinator(
     fun close() {
         eventObserver?.close()
         invitationObserver?.close()
-        closeDiscussionObservers()
+        discussionCoordinator.closeObservers()
         eventStore.close()
-    }
-
-    private fun startDiscussionRootsObserver(eventId: String) {
-        discussionRootsObserver?.close()
-        val observedLimit = discussionRootLimit
-        discussionRootsObserver = remoteRepository.observeDiscussionRoots(
-            eventId = eventId,
-            limit = observedLimit,
-            onComments = { comments ->
-                _uiState.update { state ->
-                    if (state.selectedEventId != eventId) state else state.copy(
-                        discussionRoots = comments,
-                        discussionHasMoreRoots = comments.size == observedLimit,
-                        loading = false,
-                    )
-                }
-            },
-            onError = { failure ->
-                _uiState.update {
-                    it.copy(loading = false, error = failure.readableMessage("Discussion could not be updated"))
-                }
-            },
-        )
-    }
-
-    private fun startDiscussionLikesObserver(eventId: String) {
-        discussionLikesObserver?.close()
-        discussionLikesObserver = remoteRepository.observeDiscussionLikes(
-            eventId = eventId,
-            onLikedCommentIds = { ids ->
-                _uiState.update { state ->
-                    if (state.selectedEventId == eventId) state.copy(likedDiscussionCommentIds = ids) else state
-                }
-            },
-            onError = { failure ->
-                _uiState.update { it.copy(notice = failure.readableMessage("Likes will refresh when online")) }
-            },
-        )
-    }
-
-    private fun closeDiscussionObservers() {
-        discussionRootsObserver?.close()
-        discussionThreadObserver?.close()
-        discussionLikesObserver?.close()
-        discussionRootsObserver = null
-        discussionThreadObserver = null
-        discussionLikesObserver = null
-    }
-
-    private fun canWriteDiscussion(event: CommunityEvent, membership: EventMembership): Boolean {
-        val error = when {
-            event.isDeleted -> "Deleted events are read-only."
-            !membership.canParticipate || membership.userId !in event.memberIds ->
-                "Only active event members can participate in the discussion."
-            clock() > event.endsAt -> "This discussion is read-only because the event has ended."
-            else -> null
-        }
-        if (error != null) _uiState.update { it.copy(error = error) }
-        return error == null
     }
 
     private fun finishLegacyDeletion(event: CommunityEvent) {
@@ -1600,7 +1357,6 @@ class EventCoordinator(
         "$prefix: ${localizedMessage?.takeIf(String::isNotBlank) ?: "unknown error"}"
 
     private companion object {
-        const val DISCUSSION_PAGE_SIZE = 20
         const val ACCESS_GRANT_LIFETIME_MILLIS = 10 * 60 * 1_000L
         const val ACCESS_REQUEST_MAX_AGE_MILLIS = 10 * 60 * 1_000L
     }
