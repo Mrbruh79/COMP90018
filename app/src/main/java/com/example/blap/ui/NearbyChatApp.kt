@@ -71,6 +71,7 @@ import com.example.blap.ui.screens.chat.ChatScreen
 import com.example.blap.ui.screens.groups.CreateGroupScreen
 import com.example.blap.ui.screens.events.EventHub
 import com.example.blap.ui.screens.auth.AuthActions
+import com.example.blap.ui.screens.groups.GroupsActions
 
 @Composable
 fun NearbyChatApp(
@@ -103,10 +104,7 @@ fun NearbyChatApp(
     onSaveCurrentChatContact: () -> Unit,
     onMessageDraftChanged: (String) -> Unit,
     onDisconnect: (String) -> Unit,
-    onOpenCreateGroup: () -> Unit,
-    onGroupNameChanged: (String) -> Unit,
-    onToggleGroupMember: (String) -> Unit,
-    onCreateGroup: () -> Unit,
+    groupsActions: GroupsActions,
     onManageContacts: () -> Unit,
     onBeginAddContact: () -> Unit,
     onOpenContact: (String) -> Unit,
@@ -173,8 +171,6 @@ fun NearbyChatApp(
     searchPlaces: suspend (String) -> List<PlaceSearchResult>,
     onConversationSearchChanged: (String) -> Unit,
     onContactSearchChanged: (String) -> Unit,
-    onBeginGroupSettings: () -> Unit,
-    onSaveGroupSettings: () -> Unit,
     onSystemBack: () -> Unit,
     onDismissError: () -> Unit,
     onDismissEventMessage: () -> Unit,
@@ -321,7 +317,7 @@ fun NearbyChatApp(
                                 onDraftChanged = onMessageDraftChanged,
                                 onBack = onBackToChats,
                                 onDisconnect = { onDisconnect(conversation.peerId) },
-                                onOpenGroupSettings = onBeginGroupSettings,
+                                onOpenGroupSettings = groupsActions.onBeginGroupSettings,
                             )
                         }
                     }
@@ -330,9 +326,9 @@ fun NearbyChatApp(
                         name = uiState.groupNameDraft,
                         contacts = uiState.groupContacts,
                         selectedIds = uiState.selectedGroupMemberIds,
-                        onNameChanged = onGroupNameChanged,
-                        onToggleMember = onToggleGroupMember,
-                        onCreate = onCreateGroup,
+                        onNameChanged = groupsActions.onGroupNameChanged,
+                        onToggleMember = groupsActions.onToggleGroupMember,
+                        onCreate = groupsActions.onCreateGroup,
                         onBack = onSystemBack,
                     )
 
@@ -347,7 +343,7 @@ fun NearbyChatApp(
                         onImport = onImportContacts,
                         onMessage = onMessageContact,
                         onCheckOnline = onCheckContactOnline,
-                        onOpenCreateGroup = onOpenCreateGroup,
+                        onOpenCreateGroup = groupsActions.onOpenCreateGroup,
                         onDiscoverNearby = onBackToChats,
                     )
 
@@ -460,9 +456,9 @@ fun NearbyChatApp(
                         name = uiState.groupNameDraft,
                         contacts = uiState.groupContacts,
                         selectedIds = uiState.selectedGroupMemberIds,
-                        onNameChanged = onGroupNameChanged,
-                        onToggleMember = onToggleGroupMember,
-                        onCreate = onSaveGroupSettings,
+                        onNameChanged = groupsActions.onGroupNameChanged,
+                        onToggleMember = groupsActions.onToggleGroupMember,
+                        onCreate = groupsActions.onSaveGroupSettings,
                         onBack = { uiState.selectedPeerId?.let(onOpenConversation) ?: onBackToChats() },
                         title = "Group settings",
                         actionLabel = "Save changes",

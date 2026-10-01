@@ -51,6 +51,7 @@ import com.example.blap.ui.theme.CommonGroundTheme
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import com.example.blap.ui.screens.auth.AuthActions
+import com.example.blap.ui.screens.groups.GroupsActions
 
 class MainActivity : ComponentActivity() {
     private val appContainer get() = (application as BlapApplication).appContainer
@@ -188,6 +189,14 @@ class MainActivity : ComponentActivity() {
                     authAccount = authAccount,
                     accountProfile = accountProfile,
                     accountProfileLoading = accountProfileLoading,
+                    groupsActions = GroupsActions(
+                        onOpenCreateGroup = groupsViewModel::beginCreateGroup,
+                        onBeginGroupSettings = groupsViewModel::beginGroupSettings,
+                        onGroupNameChanged = groupsViewModel::updateGroupName,
+                        onToggleGroupMember = groupsViewModel::toggleGroupMember,
+                        onCreateGroup = groupsViewModel::createPrivateGroup,
+                        onSaveGroupSettings = groupsViewModel::saveGroupSettings,
+                    ),
                     authActions = AuthActions(
                         onCreateEmailAccount = authViewModel::createEmailAccount,
                         onSignInWithEmail = authViewModel::signInWithEmail,
@@ -218,10 +227,6 @@ class MainActivity : ComponentActivity() {
                     onSaveCurrentChatContact = contactsViewModel::saveCurrentChatContact,
                     onMessageDraftChanged = viewModel::updateMessageDraft,
                     onDisconnect = viewModel::disconnect,
-                    onOpenCreateGroup = groupsViewModel::beginCreateGroup,
-                    onGroupNameChanged = groupsViewModel::updateGroupName,
-                    onToggleGroupMember = groupsViewModel::toggleGroupMember,
-                    onCreateGroup = groupsViewModel::createPrivateGroup,
                     onManageContacts = contactsViewModel::beginManageContacts,
                     onBeginAddContact = contactsViewModel::beginAddContact,
                     onOpenContact = contactsViewModel::openContact,
@@ -301,8 +306,6 @@ class MainActivity : ComponentActivity() {
                     searchPlaces = appContainer.placeSearch::search,
                     onConversationSearchChanged = viewModel::updateConversationSearch,
                     onContactSearchChanged = contactsViewModel::updateContactSearch,
-                    onBeginGroupSettings = groupsViewModel::beginGroupSettings,
-                    onSaveGroupSettings = groupsViewModel::saveGroupSettings,
                     onSystemBack = sessionOwner.session.navigation::handleBack,
                     onDismissError = viewModel::dismissError,
                     onDismissEventMessage = eventViewModel::dismissEventMessage,
