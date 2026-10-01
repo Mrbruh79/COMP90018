@@ -1,4 +1,4 @@
-package com.example.blap.ui
+package com.example.blap.ui.screens.events
 
 import android.graphics.Color as AndroidColor
 import android.os.SystemClock
