@@ -1,6 +1,6 @@
 package com.example.blap.event
 
-/** Event traffic on the shared Nearby session. This gateway does not own the session. */
+/** Event traffic on the shared Nearby session. NearbyChatManager implements this via EventMeshSession. */
 interface EventMeshGateway {
     fun setActiveEvent(
         eventId: String?,

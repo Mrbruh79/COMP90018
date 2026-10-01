@@ -44,6 +44,10 @@ class ChatNotificationSettingsStore(context: Context, scope: String) : Notificat
     }
 }
 
+/**
+ * In-process alerts while CommonGround is running.
+ * Messages received after the process is closed appear the next time the app opens, without a background alert.
+ */
 interface ChatNotifier {
     fun incoming(message: ChatMessage, conversationName: String, type: ConversationType, chatVisible: Boolean)
 }
