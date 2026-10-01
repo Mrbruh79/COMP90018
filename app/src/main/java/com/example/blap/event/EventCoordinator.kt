@@ -1,13 +1,11 @@
 package com.example.blap.event
 
 import com.example.blap.chat.IdentityStore
-import java.util.UUID
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.launch
 
 enum class EventPage {
     LIST,
@@ -64,17 +62,23 @@ class EventCoordinator(
     private val _uiState = MutableStateFlow(EventUiState(events = eventStore.getEvents()))
     val uiState: StateFlow<EventUiState> = _uiState.asStateFlow()
 
-    private var cachedUserId: String? = null
-    private var createRequestInFlight = false
-    private var eventMutationInFlight = false
-    private val tombstoneCleanupInFlight = mutableSetOf<String>()
-    private var eventObserver: AutoCloseable? = null
-    private var invitationObserver: AutoCloseable? = null
     private val discussionCoordinator = EventDiscussionCoordinator(
         remoteRepository = remoteRepository,
         scope = scope,
         currentState = { _uiState.value },
         updateState = { transform -> _uiState.update(transform) },
+        clock = clock,
+    )
+    private val lifecycleCoordinator = EventLifecycleCoordinator(
+        eventStore = eventStore,
+        remoteRepository = remoteRepository,
+        adminKeyStore = adminKeyStore,
+        identityStore = identityStore,
+        meshGateway = nearbyController,
+        scope = scope,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        closeEventObservers = discussionCoordinator::closeObservers,
         clock = clock,
     )
     private val onSiteCoordinator = EventOnSiteCoordinator(
@@ -95,106 +99,18 @@ class EventCoordinator(
         identityStore = identityStore,
         meshGateway = nearbyController,
         scope = scope,
-        requireUserId = { requireUserId() },
+        requireUserId = lifecycleCoordinator::requireUserId,
         currentState = { _uiState.value },
         updateState = { transform -> _uiState.update(transform) },
-        deletePrimaryAdminEvent = { deleteSelectedEvent() },
+        deletePrimaryAdminEvent = lifecycleCoordinator::deleteSelectedEvent,
         clock = clock,
     )
 
     init {
-        scope.launch {
-            runCatching {
-                val userId = requireUserId()
-                _uiState.update { it.copy(currentUserId = userId) }
-                startEventObserver()
-                startInvitationObserver()
-            }.onFailure { failure ->
-                _uiState.update { state ->
-                    state.copy(error = failure.readableMessage("Could not connect to events"))
-                }
-            }
-        }
+        lifecycleCoordinator.start()
     }
 
-    @Synchronized
-    private fun startInvitationObserver() {
-        if (invitationObserver != null) return
-        invitationObserver = remoteRepository.observeInvitations(
-            onInvitations = { invitations ->
-                _uiState.update { state ->
-                    state.copy(
-                        invitations = invitations.filter { it.status == EventInvitationStatus.PENDING }
-                            .sortedBy(EventInvitation::startsAt),
-                    )
-                }
-            },
-            onError = { failure ->
-                _uiState.update { it.copy(notice = failure.readableMessage("Invitations will refresh when online")) }
-            },
-        )
-    }
-
-    @Synchronized
-    private fun startEventObserver() {
-        if (eventObserver != null) return
-        eventObserver = remoteRepository.observeEvents(
-            onEvents = { remoteEvents, authoritative ->
-            val tombstones = remoteEvents.filter(CommunityEvent::isDeleted)
-            val activeRemoteEvents = remoteEvents.filterNot(CommunityEvent::isDeleted)
-            val remoteIds = activeRemoteEvents.mapTo(mutableSetOf(), CommunityEvent::id)
-            val removedIds = if (authoritative) {
-                eventStore.getEvents().map(CommunityEvent::id).filterNot(remoteIds::contains).toSet()
-            } else {
-                tombstones.mapTo(mutableSetOf(), CommunityEvent::id)
-            }
-            activeRemoteEvents.forEach(eventStore::saveEvent)
-            removedIds.forEach(eventStore::purgeEvent)
-            if (_uiState.value.activeEventId in removedIds) nearbyController.setActiveEvent(null)
-            if (_uiState.value.selectedEventId in removedIds) discussionCoordinator.closeObservers()
-            _uiState.update { state ->
-                if (state.selectedEventId in removedIds) {
-                    EventUiState(
-                        events = eventStore.getEvents(),
-                        notice = "The event was deleted by its primary admin.",
-                    )
-                } else {
-                    state.copy(events = eventStore.getEvents(), loading = false)
-                }
-            }
-            if (authoritative) tombstones.forEach(::finishLegacyDeletion)
-        },
-            onError = { failure ->
-                _uiState.update { state ->
-                    if (state.events.isEmpty()) {
-                        state.copy(error = failure.readableMessage("Events could not be updated"))
-                    } else {
-                        state.copy(notice = "Event updates will resume when you are online.")
-                    }
-                }
-            },
-        )
-    }
-
-    fun accountChanged() {
-        eventObserver?.close()
-        invitationObserver?.close()
-        discussionCoordinator.closeObservers()
-        eventObserver = null
-        invitationObserver = null
-        cachedUserId = null
-        scope.launch {
-            runCatching {
-                val userId = requireUserId()
-                _uiState.update { it.copy(currentUserId = userId) }
-                startEventObserver()
-                startInvitationObserver()
-                refreshEvents()
-            }.onFailure { failure ->
-                _uiState.update { it.copy(error = failure.readableMessage("Could not refresh events")) }
-            }
-        }
-    }
+    fun accountChanged() = lifecycleCoordinator.accountChanged()
 
     fun showList() {
         discussionCoordinator.closeObservers()
@@ -226,16 +142,7 @@ class EventCoordinator(
         _uiState.update { it.copy(page = EventPage.CREATE, error = null) }
     }
 
-    fun beginEdit() {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        if (!membership.isAdmin || !event.isAdmin(membership.userId) || event.isDeleted) {
-            _uiState.update { it.copy(error = "Only an active event admin can edit this event.") }
-            return
-        }
-        _uiState.update { it.copy(page = EventPage.EDIT, error = null) }
-    }
+    fun beginEdit() = lifecycleCoordinator.beginEdit()
 
     fun back() {
         when (_uiState.value.page) {
@@ -266,38 +173,7 @@ class EventCoordinator(
         }
     }
 
-    fun refreshEvents() {
-        _uiState.update { it.copy(events = eventStore.getEvents(), loading = true, error = null) }
-        scope.launch {
-            runCatching {
-                requireUserId()
-                startEventObserver()
-                remoteRepository.listEvents()
-            }
-                .onSuccess { remoteEvents ->
-                    remoteEvents.forEach(eventStore::saveEvent)
-                    val invitations = runCatching { remoteRepository.listInvitations() }.getOrDefault(emptyList())
-                    _uiState.update {
-                        it.copy(
-                            events = eventStore.getEvents(),
-                            invitations = invitations.filter { invitation ->
-                                invitation.status == EventInvitationStatus.PENDING
-                            },
-                            loading = false,
-                        )
-                    }
-                }
-                .onFailure { failure ->
-                    _uiState.update {
-                        it.copy(
-                            loading = false,
-                            notice = if (it.events.isEmpty()) null else "Showing cached events.",
-                            error = if (it.events.isEmpty()) failure.readableMessage("Events could not be loaded") else null,
-                        )
-                    }
-                }
-        }
-    }
+    fun refreshEvents() = lifecycleCoordinator.refreshEvents()
 
     fun createEvent(
         title: String,
@@ -310,232 +186,24 @@ class EventCoordinator(
         endsAt: Long,
         visibility: EventVisibility,
         requiresSignIn: Boolean,
-    ) {
-        if (createRequestInFlight) return
-        val cleanTitle = title.trim().take(80)
-        val cleanDescription = description.trim().take(1_000)
-        if (cleanTitle.isBlank()) {
-            _uiState.update { it.copy(error = "Enter an event title.") }
-            return
-        }
-        if (endsAt <= startsAt || endsAt <= clock()) {
-            _uiState.update { it.copy(error = "Choose an end time after the start time.") }
-            return
-        }
-        if (!remoteRepository.hasSignedInAccount()) {
-            _uiState.update { it.copy(error = "Sign in with Email or Google to create an event.") }
-            return
-        }
-        createRequestInFlight = true
-        _uiState.update { it.copy(loading = true, error = null) }
-        scope.launch {
-            try {
-                runCatching {
-                    val userId = requireUserId()
-                    val keys = adminKeyStore.getOrCreate(userId)
-                    val eventId = UUID.randomUUID().toString()
-                    val venueCheckInPayload = if (visibility == EventVisibility.PUBLIC) {
-                        EventCheckInCodec.create(eventId, userId, keys.private)
-                    } else ""
-                    val event = CommunityEvent(
-                        id = eventId,
-                        title = cleanTitle,
-                        description = cleanDescription,
-                        venueName = venueName.trim().take(200),
-                        latitude = latitude,
-                        longitude = longitude,
-                        radiusMetres = radiusMetres,
-                        startsAt = startsAt,
-                        endsAt = endsAt,
-                        createdBy = userId,
-                        adminIds = setOf(userId),
-                        memberIds = setOf(userId),
-                        adminPublicKeys = mapOf(userId to EventCheckInCodec.encodePublicKey(keys.public)),
-                        visibility = visibility,
-                        requiresSignIn = visibility == EventVisibility.PUBLIC && requiresSignIn,
-                        privateMeshSecret = if (visibility == EventVisibility.PRIVATE) {
-                            EventSecrets.newMeshSecret()
-                        } else "",
-                        venueCheckInPayload = venueCheckInPayload,
-                        createdAt = clock(),
-                    )
-                    val membership = EventMembership(
-                        eventId = event.id,
-                        userId = userId,
-                        displayName = identityStore.getDisplayName(),
-                        role = EventRole.PRIMARY_ADMIN,
-                        joinedAt = clock(),
-                    )
-                    remoteRepository.createEvent(event, membership)
-                    eventStore.saveEvent(event)
-                    eventStore.saveMembership(membership)
-                    event to membership
-                }.onSuccess { (event, membership) ->
-                    _uiState.update {
-                        it.copy(
-                            page = EventPage.DETAIL,
-                            events = eventStore.getEvents(),
-                            selectedEventId = event.id,
-                            membership = membership,
-                            loading = false,
-                            notice = "Event created.",
-                        )
-                    }
-                }.onFailure { failure ->
-                    _uiState.update {
-                        it.copy(loading = false, error = failure.readableMessage("Event could not be created"))
-                    }
-                }
-            } finally {
-                createRequestInFlight = false
-            }
-        }
-    }
+    ) = lifecycleCoordinator.createEvent(
+        title = title,
+        description = description,
+        venueName = venueName,
+        latitude = latitude,
+        longitude = longitude,
+        radiusMetres = radiusMetres,
+        startsAt = startsAt,
+        endsAt = endsAt,
+        visibility = visibility,
+        requiresSignIn = requiresSignIn,
+    )
 
-    fun updateSelectedEvent(request: EventCreateRequest) {
-        if (eventMutationInFlight) return
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        if (!membership.isAdmin || !event.isAdmin(membership.userId) || event.isDeleted) {
-            _uiState.update { it.copy(error = "Only an active event admin can edit this event.") }
-            return
-        }
-        val cleanTitle = request.title.trim().take(80)
-        if (cleanTitle.isBlank() || request.venueName.isBlank()) {
-            _uiState.update { it.copy(error = "Add an event title and location.") }
-            return
-        }
-        if (request.endsAt <= request.startsAt || request.endsAt <= clock()) {
-            _uiState.update { it.copy(error = "Choose an end time after the start time.") }
-            return
-        }
-        val keys = adminKeyStore.get(membership.userId)
-        if (keys == null) {
-            _uiState.update { it.copy(error = "This device does not have the admin signing key.") }
-            return
-        }
-        val updated = event.copy(
-            title = cleanTitle,
-            description = request.description.trim().take(1_000),
-            venueName = request.venueName.trim().take(200),
-            latitude = request.latitude,
-            longitude = request.longitude,
-            radiusMetres = request.radiusMetres,
-            startsAt = request.startsAt,
-            endsAt = request.endsAt,
-            visibility = event.visibility,
-            requiresSignIn = event.visibility == EventVisibility.PUBLIC && request.requiresSignIn,
-            privateMeshSecret = event.privateMeshSecret,
-            updatedAt = maxOf(clock(), event.updatedAt + 1),
-        )
-        val unsigned = EventMutation(updated, membership.userId)
-        val mutation = unsigned.copy(signature = EventMutationSigner.sign(unsigned, keys.private))
-        eventMutationInFlight = true
-        _uiState.update { it.copy(loading = true, error = null) }
-        scope.launch {
-            try {
-                runCatching { remoteRepository.updateEvent(updated) }
-                    .onSuccess {
-                        eventStore.saveEvent(updated)
-                        nearbyController.sendEventMutation(mutation)
-                        _uiState.update {
-                            it.copy(
-                                page = EventPage.DETAIL,
-                                events = eventStore.getEvents(),
-                                loading = false,
-                                notice = "Event updated for all attendees.",
-                            )
-                        }
-                    }
-                    .onFailure { failure ->
-                        _uiState.update {
-                            it.copy(loading = false, error = failure.readableMessage("Event could not be updated"))
-                        }
-                    }
-            } finally {
-                eventMutationInFlight = false
-            }
-        }
-    }
+    fun updateSelectedEvent(request: EventCreateRequest) = lifecycleCoordinator.updateSelectedEvent(request)
 
-    fun deleteSelectedEvent() {
-        if (eventMutationInFlight) return
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        if (membership.role != EventRole.PRIMARY_ADMIN || event.createdBy != membership.userId) {
-            _uiState.update { it.copy(error = "Only the primary admin can delete this event.") }
-            return
-        }
-        val keys = adminKeyStore.get(membership.userId)
-        if (keys == null) {
-            _uiState.update { it.copy(error = "This device does not have the admin signing key.") }
-            return
-        }
-        val deletedAt = event.deletedAt ?: clock()
-        val deleted = event.copy(
-            deletedAt = deletedAt,
-            updatedAt = maxOf(clock(), event.updatedAt + 1),
-        )
-        val unsigned = EventMutation(deleted, membership.userId)
-        val mutation = unsigned.copy(signature = EventMutationSigner.sign(unsigned, keys.private))
-        eventMutationInFlight = true
-        _uiState.update { it.copy(loading = true, error = null) }
-        scope.launch {
-            try {
-                runCatching { remoteRepository.deleteEvent(event.id) }
-                    .onSuccess {
-                        discussionCoordinator.closeObservers()
-                        nearbyController.sendEventMutation(mutation)
-                        nearbyController.setActiveEvent(null)
-                        eventStore.purgeEvent(event.id)
-                        _uiState.update {
-                            EventUiState(
-                                events = eventStore.getEvents(),
-                                notice = "Event and all associated data were permanently deleted.",
-                            )
-                        }
-                    }
-                    .onFailure { failure ->
-                        _uiState.update {
-                            it.copy(loading = false, error = failure.readableMessage("Event could not be deleted"))
-                        }
-                    }
-            } finally {
-                eventMutationInFlight = false
-            }
-        }
-    }
+    fun deleteSelectedEvent() = lifecycleCoordinator.deleteSelectedEvent()
 
-    fun openEvent(eventId: String) {
-        val event = eventStore.getEvent(eventId) ?: return
-        discussionCoordinator.closeObservers()
-        _uiState.update {
-            it.copy(
-                page = EventPage.DETAIL,
-                selectedEventId = event.id,
-                announcements = eventStore.getAnnouncements(event.id),
-                chatMessages = eventStore.getChatMessages(event.id),
-                participantSearchResult = null,
-                discussionRoots = emptyList(),
-                discussionReplies = emptyList(),
-                likedDiscussionCommentIds = emptySet(),
-                selectedDiscussionThreadId = null,
-                discussionHasMoreRoots = false,
-                error = null,
-            )
-        }
-        scope.launch {
-            val userId = runCatching { requireUserId() }.getOrNull() ?: return@launch
-            _uiState.update { it.copy(membership = eventStore.getMembership(event.id, userId)) }
-            refreshMembers(event.id)
-            refreshAnnouncements(event.id)
-            if (event.visibility == EventVisibility.PRIVATE && event.isAdmin(userId)) {
-                refreshEventInvitations(event.id)
-            }
-        }
-    }
+    fun openEvent(eventId: String) = lifecycleCoordinator.openEvent(eventId)
 
     fun joinSelectedEvent() = membershipCoordinator.joinSelectedEvent()
 
@@ -555,29 +223,9 @@ class EventCoordinator(
 
     fun blockMember(userId: String) = membershipCoordinator.blockMember(userId)
 
-    fun deleteSelectedEventData() {
-        val event = _uiState.value.selectedEvent ?: return
-        scope.launch {
-            val userId = cachedUserId ?: runCatching { requireUserId() }.getOrNull() ?: return@launch
-            eventStore.deleteLocalEventData(event.id, userId)
-            nearbyController.setActiveEvent(null)
-            _uiState.update {
-                EventUiState(events = eventStore.getEvents(), notice = "Local event data deleted.")
-            }
-        }
-    }
+    fun deleteSelectedEventData() = lifecycleCoordinator.deleteSelectedEventData()
 
-    fun showAnnouncements() {
-        val event = _uiState.value.selectedEvent ?: return
-        _uiState.update {
-            it.copy(
-                page = EventPage.ANNOUNCEMENTS,
-                announcements = eventStore.getAnnouncements(event.id),
-                error = null,
-            )
-        }
-        refreshAnnouncements(event.id)
-    }
+    fun showAnnouncements() = lifecycleCoordinator.showAnnouncements()
 
     fun showDiscussion() = discussionCoordinator.show()
 
@@ -592,46 +240,7 @@ class EventCoordinator(
 
     fun deleteDiscussionComment(commentId: String) = discussionCoordinator.deleteComment(commentId)
 
-    fun publishAnnouncement(text: String) {
-        val event = _uiState.value.selectedEvent ?: return
-        val membership = _uiState.value.membership ?: return
-        val cleanText = text.trim().take(1_000)
-        if (event.isDeleted) {
-            _uiState.update { it.copy(error = "Deleted events are read-only.") }
-            return
-        }
-        if (!membership.isAdmin || !event.isAdmin(membership.userId)) {
-            _uiState.update { it.copy(error = "Only event admins can post announcements.") }
-            return
-        }
-        if (cleanText.isBlank()) return
-        val keys = adminKeyStore.get(membership.userId)
-        if (keys == null) {
-            _uiState.update { it.copy(error = "This device does not have the admin signing key.") }
-            return
-        }
-        val unsigned = EventAnnouncement(
-            eventId = event.id,
-            adminId = membership.userId,
-            adminName = membership.displayName,
-            text = cleanText,
-            createdAt = clock(),
-        )
-        val announcement = unsigned.copy(signature = EventAnnouncementSigner.sign(unsigned, keys.private))
-        eventStore.saveAnnouncement(announcement)
-        nearbyController.sendEventAnnouncement(announcement)
-        _uiState.update { it.copy(announcements = eventStore.getAnnouncements(event.id)) }
-        scope.launch {
-            runCatching { remoteRepository.saveAnnouncement(announcement) }
-                .onSuccess {
-                    eventStore.markAnnouncementSynced(announcement.id)
-                    _uiState.update { it.copy(announcements = eventStore.getAnnouncements(event.id)) }
-                }
-                .onFailure {
-                    _uiState.update { it.copy(notice = "Announcement sent on-site and will upload when retried online.") }
-                }
-        }
-    }
+    fun publishAnnouncement(text: String) = lifecycleCoordinator.publishAnnouncement(text)
 
     fun enterWithGps(latitude: Double, longitude: Double, accuracyMetres: Double) =
         onSiteCoordinator.enterWithGps(latitude, longitude, accuracyMetres)
@@ -674,115 +283,8 @@ class EventCoordinator(
     }
 
     fun close() {
-        eventObserver?.close()
-        invitationObserver?.close()
+        lifecycleCoordinator.close()
         discussionCoordinator.closeObservers()
         eventStore.close()
     }
-
-    private fun finishLegacyDeletion(event: CommunityEvent) {
-        if (!tombstoneCleanupInFlight.add(event.id)) return
-        scope.launch {
-            try {
-                val userId = runCatching { requireUserId() }.getOrNull()
-                if (userId == event.createdBy) {
-                    runCatching { remoteRepository.deleteEvent(event.id) }
-                        .onFailure { failure ->
-                            _uiState.update {
-                                it.copy(error = failure.readableMessage("An older deleted event could not be cleaned up"))
-                            }
-                        }
-                }
-            } finally {
-                tombstoneCleanupInFlight.remove(event.id)
-            }
-        }
-    }
-
-    private fun refreshAnnouncements(eventId: String) {
-        scope.launch {
-            runCatching { remoteRepository.getAnnouncements(eventId) }
-                .onSuccess { remote ->
-                    remote.forEach(eventStore::saveAnnouncement)
-                    eventStore.getPendingAnnouncements(eventId).forEach { pending ->
-                        runCatching { remoteRepository.saveAnnouncement(pending) }
-                            .onSuccess { eventStore.markAnnouncementSynced(pending.id) }
-                    }
-                    _uiState.update { state ->
-                        if (state.selectedEventId == eventId) {
-                            state.copy(announcements = eventStore.getAnnouncements(eventId))
-                        } else state
-                    }
-                }
-        }
-    }
-
-    private fun refreshEventInvitations(eventId: String) {
-        scope.launch {
-            runCatching { remoteRepository.listEventInvitations(eventId) }
-                .onSuccess { invitations ->
-                    _uiState.update { state ->
-                        if (state.selectedEventId == eventId) {
-                            state.copy(eventInvitations = invitations.sortedBy(EventInvitation::recipientName))
-                        } else state
-                    }
-                }
-        }
-    }
-
-    private fun refreshMembers(eventId: String) {
-        scope.launch {
-            runCatching { remoteRepository.listMembers(eventId) }
-                .onSuccess { members ->
-                    val localUserId = cachedUserId
-                    val localMembership = members.firstOrNull { it.userId == localUserId }
-                    val cachedMembership = localUserId?.let { eventStore.getMembership(eventId, it) }
-                    if (localMembership != null) {
-                        eventStore.saveMembership(localMembership)
-                        if (localMembership.isAdmin) registerLocalAdminKey(eventId, localMembership.userId)
-                    } else if (
-                        cachedMembership?.canParticipate == true &&
-                        eventStore.getEvent(eventId)?.visibility == EventVisibility.PUBLIC
-                    ) {
-                        runCatching { remoteRepository.joinEvent(cachedMembership) }
-                    }
-                    _uiState.update { state ->
-                        if (state.selectedEventId == eventId) {
-                            state.copy(
-                                members = members,
-                                membership = localMembership ?: state.membership,
-                            )
-                        } else state
-                    }
-                }
-        }
-    }
-
-    private suspend fun registerLocalAdminKey(eventId: String, userId: String) {
-        val event = eventStore.getEvent(eventId) ?: return
-        if (userId !in event.adminIds || userId in event.adminPublicKeys) return
-        val keys = adminKeyStore.getOrCreate(userId)
-        val encoded = EventCheckInCodec.encodePublicKey(keys.public)
-        runCatching { remoteRepository.registerAdminPublicKey(eventId, userId, encoded) }
-            .onSuccess {
-                eventStore.saveEvent(event.copy(adminPublicKeys = event.adminPublicKeys + (userId to encoded)))
-                _uiState.update { it.copy(events = eventStore.getEvents()) }
-            }
-    }
-
-    private suspend fun requireUserId(): String {
-        // Firebase can replace an anonymous user with a different account UID during sign-in.
-        // Always re-read the active UID so an EventCoordinator retained across Activity
-        // recreation never creates an event using the previous guest identity.
-        val userId = remoteRepository.requireUserId()
-        if (cachedUserId != userId) {
-            cachedUserId = userId
-            _uiState.update { it.copy(currentUserId = userId) }
-        }
-        return userId
-    }
-
-    private fun Throwable.readableMessage(prefix: String): String =
-        "$prefix: ${localizedMessage?.takeIf(String::isNotBlank) ?: "unknown error"}"
-
 }
