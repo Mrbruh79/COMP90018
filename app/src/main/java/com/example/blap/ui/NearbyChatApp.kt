@@ -70,6 +70,7 @@ import com.example.blap.ui.screens.messages.EmptyChat
 import com.example.blap.ui.screens.chat.ChatScreen
 import com.example.blap.ui.screens.groups.CreateGroupScreen
 import com.example.blap.ui.screens.events.EventHub
+import com.example.blap.ui.screens.auth.AuthActions
 
 @Composable
 fun NearbyChatApp(
@@ -80,13 +81,7 @@ fun NearbyChatApp(
     authAccount: AuthAccount,
     accountProfile: PublicAccountProfile?,
     accountProfileLoading: Boolean,
-    onRegisterEmail: (String, String, String, String) -> Unit,
-    onCompleteAccountProfile: (String, String) -> Unit,
-    onRetryAccountProfile: () -> Unit,
-    onSignOut: () -> Unit,
-    onCreateEmailAccount: (String, String) -> Unit,
-    onSignInWithEmail: (String, String) -> Unit,
-    onSignInWithGoogle: () -> Unit,
+    authActions: AuthActions,
     onStartChat: () -> Unit,
     onCompleteSetup: () -> Unit,
     onStopChat: () -> Unit,
@@ -204,12 +199,7 @@ fun NearbyChatApp(
                 modifier = Modifier.padding(padding),
                 signedIn = authAccount.uid.isNotBlank(),
                 loading = accountProfileLoading,
-                onRegisterEmail = onRegisterEmail,
-                onSignInWithEmail = onSignInWithEmail,
-                onSignInWithGoogle = onSignInWithGoogle,
-                onCompleteProfile = onCompleteAccountProfile,
-                onRetry = onRetryAccountProfile,
-                onSignOut = onSignOut,
+                actions = authActions,
             )
         }
         return
@@ -274,9 +264,7 @@ fun NearbyChatApp(
                 when (screen) {
                     ChatScreen.WELCOME -> WelcomeScreen(
                         authAccount = authAccount,
-                        onCreateEmailAccount = onCreateEmailAccount,
-                        onSignInWithEmail = onSignInWithEmail,
-                        onSignInWithGoogle = onSignInWithGoogle,
+                        actions = authActions,
                         name = uiState.displayName,
                         nameError = uiState.nameError,
                         deniedPermissions = deniedPermissions,
@@ -397,10 +385,7 @@ fun NearbyChatApp(
                     ChatScreen.SETTINGS -> SettingsScreen(
                         authAccount = authAccount,
                         accountProfile = visibleAccountProfile.copy(displayName = uiState.displayName),
-                        onSignOut = onSignOut,
-                        onCreateEmailAccount = onCreateEmailAccount,
-                        onSignInWithEmail = onSignInWithEmail,
-                        onSignInWithGoogle = onSignInWithGoogle,
+                        authActions = authActions,
                         contactCount = uiState.savedContacts.size,
                         connectionCount = uiState.directConnectionCount,
                         onEditProfile = onEditProfile,

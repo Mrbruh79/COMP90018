@@ -50,6 +50,7 @@ import com.example.blap.ui.screens.onboarding.OnboardingScreen
 import com.example.blap.ui.theme.CommonGroundTheme
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
+import com.example.blap.ui.screens.auth.AuthActions
 
 class MainActivity : ComponentActivity() {
     private val appContainer get() = (application as BlapApplication).appContainer
@@ -187,13 +188,15 @@ class MainActivity : ComponentActivity() {
                     authAccount = authAccount,
                     accountProfile = accountProfile,
                     accountProfileLoading = accountProfileLoading,
-                    onRegisterEmail = authViewModel::registerEmail,
-                    onCompleteAccountProfile = authViewModel::completeAccountProfile,
-                    onRetryAccountProfile = authViewModel::loadAccountProfile,
-                    onSignOut = ::signOut,
-                    onCreateEmailAccount = authViewModel::createEmailAccount,
-                    onSignInWithEmail = authViewModel::signInWithEmail,
-                    onSignInWithGoogle = ::signInWithGoogle,
+                    authActions = AuthActions(
+                        onCreateEmailAccount = authViewModel::createEmailAccount,
+                        onSignInWithEmail = authViewModel::signInWithEmail,
+                        onSignInWithGoogle = ::signInWithGoogle,
+                        onRegisterEmail = authViewModel::registerEmail,
+                        onCompleteAccountProfile = authViewModel::completeAccountProfile,
+                        onRetryAccountProfile = authViewModel::loadAccountProfile,
+                        onSignOut = ::signOut,
+                    ),
                     onStartChat = ::requestNearbyPermissionsAndStart,
                     onCompleteSetup = profileViewModel::completeSetup,
                     onStopChat = viewModel::stopChat,

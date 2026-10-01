@@ -29,15 +29,13 @@ import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.chat.ChatNotificationSettings
 import com.example.blap.ui.screens.auth.AccountAccess
+import com.example.blap.ui.screens.auth.AuthActions
 
 @Composable
 internal fun SettingsScreen(
     authAccount: AuthAccount,
     accountProfile: PublicAccountProfile,
-    onSignOut: () -> Unit,
-    onCreateEmailAccount: (String, String) -> Unit,
-    onSignInWithEmail: (String, String) -> Unit,
-    onSignInWithGoogle: () -> Unit,
+    authActions: AuthActions,
     contactCount: Int,
     connectionCount: Int,
     onEditProfile: () -> Unit,
@@ -67,7 +65,7 @@ internal fun SettingsScreen(
                     else Text("Guest profile", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (authAccount.email.isNotBlank()) Text(authAccount.email)
                     if (!authAccount.isAnonymous) {
-                        TextButton(onClick = onSignOut) { Text("Sign out") }
+                        TextButton(onClick = authActions.onSignOut) { Text("Sign out") }
                     }
                 }
             }
@@ -75,9 +73,7 @@ internal fun SettingsScreen(
         item {
             AccountAccess(
                 authAccount = authAccount,
-                onCreateEmailAccount = onCreateEmailAccount,
-                onSignInWithEmail = onSignInWithEmail,
-                onSignInWithGoogle = onSignInWithGoogle,
+                actions = authActions,
             )
         }
         item {

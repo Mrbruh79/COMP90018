@@ -34,9 +34,7 @@ import com.example.blap.ui.theme.ButtonHeightMedium
 @Composable
 internal fun WelcomeScreen(
     authAccount: AuthAccount,
-    onCreateEmailAccount: (String, String) -> Unit,
-    onSignInWithEmail: (String, String) -> Unit,
-    onSignInWithGoogle: () -> Unit,
+    actions: AuthActions,
     name: String,
     nameError: String?,
     deniedPermissions: List<String>,
@@ -60,9 +58,7 @@ internal fun WelcomeScreen(
         ) {
             AccountAccess(
                 authAccount = authAccount,
-                onCreateEmailAccount = onCreateEmailAccount,
-                onSignInWithEmail = onSignInWithEmail,
-                onSignInWithGoogle = onSignInWithGoogle,
+                actions = actions,
             )
             Text("Your nearby profile", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
