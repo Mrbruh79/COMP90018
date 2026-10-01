@@ -53,6 +53,8 @@ import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventUiState
+import com.example.blap.location.LocationFix
+import com.example.blap.location.PlaceSearchResult
 import com.example.blap.ui.screens.profile.ProfileEditorScreen
 import com.example.blap.ui.screens.profile.MyCardScreen
 import com.example.blap.ui.screens.contacts.ContactsScreen
@@ -172,6 +174,8 @@ fun NearbyChatApp(
     onShowSavedEventChat: () -> Unit,
     onSendEventMessage: (String) -> Unit,
     onEventBack: () -> Unit,
+    getCurrentLocation: suspend () -> LocationFix?,
+    searchPlaces: suspend (String) -> List<PlaceSearchResult>,
     onConversationSearchChanged: (String) -> Unit,
     onContactSearchChanged: (String) -> Unit,
     onBeginGroupSettings: () -> Unit,
@@ -463,6 +467,8 @@ fun NearbyChatApp(
                         onShowSavedChat = onShowSavedEventChat,
                         onSendChat = onSendEventMessage,
                         onBack = onEventBack,
+                        getCurrentLocation = getCurrentLocation,
+                        searchPlaces = searchPlaces,
                     )
 
                     ChatScreen.GROUP_SETTINGS -> CreateGroupScreen(

@@ -1,7 +1,6 @@
 package com.example.blap.ui.screens.events
 
 import android.graphics.Color as AndroidColor
-import android.os.SystemClock
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -22,16 +21,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
-import java.net.HttpURLConnection
-import java.net.URL
-import java.net.URLEncoder
-import kotlin.math.max
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
+import com.example.blap.location.GeoCoordinates
 import org.osmdroid.config.Configuration
 import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
@@ -41,20 +31,13 @@ import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polygon
 
-internal data class OsmPoint(val latitude: Double, val longitude: Double)
-
-internal data class OsmSearchResult(
-    val displayName: String,
-    val point: OsmPoint,
-)
-
 @Composable
 internal fun OsmEventMap(
-    point: OsmPoint?,
+    point: GeoCoordinates?,
     radiusMetres: Double,
     modifier: Modifier = Modifier,
     height: Dp = 220.dp,
-    onPointSelected: ((OsmPoint) -> Unit)? = null,
+    onPointSelected: ((GeoCoordinates) -> Unit)? = null,
 ) {
     val latestPointSelected by rememberUpdatedState(onPointSelected)
     Box(
@@ -81,7 +64,7 @@ internal fun OsmEventMap(
                         overlays += MapEventsOverlay(
                             object : MapEventsReceiver {
                                 override fun singleTapConfirmedHelper(location: GeoPoint): Boolean {
-                                    latestPointSelected?.invoke(location.toOsmPoint())
+                                    latestPointSelected?.invoke(location.toCoordinates())
                                     return true
                                 }
 
@@ -130,50 +113,7 @@ internal fun OsmEventMap(
     }
 }
 
-internal object OsmPlaceSearch {
-    private val requestMutex = Mutex()
-    private var lastRequestAt = 0L
+private fun GeoCoordinates.toGeoPoint() = GeoPoint(latitude, longitude)
+private fun GeoPoint.toCoordinates() = GeoCoordinates(latitude, longitude)
 
-    suspend fun search(query: String): List<OsmSearchResult> = requestMutex.withLock {
-        val elapsed = SystemClock.elapsedRealtime() - lastRequestAt
-        delay(max(0L, 1_000L - elapsed))
-        lastRequestAt = SystemClock.elapsedRealtime()
-        withContext(Dispatchers.IO) {
-            val encoded = URLEncoder.encode(query.trim(), Charsets.UTF_8.name())
-            val connection = URL(
-                "https://nominatim.openstreetmap.org/search" +
-                    "?format=jsonv2&limit=5&countrycodes=au&q=$encoded",
-            ).openConnection() as HttpURLConnection
-            try {
-                connection.connectTimeout = 8_000
-                connection.readTimeout = 8_000
-                connection.setRequestProperty(
-                    "User-Agent",
-                    "CommonGround/1.0 (COMP90018 university project)",
-                )
-                connection.setRequestProperty("Accept", "application/json")
-                if (connection.responseCode !in 200..299) {
-                    error("OpenStreetMap search returned ${connection.responseCode}")
-                }
-                val json = connection.inputStream.bufferedReader().use { it.readText() }
-                val results = JSONArray(json)
-                buildList {
-                    for (index in 0 until results.length()) {
-                        val item = results.getJSONObject(index)
-                        val latitude = item.optString("lat").toDoubleOrNull() ?: continue
-                        val longitude = item.optString("lon").toDoubleOrNull() ?: continue
-                        val name = item.optString("display_name").takeIf(String::isNotBlank) ?: continue
-                        add(OsmSearchResult(name.take(200), OsmPoint(latitude, longitude)))
-                    }
-                }
-            } finally {
-                connection.disconnect()
-            }
-        }
-    }
-}
-
-private fun OsmPoint.toGeoPoint() = GeoPoint(latitude, longitude)
-private fun GeoPoint.toOsmPoint() = OsmPoint(latitude, longitude)
-
-private val MELBOURNE_OSM = OsmPoint(-37.8136, 144.9631)
+private val MELBOURNE_OSM = GeoCoordinates(-37.8136, 144.9631)

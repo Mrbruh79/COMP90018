@@ -18,6 +18,8 @@ import androidx.compose.ui.unit.dp
 import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventPage
 import com.example.blap.event.EventUiState
+import com.example.blap.location.LocationFix
+import com.example.blap.location.PlaceSearchResult
 import com.example.blap.ui.components.createQrBitmap
 
 @Composable
@@ -56,6 +58,8 @@ fun EventHub(
     onShowSavedChat: () -> Unit,
     onSendChat: (String) -> Unit,
     onBack: () -> Unit,
+    getCurrentLocation: suspend () -> LocationFix?,
+    searchPlaces: suspend (String) -> List<PlaceSearchResult>,
 ) {
     state.checkInQrPayload?.let { payload ->
         AlertDialog(
@@ -88,8 +92,22 @@ fun EventHub(
             onAcceptInvitation,
             onDeclineInvitation,
         )
-        EventPage.CREATE -> EventFormScreen(null, state.loading, onCreate, onBack)
-        EventPage.EDIT -> EventFormScreen(state.selectedEvent, state.loading, onUpdate, onBack)
+        EventPage.CREATE -> EventFormScreen(
+            null,
+            state.loading,
+            onCreate,
+            onBack,
+            getCurrentLocation,
+            searchPlaces,
+        )
+        EventPage.EDIT -> EventFormScreen(
+            state.selectedEvent,
+            state.loading,
+            onUpdate,
+            onBack,
+            getCurrentLocation,
+            searchPlaces,
+        )
         EventPage.DETAIL -> EventDetailScreen(
             state,
             onBeginEdit,

@@ -36,6 +36,7 @@ import com.example.blap.event.CommunityEvent
 import com.example.blap.event.EventInvitationStatus
 import com.example.blap.event.EventUiState
 import com.example.blap.event.EventVisibility
+import com.example.blap.location.GeoCoordinates
 import com.example.blap.ui.screens.events.formatEventTime
 
 @Composable
@@ -400,7 +401,7 @@ internal fun EventDetailScreen(
 @Composable
 private fun EventVenueMap(event: CommunityEvent) {
     OsmEventMap(
-        point = OsmPoint(event.latitude, event.longitude),
+        point = GeoCoordinates(event.latitude, event.longitude),
         radiusMetres = event.radiusMetres,
         height = 220.dp,
     )

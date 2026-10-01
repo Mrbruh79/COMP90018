@@ -275,6 +275,8 @@ class MainActivity : ComponentActivity() {
                     onShowSavedEventChat = viewModel::showSavedEventChat,
                     onSendEventMessage = viewModel::sendEventMessage,
                     onEventBack = viewModel::eventBack,
+                    getCurrentLocation = appContainer.locationProvider::getFreshLocation,
+                    searchPlaces = appContainer.placeSearch::search,
                     onConversationSearchChanged = viewModel::updateConversationSearch,
                     onContactSearchChanged = viewModel::updateContactSearch,
                     onBeginGroupSettings = viewModel::beginGroupSettings,

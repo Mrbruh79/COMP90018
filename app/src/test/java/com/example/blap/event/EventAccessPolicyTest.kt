@@ -53,6 +53,34 @@ class EventAccessPolicyTest {
     }
 
     @Test
+    fun reportedAccuracyExtendsTheAdmissionBoundary() {
+        val result = EventAccessPolicy.evaluateGps(
+            event,
+            membership,
+            currentLatitude = event.latitude + 0.001,
+            currentLongitude = event.longitude,
+            accuracyMetres = 20.0,
+            now = now,
+        )
+
+        assertTrue(result is EventEntryDecision.Allowed)
+    }
+
+    @Test
+    fun invalidCoordinatesAreOutsideEventArea() {
+        val result = EventAccessPolicy.evaluateGps(
+            event,
+            membership,
+            currentLatitude = 95.0,
+            currentLongitude = event.longitude,
+            accuracyMetres = 10.0,
+            now = now,
+        )
+
+        assertTrue(result is EventEntryDecision.Denied)
+    }
+
+    @Test
     fun chatBecomesReadOnlyAfterEventEnds() {
         val result = EventAccessPolicy.evaluateGps(
             event,

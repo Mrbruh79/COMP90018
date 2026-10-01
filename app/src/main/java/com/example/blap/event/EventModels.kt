@@ -1,12 +1,11 @@
 package com.example.blap.event
 
+import com.example.blap.location.GeoCoordinates
+import com.example.blap.location.LocationDistanceCalculator
+import com.example.blap.location.LocationQuality
 import java.util.UUID
 import java.security.SecureRandom
 import java.util.Base64
-import kotlin.math.atan2
-import kotlin.math.cos
-import kotlin.math.sin
-import kotlin.math.sqrt
 
 enum class EventRole {
     PRIMARY_ADMIN,
@@ -267,17 +266,13 @@ object EventAccessPolicy {
     ): EventEntryDecision {
         val membershipDecision = validateMembershipAndTime(event, membership, now)
         if (membershipDecision != null) return membershipDecision
-        if (!accuracyMetres.isFinite() || accuracyMetres <= 0.0 ||
-            accuracyMetres > MAX_TRUSTED_GPS_ACCURACY_METRES
-        ) {
+        if (!LocationQuality.hasTrustedAccuracy(accuracyMetres, MAX_TRUSTED_GPS_ACCURACY_METRES)) {
             return EventEntryDecision.NeedsQr("GPS is not accurate enough. Scan the venue check-in QR.")
         }
 
-        val distance = distanceMetres(
-            currentLatitude,
-            currentLongitude,
-            event.latitude,
-            event.longitude,
+        val distance = LocationDistanceCalculator.distanceMetres(
+            GeoCoordinates(currentLatitude, currentLongitude),
+            GeoCoordinates(event.latitude, event.longitude),
         )
         return if (distance <= event.radiusMetres + accuracyMetres) {
             EventEntryDecision.Allowed(EventAccessMethod.GPS)
@@ -321,15 +316,5 @@ object EventAccessPolicy {
         now < event.startsAt -> EventEntryDecision.Denied("On-site chat opens when the event starts.")
         now > event.endsAt -> EventEntryDecision.Denied("This event has ended. Chat history is read-only.")
         else -> null
-    }
-
-    fun distanceMetres(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
-        val earthRadius = 6_371_000.0
-        val dLat = Math.toRadians(lat2 - lat1)
-        val dLng = Math.toRadians(lng2 - lng1)
-        val a = sin(dLat / 2) * sin(dLat / 2) +
-            cos(Math.toRadians(lat1)) * cos(Math.toRadians(lat2)) *
-            sin(dLng / 2) * sin(dLng / 2)
-        return earthRadius * 2 * atan2(sqrt(a), sqrt(1 - a))
     }
 }

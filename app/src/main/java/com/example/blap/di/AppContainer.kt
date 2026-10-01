@@ -19,14 +19,17 @@ import com.example.blap.event.EventServices
 import com.example.blap.event.FirebaseEventRemoteRepository
 import com.example.blap.event.LocalEventAdminKeyStore
 import com.example.blap.event.SqliteEventStore
+import com.example.blap.location.FusedLocationProvider
 import com.example.blap.location.LocationProvider
-import com.example.blap.location.VenueManagerLocationProvider
-import com.example.blap.venue.VenueManagerRepository
+import com.example.blap.location.NominatimPlaceSearchRepository
+import com.example.blap.location.PlaceSearchRepository
+import com.example.blap.venue.FirebaseVenueRepository
 import com.example.blap.venue.VenueRepository
 
 interface AppContainer {
     val locationProvider: LocationProvider
     val venues: VenueRepository
+    val placeSearch: PlaceSearchRepository
     val privateProfiles: PrivateProfileStore
     fun identityFor(accountId: String): IdentityStore
     fun notificationSettingsFor(accountId: String): NotificationSettingsRepository
@@ -37,8 +40,11 @@ interface AppContainer {
 class DefaultAppContainer(context: Context) : AppContainer {
     private val appContext = context.applicationContext
 
-    override val locationProvider: LocationProvider by lazy { VenueManagerLocationProvider(appContext) }
-    override val venues: VenueRepository by lazy { VenueManagerRepository(appContext) }
+    override val locationProvider: LocationProvider by lazy { FusedLocationProvider(appContext) }
+    override val venues: VenueRepository by lazy {
+        FirebaseVenueRepository(locationProvider = locationProvider)
+    }
+    override val placeSearch: PlaceSearchRepository by lazy { NominatimPlaceSearchRepository() }
     override val privateProfiles: PrivateProfileStore by lazy { FirebasePrivateProfileStore() }
 
     override fun identityFor(accountId: String): IdentityStore =

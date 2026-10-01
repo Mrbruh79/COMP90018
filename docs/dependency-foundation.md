@@ -42,7 +42,7 @@ Local SQLite methods remain blocking and belong on the injected IO dispatcher. C
 
 `LocationProvider.getFreshLocation()` returns a platform-neutral `LocationFix`: latitude and longitude in degrees, horizontal accuracy in metres and capture time in Unix milliseconds. The caller requests permission first. No fix returns null; permission and provider failures propagate for the existing UI error handling.
 
-`VenueManagerLocationProvider` delegates to the existing fused-location request. `VenueManagerRepository` delegates to the existing venue lookup. Venue lookup still obtains its own fix internally. Injecting `LocationProvider` into venue matching, request cancellation, explicit freshness checks and stronger accuracy policy belong to the location refactor, not this wiring stage. Event entry currently consumes coordinates and accuracy exactly as before; the capture time is available but is not a new entry rule.
+Stage 4 replaced the temporary adapters with `FusedLocationProvider`, `FirebaseVenueRepository` and `NominatimPlaceSearchRepository`. Venue lookup and event creation now use the shared provider through the composition root. Distance and accuracy validation are platform-neutral and covered by unit tests. Event entry still consumes coordinates and accuracy exactly as before; the capture time is available but is not a new entry rule.
 
 ## Transport requirements for William's review
 
