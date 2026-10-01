@@ -48,7 +48,7 @@ import java.util.Date
 import java.util.Locale
 
 @Composable
-internal fun ConversationList(
+internal fun ConversationListScreen(
     conversations: List<ConversationSummary>,
     devices: List<NearbyDevice>,
     onOpenConversation: (String) -> Unit,

@@ -51,7 +51,6 @@ import com.example.blap.chat.ChatUiState
 import com.example.blap.chat.ContactProfile
 import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.PublicAccountProfile
-import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventUiState
 import com.example.blap.location.LocationFix
 import com.example.blap.location.PlaceSearchResult
@@ -64,7 +63,7 @@ import com.example.blap.ui.screens.auth.AccountGate
 import com.example.blap.ui.screens.auth.WelcomeScreen
 import com.example.blap.ui.screens.settings.SettingsScreen
 import com.example.blap.ui.screens.settings.DiscoverySettingsScreen
-import com.example.blap.ui.screens.messages.ConversationList
+import com.example.blap.ui.screens.messages.ConversationListScreen
 import com.example.blap.ui.screens.messages.ConnectingScreen
 import com.example.blap.ui.screens.messages.EmptyChat
 import com.example.blap.ui.screens.chat.ChatScreen
@@ -81,19 +80,19 @@ import com.example.blap.ui.screens.events.EventActions
 fun NearbyChatApp(
     chatUiState: ChatUiState,
     eventUiState: EventUiState,
+    authActions: AuthActions,
+    chatActions: ChatActions,
+    contactsActions: ContactsActions,
+    eventActions: EventActions,
+    groupsActions: GroupsActions,
+    profileActions: ProfileActions,
     deniedPermissions: List<String>,
     authAccount: AuthAccount,
     accountProfile: PublicAccountProfile?,
     accountProfileLoading: Boolean,
-    authActions: AuthActions,
-    eventActions: EventActions,
-    chatActions: ChatActions,
-    contactsActions: ContactsActions,
-    profileActions: ProfileActions,
     onCheckVenue: () -> Unit,
     microphonePermissionGranted: Boolean,
     onRequestMicrophonePermission: () -> Unit,
-    groupsActions: GroupsActions,
     notificationSettings: ChatNotificationSettings,
     notificationPermissionGranted: Boolean,
     onNotificationSettingsChanged: (ChatNotificationSettings) -> Unit,
@@ -198,7 +197,7 @@ fun NearbyChatApp(
                         onOpenSettings = onOpenSettings,
                     )
 
-                    ChatScreen.CHATS -> ConversationList(
+                    ChatScreen.CHATS -> ConversationListScreen(
                         conversations = chatUiState.conversations,
                         devices = chatUiState.discoveredDevices,
                         onOpenConversation = chatActions.onOpenConversation,

@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
-import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventPage
 import com.example.blap.event.EventUiState
 import com.example.blap.location.LocationFix
