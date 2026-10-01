@@ -53,6 +53,7 @@ import kotlinx.coroutines.Dispatchers
 import com.example.blap.ui.screens.auth.AuthActions
 import com.example.blap.ui.screens.groups.GroupsActions
 import com.example.blap.ui.screens.profile.ProfileActions
+import com.example.blap.ui.screens.contacts.ContactsActions
 
 class MainActivity : ComponentActivity() {
     private val appContainer get() = (application as BlapApplication).appContainer
@@ -212,6 +213,25 @@ class MainActivity : ComponentActivity() {
                         onSaveDiscoverySettings = profileViewModel::saveDiscoverySettings,
                         onCancelDiscoverySettings = profileViewModel::cancelDiscoveryEdit,
                     ),
+                    contactsActions = ContactsActions(
+                        onManageContacts = contactsViewModel::beginManageContacts,
+                        onContactSearchChanged = contactsViewModel::updateContactSearch,
+                        onBeginAddContact = contactsViewModel::beginAddContact,
+                        onOpenContact = contactsViewModel::openContact,
+                        onScanContact = ::scanContactCard,
+                        onImportContacts = ::requestContactImport,
+                        onMessageContact = contactsViewModel::messageContact,
+                        onCheckContactOnline = contactsViewModel::checkContactOnline,
+                        onContactDraftChanged = contactsViewModel::updateContactDraft,
+                        onSaveContact = contactsViewModel::saveContact,
+                        onDeleteContact = contactsViewModel::deleteContact,
+                        onCloseContactEditor = contactsViewModel::closeContactEditor,
+                        onOpenChatContactProfile = contactsViewModel::openCurrentChatProfile,
+                        onSaveCurrentChatContact = contactsViewModel::saveCurrentChatContact,
+                        onCloseChatContactProfile = contactsViewModel::closeCurrentChatProfile,
+                        onSelectOnlineAccount = contactsViewModel::selectOnlineAccount,
+                        onCancelAccountSelection = contactsViewModel::cancelAccountSelection,
+                    ),
                     authActions = AuthActions(
                         onCreateEmailAccount = authViewModel::createEmailAccount,
                         onSignInWithEmail = authViewModel::signInWithEmail,
@@ -236,24 +256,8 @@ class MainActivity : ComponentActivity() {
                     onSendVoice = viewModel::sendVoice,
                     microphonePermissionGranted = microphonePermissionGranted,
                     onRequestMicrophonePermission = ::requestMicrophonePermission,
-                    onOpenChatContactProfile = contactsViewModel::openCurrentChatProfile,
-                    onCloseChatContactProfile = contactsViewModel::closeCurrentChatProfile,
-                    onSaveCurrentChatContact = contactsViewModel::saveCurrentChatContact,
                     onMessageDraftChanged = viewModel::updateMessageDraft,
                     onDisconnect = viewModel::disconnect,
-                    onManageContacts = contactsViewModel::beginManageContacts,
-                    onBeginAddContact = contactsViewModel::beginAddContact,
-                    onOpenContact = contactsViewModel::openContact,
-                    onCloseContactEditor = contactsViewModel::closeContactEditor,
-                    onMessageContact = contactsViewModel::messageContact,
-                    onCheckContactOnline = contactsViewModel::checkContactOnline,
-                    onSelectOnlineAccount = contactsViewModel::selectOnlineAccount,
-                    onCancelAccountSelection = contactsViewModel::cancelAccountSelection,
-                    onContactDraftChanged = contactsViewModel::updateContactDraft,
-                    onDeleteContact = contactsViewModel::deleteContact,
-                    onScanContact = ::scanContactCard,
-                    onSaveContact = contactsViewModel::saveContact,
-                    onImportContacts = ::requestContactImport,
                     notificationSettings = notificationSettings,
                     notificationPermissionGranted = notificationPermissionGranted,
                     onNotificationSettingsChanged = ::updateNotificationSettings,
@@ -308,7 +312,6 @@ class MainActivity : ComponentActivity() {
                     getCurrentLocation = appContainer.locationProvider::getFreshLocation,
                     searchPlaces = appContainer.placeSearch::search,
                     onConversationSearchChanged = viewModel::updateConversationSearch,
-                    onContactSearchChanged = contactsViewModel::updateContactSearch,
                     onSystemBack = sessionOwner.session.navigation::handleBack,
                     onDismissError = viewModel::dismissError,
                     onDismissEventMessage = eventViewModel::dismissEventMessage,

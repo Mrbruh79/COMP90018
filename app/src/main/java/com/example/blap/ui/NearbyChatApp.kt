@@ -73,6 +73,7 @@ import com.example.blap.ui.screens.events.EventHub
 import com.example.blap.ui.screens.auth.AuthActions
 import com.example.blap.ui.screens.groups.GroupsActions
 import com.example.blap.ui.screens.profile.ProfileActions
+import com.example.blap.ui.screens.contacts.ContactsActions
 
 @Composable
 fun NearbyChatApp(
@@ -83,6 +84,7 @@ fun NearbyChatApp(
     accountProfile: PublicAccountProfile?,
     accountProfileLoading: Boolean,
     authActions: AuthActions,
+    contactsActions: ContactsActions,
     profileActions: ProfileActions,
     onStartChat: () -> Unit,
     onStopChat: () -> Unit,
@@ -99,25 +101,9 @@ fun NearbyChatApp(
     onSendVoice: (Int, ByteArray) -> Unit,
     microphonePermissionGranted: Boolean,
     onRequestMicrophonePermission: () -> Unit,
-    onOpenChatContactProfile: () -> Unit,
-    onCloseChatContactProfile: () -> Unit,
-    onSaveCurrentChatContact: () -> Unit,
     onMessageDraftChanged: (String) -> Unit,
     onDisconnect: (String) -> Unit,
     groupsActions: GroupsActions,
-    onManageContacts: () -> Unit,
-    onBeginAddContact: () -> Unit,
-    onOpenContact: (String) -> Unit,
-    onCloseContactEditor: () -> Unit,
-    onMessageContact: (String) -> Unit,
-    onCheckContactOnline: (String) -> Unit,
-    onSelectOnlineAccount: (String) -> Unit,
-    onCancelAccountSelection: () -> Unit,
-    onContactDraftChanged: (ContactProfile) -> Unit,
-    onDeleteContact: () -> Unit,
-    onScanContact: () -> Unit,
-    onSaveContact: () -> Unit,
-    onImportContacts: () -> Unit,
     notificationSettings: ChatNotificationSettings,
     notificationPermissionGranted: Boolean,
     onNotificationSettingsChanged: (ChatNotificationSettings) -> Unit,
@@ -159,7 +145,6 @@ fun NearbyChatApp(
     getCurrentLocation: suspend () -> LocationFix?,
     searchPlaces: suspend (String) -> List<PlaceSearchResult>,
     onConversationSearchChanged: (String) -> Unit,
-    onContactSearchChanged: (String) -> Unit,
     onSystemBack: () -> Unit,
     onDismissError: () -> Unit,
     onDismissEventMessage: () -> Unit,
@@ -208,7 +193,7 @@ fun NearbyChatApp(
             floatingActionButton = {
                 if (uiState.screen == ChatScreen.CHATS) {
                     FloatingActionButton(
-                        onClick = onManageContacts,
+                        onClick = contactsActions.onManageContacts,
                         containerColor = MaterialTheme.colorScheme.primary,
                         contentColor = MaterialTheme.colorScheme.onPrimary,
                     ) {
@@ -225,7 +210,7 @@ fun NearbyChatApp(
                         state = uiState.screen,
                         onChats = onBackToChats,
                         onEvents = onShowEvents,
-                        onContacts = onManageContacts,
+                        onContacts = contactsActions.onManageContacts,
                         onMyCard = profileActions.onShowMyCard,
                         onSettings = profileActions.onShowSettingsScreen,
                     )
@@ -263,7 +248,7 @@ fun NearbyChatApp(
                         devices = uiState.discoveredDevices,
                         onOpenConversation = onOpenConversation,
                         onConnect = onConnect,
-                        onManageContacts = onManageContacts,
+                        onManageContacts = contactsActions.onManageContacts,
                         search = uiState.conversationSearch,
                         onSearchChanged = onConversationSearchChanged,
                         nearbyActive = uiState.nearbyActive,
@@ -301,7 +286,7 @@ fun NearbyChatApp(
                                 onSendVoice = onSendVoice,
                                 microphonePermissionGranted = microphonePermissionGranted,
                                 onRequestMicrophonePermission = onRequestMicrophonePermission,
-                                onOpenContactProfile = onOpenChatContactProfile,
+                                onOpenContactProfile = contactsActions.onOpenChatContactProfile,
                                 draft = uiState.messageDrafts[conversation.peerId].orEmpty(),
                                 onDraftChanged = onMessageDraftChanged,
                                 onBack = onBackToChats,
@@ -325,13 +310,13 @@ fun NearbyChatApp(
                         contacts = uiState.savedContacts,
                         onlineReady = authAccount.uid.isNotBlank(),
                         search = uiState.contactSearch,
-                        onSearchChanged = onContactSearchChanged,
-                        onAdd = onBeginAddContact,
-                        onOpen = onOpenContact,
-                        onScan = onScanContact,
-                        onImport = onImportContacts,
-                        onMessage = onMessageContact,
-                        onCheckOnline = onCheckContactOnline,
+                        onSearchChanged = contactsActions.onContactSearchChanged,
+                        onAdd = contactsActions.onBeginAddContact,
+                        onOpen = contactsActions.onOpenContact,
+                        onScan = contactsActions.onScanContact,
+                        onImport = contactsActions.onImportContacts,
+                        onMessage = contactsActions.onMessageContact,
+                        onCheckOnline = contactsActions.onCheckContactOnline,
                         onOpenCreateGroup = groupsActions.onOpenCreateGroup,
                         onDiscoverNearby = onBackToChats,
                     )
@@ -340,18 +325,18 @@ fun NearbyChatApp(
                         profile = uiState.contactDraftProfile(),
                         source = uiState.contactSourceDraft,
                         isExisting = uiState.selectedContactId != null,
-                        onChanged = onContactDraftChanged,
-                        onSave = onSaveContact,
-                        onDelete = onDeleteContact,
-                        onBack = onCloseContactEditor,
+                        onChanged = contactsActions.onContactDraftChanged,
+                        onSave = contactsActions.onSaveContact,
+                        onDelete = contactsActions.onDeleteContact,
+                        onBack = contactsActions.onCloseContactEditor,
                     )
 
                     ChatScreen.CONTACT_PROFILE -> ChatContactProfileScreen(
                         conversation = uiState.conversations.firstOrNull { it.peerId == uiState.selectedPeerId },
                         contact = uiState.savedContacts.firstOrNull { it.id == uiState.selectedContactId },
-                        onEdit = { uiState.selectedContactId?.let(onOpenContact) },
-                        onSaveContact = onSaveCurrentChatContact,
-                        onBack = onCloseChatContactProfile,
+                        onEdit = { uiState.selectedContactId?.let(contactsActions.onOpenContact) },
+                        onSaveContact = contactsActions.onSaveCurrentChatContact,
+                        onBack = contactsActions.onCloseChatContactProfile,
                     )
 
                     ChatScreen.SHOWING_MY_CARD -> MyCardScreen(
@@ -461,20 +446,20 @@ fun NearbyChatApp(
         }
         if (uiState.accountCandidates.isNotEmpty()) {
             AlertDialog(
-                onDismissRequest = onCancelAccountSelection,
+                onDismissRequest = contactsActions.onCancelAccountSelection,
                 title = { Text("Choose the right account") },
                 text = {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("These accounts match the contact details. Check the username before linking.")
                         uiState.accountCandidates.forEach { account ->
                             OutlinedButton(
-                                onClick = { onSelectOnlineAccount(account.uid) },
+                                onClick = { contactsActions.onSelectOnlineAccount(account.uid) },
                                 modifier = Modifier.fillMaxWidth(),
                             ) { Text("${account.name}  @${account.username.ifBlank { "unknown" }}") }
                         }
                     }
                 },
-                confirmButton = { TextButton(onClick = onCancelAccountSelection) { Text("Cancel") } },
+                confirmButton = { TextButton(onClick = contactsActions.onCancelAccountSelection) { Text("Cancel") } },
             )
         }
     }
