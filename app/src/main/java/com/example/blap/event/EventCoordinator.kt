@@ -77,7 +77,18 @@ class EventCoordinator(
         updateState = { transform -> _uiState.update(transform) },
         clock = clock,
     )
-    private var pendingAccessRequest: EventAccessRequest? = null
+    private val onSiteCoordinator = EventOnSiteCoordinator(
+        eventStore = eventStore,
+        remoteRepository = remoteRepository,
+        adminKeyStore = adminKeyStore,
+        identityStore = identityStore,
+        meshGateway = nearbyController,
+        scope = scope,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        closeEventObservers = discussionCoordinator::closeObservers,
+        clock = clock,
+    )
 
     init {
         scope.launch {
@@ -889,320 +900,41 @@ class EventCoordinator(
         }
     }
 
-    fun enterWithGps(latitude: Double, longitude: Double, accuracyMetres: Double) {
-        val event = _uiState.value.selectedEvent ?: return
-        val membership = _uiState.value.membership
-        when (val decision = EventAccessPolicy.evaluateGps(
-            event,
-            membership,
-            latitude,
-            longitude,
-            accuracyMetres,
-            clock(),
-        )) {
-            is EventEntryDecision.Allowed -> activateOnSite(event, requireNotNull(membership), decision.method)
-            is EventEntryDecision.NeedsQr -> _uiState.update {
-                if (event.visibility == EventVisibility.PRIVATE) {
-                    it.copy(notice = "GPS is not accurate enough. Ask an on-site event admin for access.")
-                } else it.copy(notice = decision.reason)
-            }
-            is EventEntryDecision.Denied -> _uiState.update { it.copy(error = decision.reason) }
-        }
-    }
+    fun enterWithGps(latitude: Double, longitude: Double, accuracyMetres: Double) =
+        onSiteCoordinator.enterWithGps(latitude, longitude, accuracyMetres)
 
-    fun enterWithQr(payload: String) {
-        val event = _uiState.value.selectedEvent ?: return
-        if (event.visibility == EventVisibility.PRIVATE) {
-            _uiState.update { it.copy(error = "Private events do not use QR check-in.") }
-            return
-        }
-        if (event.requiresSignIn && !remoteRepository.hasSignedInAccount()) {
-            _uiState.update { it.copy(error = "Sign in with Email or Google to join this protected event.") }
-            return
-        }
-        if (event.venueCheckInPayload.isBlank() || payload != event.venueCheckInPayload) {
-            _uiState.update { it.copy(error = "This venue check-in QR is not valid for this event.") }
-            return
-        }
-        val credential = event.adminPublicKeys.entries.firstNotNullOfOrNull { (adminId, encodedKey) ->
-            runCatching {
-                EventCheckInCodec.verify(
-                    payload,
-                    event.id,
-                    EventCheckInCodec.decodePublicKey(encodedKey),
-                )?.takeIf { it.adminId == adminId }
-            }.getOrNull()
-        }
-        if (credential == null) {
-            _uiState.update { it.copy(error = "This venue check-in QR has an invalid signature.") }
-            return
-        }
-        val membership = _uiState.value.membership
-        if (membership == null || membership.leftAt != null) {
-            _uiState.update { it.copy(error = "Join this event before scanning its venue QR.") }
-            return
-        }
-        applyQrDecision(event, membership, credential)
-    }
+    fun enterWithQr(payload: String) = onSiteCoordinator.enterWithQr(payload)
 
-    fun createVenueCheckInQr(): String? {
-        val event = _uiState.value.selectedEvent ?: return null
-        if (event.visibility == EventVisibility.PRIVATE) return null
-        val membership = _uiState.value.membership ?: return null
-        if (!membership.isAdmin || !event.isAdmin(membership.userId) || !event.isActive(clock())) return null
-        if (event.venueCheckInPayload.isNotBlank()) return event.venueCheckInPayload
-        if (membership.role != EventRole.PRIMARY_ADMIN || event.createdBy != membership.userId) return null
-        val keys = adminKeyStore.get(membership.userId) ?: return null
-        val payload = EventCheckInCodec.create(event.id, membership.userId, keys.private)
-        val updated = event.copy(
-            venueCheckInPayload = payload,
-            updatedAt = maxOf(clock(), event.updatedAt + 1),
-        )
-        val unsigned = EventMutation(updated, membership.userId)
-        val mutation = unsigned.copy(signature = EventMutationSigner.sign(unsigned, keys.private))
-        eventStore.saveEvent(updated)
-        _uiState.update { it.copy(events = eventStore.getEvents()) }
-        scope.launch {
-            runCatching { remoteRepository.updateEvent(updated) }
-                .onSuccess { nearbyController.sendEventMutation(mutation) }
-                .onFailure { failure ->
-                    _uiState.update {
-                        it.copy(notice = failure.readableMessage("The static QR was saved locally but could not be synced"))
-                    }
-                }
-        }
-        return payload
-    }
+    fun createVenueCheckInQr(): String? = onSiteCoordinator.createVenueCheckInQr()
 
-    fun showVenueCheckInQr() {
-        val payload = createVenueCheckInQr()
-        _uiState.update {
-            if (payload == null) it.copy(
-                error = "The static check-in QR is available to event admins while the event is active. " +
-                    "For older events, the primary admin must create it first.",
-            )
-            else it.copy(checkInQrPayload = payload, error = null)
-        }
-    }
+    fun showVenueCheckInQr() = onSiteCoordinator.showVenueCheckInQr()
 
-    fun hideVenueCheckInQr() {
-        _uiState.update { it.copy(checkInQrPayload = null) }
-    }
+    fun hideVenueCheckInQr() = onSiteCoordinator.hideVenueCheckInQr()
 
-    fun sendOnSiteMessage(text: String) {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        val cleanText = text.trim().take(1_000)
-        if (cleanText.isBlank()) return
-        if (state.activeEventId != event.id || !event.isActive(clock()) || !membership.canParticipate) {
-            _uiState.update { it.copy(error = "On-site chat is not currently active.") }
-            return
-        }
-        val message = EventChatMessage(
-            eventId = event.id,
-            senderId = membership.userId,
-            senderName = membership.displayName,
-            text = cleanText,
-            createdAt = clock(),
-        )
-        eventStore.saveChatMessage(message)
-        nearbyController.sendEventChatMessage(message)
-        _uiState.update { it.copy(chatMessages = eventStore.getChatMessages(event.id)) }
-    }
+    fun sendOnSiteMessage(text: String) = onSiteCoordinator.sendMessage(text)
 
-    fun showSavedOnSiteHistory() {
-        val event = _uiState.value.selectedEvent ?: return
-        _uiState.update {
-            it.copy(
-                page = EventPage.ON_SITE_CHAT,
-                chatMessages = eventStore.getChatMessages(event.id),
-                error = null,
-            )
-        }
-    }
+    fun showSavedOnSiteHistory() = onSiteCoordinator.showSavedHistory()
 
-    fun requestAdminOnSiteAccess() {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        if (event.visibility != EventVisibility.PRIVATE || !event.isActive(clock()) || !membership.canParticipate) {
-            _uiState.update { it.copy(error = "Manual access is only available to accepted members during a private event.") }
-            return
-        }
-        val request = EventAccessRequest(
-            eventId = event.id,
-            userId = membership.userId,
-            peerId = identityStore.getPeerId(),
-            displayName = membership.displayName,
-            requestedAt = clock(),
-        )
-        pendingAccessRequest = request
-        nearbyController.setActiveEvent(
-            eventId = event.id,
-            meshSecret = event.privateMeshSecret,
-            userId = membership.userId,
-            accessGranted = false,
-        )
-        nearbyController.sendEventAccessRequest(request)
-        _uiState.update {
-            it.copy(waitingForAdminAccess = true, notice = "Waiting for a nearby event admin to approve access.")
-        }
-    }
+    fun requestAdminOnSiteAccess() = onSiteCoordinator.requestAdminAccess()
 
-    fun approveOnSiteAccess(requestId: String) {
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        val request = state.accessRequests.firstOrNull { it.id == requestId } ?: return
-        if (!membership.isAdmin || !event.isAdmin(membership.userId) || request.userId !in event.memberIds) {
-            _uiState.update { it.copy(error = "This access request cannot be approved.") }
-            return
-        }
-        val target = state.members.firstOrNull { it.userId == request.userId }
-        if (target != null && !target.canParticipate) {
-            _uiState.update { it.copy(error = "This member has left or been removed.") }
-            return
-        }
-        val keys = adminKeyStore.get(membership.userId)
-        if (keys == null) {
-            _uiState.update { it.copy(error = "This device does not have the admin signing key.") }
-            return
-        }
-        val issuedAt = clock()
-        val unsigned = EventAccessGrant(
-            requestId = request.id,
-            eventId = event.id,
-            userId = request.userId,
-            peerId = request.peerId,
-            adminId = membership.userId,
-            issuedAt = issuedAt,
-            expiresAt = issuedAt + ACCESS_GRANT_LIFETIME_MILLIS,
-        )
-        val grant = unsigned.copy(signature = EventAccessGrantSigner.sign(unsigned, keys.private))
-        nearbyController.sendEventAccessGrant(grant)
-        _uiState.update {
-            it.copy(
-                accessRequests = it.accessRequests.filterNot { access -> access.id == requestId },
-                notice = "On-site access approved for ${request.displayName}.",
-            )
-        }
-    }
+    fun approveOnSiteAccess(requestId: String) = onSiteCoordinator.approveAccess(requestId)
 
-    fun onEventPeerAvailable(peerId: String, eventId: String, userId: String, accessGranted: Boolean) {
-        val state = _uiState.value
-        pendingAccessRequest?.takeIf { it.eventId == eventId }?.let(nearbyController::sendEventAccessRequest)
-        if (state.activeEventId != eventId || !accessGranted) return
-        val event = state.events.firstOrNull { it.id == eventId } ?: return
-        if (event.visibility == EventVisibility.PRIVATE && userId !in event.memberIds) return
-        nearbyController.synchronizeEventHistory(peerId, eventStore.getRecentChatMessages(eventId, 50))
-        nearbyController.synchronizeEventAnnouncements(peerId, eventStore.getAnnouncements(eventId, 100))
-    }
+    fun onEventPeerAvailable(peerId: String, eventId: String, userId: String, accessGranted: Boolean) =
+        onSiteCoordinator.onPeerAvailable(peerId, eventId, userId, accessGranted)
 
-    fun onEventAccessRequestReceived(request: EventAccessRequest) {
-        val state = _uiState.value
-        val event = state.events.firstOrNull { it.id == request.eventId } ?: return
-        val membership = state.membership ?: return
-        if (state.activeEventId != event.id || event.visibility != EventVisibility.PRIVATE ||
-            !membership.isAdmin || !event.isAdmin(membership.userId) || request.userId !in event.memberIds ||
-            request.requestedAt !in (clock() - ACCESS_REQUEST_MAX_AGE_MILLIS)..(clock() + EventAccessPolicy.MAX_CLOCK_SKEW_MILLIS)
-        ) return
-        _uiState.update { current ->
-            current.copy(
-                accessRequests = (current.accessRequests.filterNot { it.id == request.id } + request)
-                    .sortedBy(EventAccessRequest::requestedAt),
-            )
-        }
-    }
+    fun onEventAccessRequestReceived(request: EventAccessRequest) =
+        onSiteCoordinator.onAccessRequestReceived(request)
 
-    fun onEventAccessGrantReceived(grant: EventAccessGrant) {
-        val request = pendingAccessRequest ?: return
-        val state = _uiState.value
-        val event = state.selectedEvent ?: return
-        val membership = state.membership ?: return
-        if (grant.requestId != request.id || grant.eventId != event.id || grant.userId != membership.userId ||
-            grant.peerId != identityStore.getPeerId() || grant.adminId !in event.adminIds ||
-            clock() !in grant.issuedAt..grant.expiresAt ||
-            grant.expiresAt - grant.issuedAt > ACCESS_GRANT_LIFETIME_MILLIS
-        ) return
-        val publicKey = event.adminPublicKeys[grant.adminId]
-            ?.let { runCatching { EventCheckInCodec.decodePublicKey(it) }.getOrNull() }
-            ?: return
-        if (!EventAccessGrantSigner.verify(grant, publicKey)) return
-        pendingAccessRequest = null
-        _uiState.update { it.copy(waitingForAdminAccess = false) }
-        activateOnSite(event, membership, EventAccessMethod.ADMIN_APPROVAL)
-    }
+    fun onEventAccessGrantReceived(grant: EventAccessGrant) =
+        onSiteCoordinator.onAccessGrantReceived(grant)
 
-    fun onEventChatMessageReceived(message: EventChatMessage) {
-        val state = _uiState.value
-        val event = state.events.firstOrNull { it.id == message.eventId } ?: return
-        if (state.activeEventId != event.id || !event.isActive(clock())) return
-        val membership = state.membership ?: return
-        if (!membership.canParticipate) return
-        if (state.members.isNotEmpty() && state.members.none {
-                it.userId == message.senderId && it.canParticipate
-            }
-        ) return
-        if (eventStore.saveChatMessage(message)) {
-            _uiState.update { it.copy(chatMessages = eventStore.getChatMessages(event.id)) }
-        }
-    }
+    fun onEventChatMessageReceived(message: EventChatMessage) =
+        onSiteCoordinator.onChatMessageReceived(message)
 
-    fun onEventAnnouncementReceived(announcement: EventAnnouncement) {
-        val event = _uiState.value.events.firstOrNull { it.id == announcement.eventId }
-            ?: eventStore.getEvent(announcement.eventId)
-            ?: return
-        if (announcement.adminId !in event.adminIds) return
-        val publicKey = event.adminPublicKeys[announcement.adminId]
-            ?.let { runCatching { EventCheckInCodec.decodePublicKey(it) }.getOrNull() }
-            ?: return
-        if (!EventAnnouncementSigner.verify(announcement, publicKey)) return
-        if (eventStore.saveAnnouncement(announcement)) {
-            _uiState.update { state ->
-                if (state.selectedEventId == event.id) {
-                    state.copy(announcements = eventStore.getAnnouncements(event.id))
-                } else state
-            }
-        }
-    }
+    fun onEventAnnouncementReceived(announcement: EventAnnouncement) =
+        onSiteCoordinator.onAnnouncementReceived(announcement)
 
-    fun onEventMutationReceived(mutation: EventMutation) {
-        val existing = eventStore.getEvent(mutation.event.id) ?: return
-        val normalizedMutation = mutation.copy(
-            event = mutation.event.copy(
-                memberIds = existing.memberIds,
-                visibility = existing.visibility,
-                privateMeshSecret = existing.privateMeshSecret,
-            ),
-        )
-        if (normalizedMutation.event.createdBy != existing.createdBy) return
-        if (normalizedMutation.adminId !in existing.adminIds || normalizedMutation.event.updatedAt <= existing.updatedAt) return
-        if (normalizedMutation.event.deletedAt != null && normalizedMutation.adminId != existing.createdBy) return
-        val publicKey = existing.adminPublicKeys[mutation.adminId]
-            ?.let { runCatching { EventCheckInCodec.decodePublicKey(it) }.getOrNull() }
-            ?: return
-        if (!EventMutationSigner.verify(normalizedMutation, publicKey)) return
-        if (normalizedMutation.event.isDeleted) {
-            discussionCoordinator.closeObservers()
-            eventStore.purgeEvent(normalizedMutation.event.id)
-            nearbyController.setActiveEvent(null)
-            _uiState.update {
-                EventUiState(
-                    events = eventStore.getEvents(),
-                    notice = "The event and its local data were deleted by the primary admin.",
-                )
-            }
-            return
-        }
-        eventStore.saveEvent(normalizedMutation.event)
-        _uiState.update { state ->
-            state.copy(
-                events = eventStore.getEvents(),
-                notice = "Event details were updated.",
-            )
-        }
-    }
+    fun onEventMutationReceived(mutation: EventMutation) = onSiteCoordinator.onMutationReceived(mutation)
 
     fun dismissMessage() {
         _uiState.update { it.copy(error = null, notice = null) }
@@ -1231,42 +963,6 @@ class EventCoordinator(
             } finally {
                 tombstoneCleanupInFlight.remove(event.id)
             }
-        }
-    }
-
-    private fun activateOnSite(
-        event: CommunityEvent,
-        membership: EventMembership,
-        method: EventAccessMethod,
-    ) {
-        val checkedIn = membership.copy(accessMethod = method, checkedInAt = clock())
-        eventStore.saveMembership(checkedIn)
-        nearbyController.setActiveEvent(
-            eventId = event.id,
-            meshSecret = event.privateMeshSecret,
-            userId = checkedIn.userId,
-            accessGranted = true,
-        )
-        _uiState.update {
-            it.copy(
-                page = EventPage.ON_SITE_CHAT,
-                membership = checkedIn,
-                activeEventId = event.id,
-                chatMessages = eventStore.getChatMessages(event.id),
-                error = null,
-            )
-        }
-    }
-
-    private fun applyQrDecision(
-        event: CommunityEvent,
-        membership: EventMembership,
-        credential: EventCheckInCredential,
-    ) {
-        when (val decision = EventAccessPolicy.evaluateQr(event, membership, credential, clock())) {
-            is EventEntryDecision.Allowed -> activateOnSite(event, membership, decision.method)
-            is EventEntryDecision.NeedsQr -> _uiState.update { it.copy(notice = decision.reason) }
-            is EventEntryDecision.Denied -> _uiState.update { it.copy(error = decision.reason) }
         }
     }
 
@@ -1356,8 +1052,4 @@ class EventCoordinator(
     private fun Throwable.readableMessage(prefix: String): String =
         "$prefix: ${localizedMessage?.takeIf(String::isNotBlank) ?: "unknown error"}"
 
-    private companion object {
-        const val ACCESS_GRANT_LIFETIME_MILLIS = 10 * 60 * 1_000L
-        const val ACCESS_REQUEST_MAX_AGE_MILLIS = 10 * 60 * 1_000L
-    }
 }
