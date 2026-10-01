@@ -116,7 +116,7 @@ internal fun ChatScreen(
             recorder.cancel()
             null
         }
-        note?.let { onSendVoice(it.first, it.second) }
+        note?.let { onSendVoice(it.durationMs, it.audio) }
     }
     LaunchedEffect(recording) {
         if (!recording) return@LaunchedEffect

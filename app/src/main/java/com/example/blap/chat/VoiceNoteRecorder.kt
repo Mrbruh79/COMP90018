@@ -7,13 +7,34 @@ import android.os.Build
 import java.io.File
 import java.util.Base64
 
-class VoiceNoteRecorder(private val context: Context) {
+object VoiceNoteLimits {
+    const val MIN_DURATION_MS = 400
+    const val MAX_DURATION_MS = 10_000
+    const val MAX_ENCODED_LENGTH = 28_000
+}
+
+class VoiceRecording(
+    val durationMs: Int,
+    val audio: ByteArray,
+)
+
+interface VoiceNoteService {
+    fun start(): Boolean
+    fun stop(): VoiceRecording?
+    fun cancel()
+}
+
+interface VoiceNoteCache {
+    fun writeCacheFile(messageId: String, audioBase64: String): File?
+}
+
+class VoiceNoteRecorder(private val context: Context) : VoiceNoteService {
     private var recorder: MediaRecorder? = null
     private var outputFile: File? = null
     private var startedAt = 0L
 
     @SuppressLint("MissingPermission")
-    fun start(): Boolean {
+    override fun start(): Boolean {
         cancel()
         val file = File(context.cacheDir, "voice-record.amr")
         file.delete()
@@ -35,7 +56,7 @@ class VoiceNoteRecorder(private val context: Context) {
         }
     }
 
-    fun stop(): Pair<Int, ByteArray>? {
+    override fun stop(): VoiceRecording? {
         val duration = (System.currentTimeMillis() - startedAt).toInt()
         val file = outputFile
         releaseRecorder()
@@ -43,11 +64,11 @@ class VoiceNoteRecorder(private val context: Context) {
         if (file == null || !file.exists()) return null
         val bytes = file.readBytes()
         file.delete()
-        if (duration < ChatViewModel.MIN_VOICE_DURATION_MS || bytes.isEmpty()) return null
-        return duration.coerceAtMost(ChatViewModel.MAX_VOICE_DURATION_MS) to bytes
+        if (duration < VoiceNoteLimits.MIN_DURATION_MS || bytes.isEmpty()) return null
+        return VoiceRecording(duration.coerceAtMost(VoiceNoteLimits.MAX_DURATION_MS), bytes)
     }
 
-    fun cancel() {
+    override fun cancel() {
         releaseRecorder()
         outputFile?.delete()
         outputFile = null
@@ -67,12 +88,17 @@ class VoiceNoteRecorder(private val context: Context) {
         else @Suppress("DEPRECATION") MediaRecorder()
 }
 
-object VoiceNotePlayback {
-    fun writeCacheFile(context: Context, messageId: String, audioBase64: String): File? {
+class AndroidVoiceNoteCache(private val context: Context) : VoiceNoteCache {
+    override fun writeCacheFile(messageId: String, audioBase64: String): File? {
         val bytes = runCatching { Base64.getUrlDecoder().decode(audioBase64) }.getOrNull() ?: return null
         if (bytes.isEmpty()) return null
         val file = File(context.cacheDir, "voice-$messageId.amr")
         file.writeBytes(bytes)
         return file
     }
+}
+
+object VoiceNotePlayback {
+    fun writeCacheFile(context: Context, messageId: String, audioBase64: String): File? =
+        AndroidVoiceNoteCache(context).writeCacheFile(messageId, audioBase64)
 }

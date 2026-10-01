@@ -20,6 +20,12 @@ class ChatNotificationPolicyTest {
             ConversationType.DIRECT, false, 1_000_100L))
     }
 
+    @Test fun alertsOnlyFireWhileTheAppIsOpenAndTheConversationIsNotVisible() {
+        val settings = ChatNotificationSettings()
+        assertTrue(ChatNotificationPolicy.shouldAlert(settings, incoming, ConversationType.DIRECT, false, 1_000_100L))
+        assertFalse(ChatNotificationPolicy.shouldAlert(settings, incoming, ConversationType.DIRECT, true, 1_000_100L))
+    }
+
     @Test fun oldMessagesAndSilentActionsDoNotAlert() {
         assertFalse(ChatNotificationPolicy.shouldAlert(ChatNotificationSettings(), incoming,
             ConversationType.DIRECT, false, 1_200_001L))
