@@ -72,19 +72,19 @@ import com.example.blap.ui.screens.groups.CreateGroupScreen
 import com.example.blap.ui.screens.events.EventHub
 import com.example.blap.ui.screens.auth.AuthActions
 import com.example.blap.ui.screens.groups.GroupsActions
+import com.example.blap.ui.screens.profile.ProfileActions
 
 @Composable
 fun NearbyChatApp(
     uiState: ChatUiState,
     eventUiState: EventUiState,
     deniedPermissions: List<String>,
-    onNameChanged: (String) -> Unit,
     authAccount: AuthAccount,
     accountProfile: PublicAccountProfile?,
     accountProfileLoading: Boolean,
     authActions: AuthActions,
+    profileActions: ProfileActions,
     onStartChat: () -> Unit,
-    onCompleteSetup: () -> Unit,
     onStopChat: () -> Unit,
     onCheckVenue: () -> Unit,
     onConnect: (String) -> Unit,
@@ -118,21 +118,10 @@ fun NearbyChatApp(
     onScanContact: () -> Unit,
     onSaveContact: () -> Unit,
     onImportContacts: () -> Unit,
-    onShowMyCard: () -> Unit,
-    onEditProfile: () -> Unit,
-    onProfileChanged: (ContactProfile) -> Unit,
-    onSaveProfile: () -> Unit,
-    onCancelProfile: () -> Unit,
-    onShowSettingsScreen: () -> Unit,
     notificationSettings: ChatNotificationSettings,
     notificationPermissionGranted: Boolean,
     onNotificationSettingsChanged: (ChatNotificationSettings) -> Unit,
     onRequestNotificationPermission: () -> Unit,
-    onShowDiscoverySettings: () -> Unit,
-    onDiscoveryPhoneChanged: (String) -> Unit,
-    onDiscoveryEnabledChanged: (Boolean) -> Unit,
-    onSaveDiscoverySettings: () -> Unit,
-    onCancelDiscoverySettings: () -> Unit,
     onShowEvents: () -> Unit,
     onBeginCreateEvent: () -> Unit,
     onBeginEditEvent: () -> Unit,
@@ -237,8 +226,8 @@ fun NearbyChatApp(
                         onChats = onBackToChats,
                         onEvents = onShowEvents,
                         onContacts = onManageContacts,
-                        onMyCard = onShowMyCard,
-                        onSettings = onShowSettingsScreen,
+                        onMyCard = profileActions.onShowMyCard,
+                        onSettings = profileActions.onShowSettingsScreen,
                     )
                 }
             },
@@ -264,8 +253,8 @@ fun NearbyChatApp(
                         name = uiState.displayName,
                         nameError = uiState.nameError,
                         deniedPermissions = deniedPermissions,
-                        onNameChanged = onNameChanged,
-                        onStart = onCompleteSetup,
+                        onNameChanged = profileActions.onNameChanged,
+                        onStart = profileActions.onCompleteSetup,
                         onOpenSettings = onOpenSettings,
                     )
 
@@ -284,7 +273,7 @@ fun NearbyChatApp(
                         onStopNearby = onStopChat,
                         onOpenSettings = onOpenSettings,
                         showAccountPrompt = !authAccount.hasPassword && !authAccount.hasGoogle,
-                        onOpenAccount = onShowSettingsScreen,
+                        onOpenAccount = profileActions.onShowSettingsScreen,
                     )
 
                     ChatScreen.CONNECTING -> ConnectingScreen(
@@ -368,14 +357,14 @@ fun NearbyChatApp(
                     ChatScreen.SHOWING_MY_CARD -> MyCardScreen(
                         profile = uiState.profile().copy(username = visibleAccountProfile.username),
                         peerId = uiState.myPeerId,
-                        onEdit = onEditProfile,
+                        onEdit = profileActions.onEditProfile,
                     )
 
                     ChatScreen.EDITING_PROFILE -> ProfileEditorScreen(
                         profile = uiState.profileDraft ?: uiState.profile(),
-                        onChanged = onProfileChanged,
-                        onSave = onSaveProfile,
-                        onBack = onCancelProfile,
+                        onChanged = profileActions.onProfileChanged,
+                        onSave = profileActions.onSaveProfile,
+                        onBack = profileActions.onCancelProfile,
                     )
 
                     ChatScreen.SETTINGS -> SettingsScreen(
@@ -384,8 +373,8 @@ fun NearbyChatApp(
                         authActions = authActions,
                         contactCount = uiState.savedContacts.size,
                         connectionCount = uiState.directConnectionCount,
-                        onEditProfile = onEditProfile,
-                        onShowDiscoverySettings = onShowDiscoverySettings,
+                        onEditProfile = profileActions.onEditProfile,
+                        onShowDiscoverySettings = profileActions.onShowDiscoverySettings,
                         onOpenAppSettings = onOpenSettings,
                         nearbyActive = uiState.nearbyActive,
                         onStartNearby = onStartChat,
@@ -407,10 +396,10 @@ fun NearbyChatApp(
                         savedLookupPhoneNumber = uiState.profileLookupPhoneNumber,
                         savedEnabled = uiState.profileDiscoverableByPhone,
                         onlineLookupStatus = uiState.onlineLookupStatus,
-                        onPhoneChanged = onDiscoveryPhoneChanged,
-                        onEnabledChanged = onDiscoveryEnabledChanged,
-                        onSave = onSaveDiscoverySettings,
-                        onBack = onCancelDiscoverySettings,
+                        onPhoneChanged = profileActions.onDiscoveryPhoneChanged,
+                        onEnabledChanged = profileActions.onDiscoveryEnabledChanged,
+                        onSave = profileActions.onSaveDiscoverySettings,
+                        onBack = profileActions.onCancelDiscoverySettings,
                     )
 
                     ChatScreen.EVENTS -> EventHub(

@@ -52,6 +52,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import com.example.blap.ui.screens.auth.AuthActions
 import com.example.blap.ui.screens.groups.GroupsActions
+import com.example.blap.ui.screens.profile.ProfileActions
 
 class MainActivity : ComponentActivity() {
     private val appContainer get() = (application as BlapApplication).appContainer
@@ -185,7 +186,6 @@ class MainActivity : ComponentActivity() {
                     uiState = uiState,
                     eventUiState = eventUiState,
                     deniedPermissions = deniedPermissions.map(NearbyPermissions::displayName),
-                    onNameChanged = profileViewModel::updateDisplayName,
                     authAccount = authAccount,
                     accountProfile = accountProfile,
                     accountProfileLoading = accountProfileLoading,
@@ -197,6 +197,21 @@ class MainActivity : ComponentActivity() {
                         onCreateGroup = groupsViewModel::createPrivateGroup,
                         onSaveGroupSettings = groupsViewModel::saveGroupSettings,
                     ),
+                    profileActions = ProfileActions(
+                        onNameChanged = profileViewModel::updateDisplayName,
+                        onCompleteSetup = profileViewModel::completeSetup,
+                        onShowMyCard = profileViewModel::showMyCard,
+                        onShowSettingsScreen = profileViewModel::showSettings,
+                        onEditProfile = profileViewModel::editProfile,
+                        onProfileChanged = profileViewModel::updateProfile,
+                        onSaveProfile = profileViewModel::saveProfile,
+                        onCancelProfile = profileViewModel::cancelProfileEdit,
+                        onShowDiscoverySettings = profileViewModel::showDiscoverySettings,
+                        onDiscoveryPhoneChanged = profileViewModel::updateDiscoveryPhone,
+                        onDiscoveryEnabledChanged = profileViewModel::updateDiscoveryEnabled,
+                        onSaveDiscoverySettings = profileViewModel::saveDiscoverySettings,
+                        onCancelDiscoverySettings = profileViewModel::cancelDiscoveryEdit,
+                    ),
                     authActions = AuthActions(
                         onCreateEmailAccount = authViewModel::createEmailAccount,
                         onSignInWithEmail = authViewModel::signInWithEmail,
@@ -207,7 +222,6 @@ class MainActivity : ComponentActivity() {
                         onSignOut = ::signOut,
                     ),
                     onStartChat = ::requestNearbyPermissionsAndStart,
-                    onCompleteSetup = profileViewModel::completeSetup,
                     onStopChat = viewModel::stopChat,
                     onCheckVenue = ::requestVenueCheck,
                     onConnect = viewModel::connectToDevice,
@@ -240,21 +254,10 @@ class MainActivity : ComponentActivity() {
                     onScanContact = ::scanContactCard,
                     onSaveContact = contactsViewModel::saveContact,
                     onImportContacts = ::requestContactImport,
-                    onShowMyCard = profileViewModel::showMyCard,
-                    onEditProfile = profileViewModel::editProfile,
-                    onProfileChanged = profileViewModel::updateProfile,
-                    onSaveProfile = profileViewModel::saveProfile,
-                    onCancelProfile = profileViewModel::cancelProfileEdit,
-                    onShowSettingsScreen = profileViewModel::showSettings,
                     notificationSettings = notificationSettings,
                     notificationPermissionGranted = notificationPermissionGranted,
                     onNotificationSettingsChanged = ::updateNotificationSettings,
                     onRequestNotificationPermission = ::requestNotificationPermission,
-                    onShowDiscoverySettings = profileViewModel::showDiscoverySettings,
-                    onDiscoveryPhoneChanged = profileViewModel::updateDiscoveryPhone,
-                    onDiscoveryEnabledChanged = profileViewModel::updateDiscoveryEnabled,
-                    onSaveDiscoverySettings = profileViewModel::saveDiscoverySettings,
-                    onCancelDiscoverySettings = profileViewModel::cancelDiscoveryEdit,
                     onShowEvents = eventViewModel::showEvents,
                     onBeginCreateEvent = eventViewModel::beginCreateEvent,
                     onBeginEditEvent = eventViewModel::beginEditEvent,
