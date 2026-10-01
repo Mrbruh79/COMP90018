@@ -67,6 +67,7 @@ import com.example.blap.ui.screens.messages.ConnectingScreen
 import com.example.blap.ui.screens.messages.EmptyChat
 import com.example.blap.ui.screens.chat.ChatScreen
 import com.example.blap.ui.screens.groups.CreateGroupScreen
+import com.example.blap.ui.screens.events.EventHub
 
 @Composable
 fun NearbyChatApp(
