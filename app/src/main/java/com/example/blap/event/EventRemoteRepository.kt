@@ -40,6 +40,12 @@ interface EventRemoteRepository {
     suspend fun registerAdminPublicKey(eventId: String, userId: String, encodedPublicKey: String)
     suspend fun saveAnnouncement(announcement: EventAnnouncement)
     suspend fun getAnnouncements(eventId: String, limit: Int = 100): List<EventAnnouncement>
+    fun observeAnnouncements(
+        eventId: String,
+        limit: Int = 100,
+        onAnnouncements: (List<EventAnnouncement>) -> Unit,
+        onError: (Throwable) -> Unit,
+    ): AutoCloseable? = null
     fun observeDiscussionRoots(
         eventId: String,
         limit: Int,
@@ -375,6 +381,31 @@ class FirebaseEventRemoteRepository(
             .orderBy("createdAt", Query.Direction.DESCENDING)
             .limit(limit.coerceIn(1, 500).toLong()).get().await().documents
             .mapNotNull { document -> document.data?.toAnnouncement(document.id, eventId) }.asReversed()
+
+    override fun observeAnnouncements(
+        eventId: String,
+        limit: Int,
+        onAnnouncements: (List<EventAnnouncement>) -> Unit,
+        onError: (Throwable) -> Unit,
+    ): AutoCloseable {
+        val registration = firestore.collection(EVENTS).document(eventId).collection(ANNOUNCEMENTS)
+            .orderBy("createdAt", Query.Direction.DESCENDING)
+            .limit(limit.coerceIn(1, 500).toLong())
+            .addSnapshotListener { snapshot, error ->
+                if (error != null) {
+                    onError(error)
+                } else {
+                    onAnnouncements(
+                        snapshot?.documents.orEmpty()
+                            .mapNotNull { document ->
+                                document.data?.toAnnouncement(document.id, eventId)
+                            }
+                            .asReversed(),
+                    )
+                }
+            }
+        return AutoCloseable(registration::remove)
+    }
 
     override fun observeDiscussionRoots(
         eventId: String,

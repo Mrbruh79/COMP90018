@@ -72,6 +72,7 @@ class EventCoordinator(
     }
 
     fun showList() {
+        lifecycleCoordinator.closeAnnouncementObserver()
         discussionCoordinator.closeObservers()
         _uiState.update {
             it.copy(
@@ -111,6 +112,11 @@ class EventCoordinator(
             EventPage.EDIT -> _uiState.update { it.copy(page = EventPage.DETAIL, error = null) }
 
             EventPage.ANNOUNCEMENTS,
+            -> {
+                lifecycleCoordinator.closeAnnouncementObserver()
+                _uiState.update { it.copy(page = EventPage.DETAIL, checkInQrPayload = null, error = null) }
+            }
+
             EventPage.ON_SITE_CHAT,
             -> _uiState.update { it.copy(page = EventPage.DETAIL, checkInQrPayload = null, error = null) }
 
@@ -174,7 +180,10 @@ class EventCoordinator(
 
     fun revokeInvitation(invitationId: String) = membershipCoordinator.revokeInvitation(invitationId)
 
-    fun leaveSelectedEvent() = membershipCoordinator.leaveSelectedEvent()
+    fun leaveSelectedEvent() {
+        lifecycleCoordinator.closeAnnouncementObserver()
+        membershipCoordinator.leaveSelectedEvent()
+    }
 
     fun promoteMemberToCoAdmin(userId: String) = membershipCoordinator.promoteToCoAdmin(userId)
 

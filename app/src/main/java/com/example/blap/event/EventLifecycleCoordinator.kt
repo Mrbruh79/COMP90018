@@ -25,6 +25,8 @@ internal class EventLifecycleCoordinator(
     private val tombstoneCleanupInFlight = mutableSetOf<String>()
     private var eventObserver: AutoCloseable? = null
     private var invitationObserver: AutoCloseable? = null
+    private var announcementObserver: AutoCloseable? = null
+    private var observedAnnouncementEventId: String? = null
 
     fun start() {
         scope.launch {
@@ -272,6 +274,7 @@ internal class EventLifecycleCoordinator(
             try {
                 runCatching { remoteRepository.deleteEvent(event.id) }
                     .onSuccess {
+                        closeAnnouncementObserver()
                         closeEventObservers()
                         meshGateway.sendEventMutation(mutation)
                         meshGateway.setActiveEvent(null)
@@ -300,6 +303,7 @@ internal class EventLifecycleCoordinator(
         val event = currentState().events.firstOrNull { it.id == eventId }
             ?: eventStore.getEvent(eventId)
             ?: return
+        closeAnnouncementObserver()
         closeEventObservers()
         updateState {
             it.copy(
@@ -336,7 +340,14 @@ internal class EventLifecycleCoordinator(
                 error = null,
             )
         }
+        startAnnouncementObserver(event.id)
         refreshAnnouncements(event.id)
+    }
+
+    fun closeAnnouncementObserver() {
+        announcementObserver?.close()
+        announcementObserver = null
+        observedAnnouncementEventId = null
     }
 
     fun publishAnnouncement(text: String) {
@@ -436,7 +447,10 @@ internal class EventLifecycleCoordinator(
                 if (state.activeEventId in locallyRemovedEventIds) meshGateway.setActiveEvent(null)
                 val selectedEventUnavailable = state.selectedEventId != null &&
                     reconciliation.visibleEvents.none { it.id == state.selectedEventId }
-                if (selectedEventUnavailable) closeEventObservers()
+                if (selectedEventUnavailable) {
+                    closeAnnouncementObserver()
+                    closeEventObservers()
+                }
                 updateState { current ->
                     if (selectedEventUnavailable) {
                         EventUiState(
@@ -466,6 +480,7 @@ internal class EventLifecycleCoordinator(
                 updateState { state ->
                     val cachedEvents = cachedEventPackages(state.currentUserId)
                     if (state.selectedEventId != null && cachedEvents.none { it.id == state.selectedEventId }) {
+                        closeAnnouncementObserver()
                         closeEventObservers()
                         EventUiState(
                             events = cachedEvents,
@@ -497,8 +512,38 @@ internal class EventLifecycleCoordinator(
     private fun closeRemoteObservers() {
         eventObserver?.close()
         invitationObserver?.close()
+        closeAnnouncementObserver()
         eventObserver = null
         invitationObserver = null
+    }
+
+    private fun startAnnouncementObserver(eventId: String) {
+        if (observedAnnouncementEventId == eventId && announcementObserver != null) return
+        closeAnnouncementObserver()
+        observedAnnouncementEventId = eventId
+        announcementObserver = remoteRepository.observeAnnouncements(
+            eventId = eventId,
+            onAnnouncements = { announcements ->
+                announcements.forEach(eventStore::saveAnnouncement)
+                updateState { state ->
+                    if (state.selectedEventId == eventId && state.page == EventPage.ANNOUNCEMENTS) {
+                        state.copy(announcements = eventStore.getAnnouncements(eventId))
+                    } else state
+                }
+            },
+            onError = { failure ->
+                updateState { state ->
+                    if (state.selectedEventId == eventId && state.page == EventPage.ANNOUNCEMENTS) {
+                        state.copy(
+                            notice = failure.readableEventMessage(
+                                "Announcements will update when the connection returns",
+                            ),
+                        )
+                    } else state
+                }
+            },
+        )
+        if (announcementObserver == null) observedAnnouncementEventId = null
     }
 
     private fun cachedEventPackages(userId: String): List<CommunityEvent> = eventStore.getEvents().filter { event ->
