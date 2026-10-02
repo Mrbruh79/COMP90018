@@ -1,5 +1,7 @@
 # Stage 7: Chat, contacts, groups, profiles and auth
 
+Stage 9 later centralized Activity wiring, retained launcher requests and account recreation. See [Final application integration](application-integration.md).
+
 The remaining event forwarding was removed from `ChatViewModel` before splitting the other features. Pranjal's event coordinators and location refactor remain in use. `EventViewModel` now owns event actions, state and incoming mesh callbacks.
 
 ## Feature ownership

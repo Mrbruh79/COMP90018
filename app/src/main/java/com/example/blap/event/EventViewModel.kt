@@ -48,6 +48,11 @@ class EventViewModel(private val session: MessagingSession) : ViewModel(), Event
 
     fun beginEditEvent() = eventCoordinator?.beginEdit() ?: Unit
 
+    fun createEvent(request: EventCreateRequest) = createEvent(
+        request.title, request.description, request.venueName, request.latitude, request.longitude,
+        request.radiusMetres, request.startsAt, request.endsAt, request.visibility, request.requiresSignIn,
+    )
+
     fun createEvent(
         title: String,
         description: String,

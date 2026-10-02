@@ -2,12 +2,23 @@ package com.example.blap.chat
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelStore
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.ViewModelStoreOwner
+import com.example.blap.application.ApplicationViewModels
+import com.example.blap.application.ApplicationServices
+import com.example.blap.application.DeviceContactsSource
+import com.example.blap.application.OnboardingStore
+import com.example.blap.di.AppContainer
+import com.example.blap.location.LocationProvider
+import com.example.blap.location.PlaceSearchRepository
+import com.example.blap.venue.VenueRepository
 import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.AuthRepository
 import com.example.blap.auth.AccountProfileRepository
 import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.auth.AuthViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.flow.first
 import org.junit.Assert.assertEquals
@@ -21,6 +32,145 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ChatViewModelTest {
+    @Test
+    fun activityGraphReusesModelsWithoutCreatingAnotherAccountSession() {
+        val scopes = mutableListOf<String>()
+        val authentication = FakeAuthRepository(AuthAccount(uid = "alice"))
+        val container = integrationContainer(authentication, scopes)
+        val retained = ViewModelStore()
+        val firstOwner = object : ViewModelStoreOwner { override val viewModelStore = retained }
+        val secondOwner = object : ViewModelStoreOwner { override val viewModelStore = retained }
+        val first = ApplicationViewModels.obtain(firstOwner, container)
+        first.application.requestEventQr()
+        val second = ApplicationViewModels.obtain(secondOwner, container)
+        assertSame(first.application, second.application)
+        assertSame(first.chat, second.chat)
+        assertSame(first.auth, second.auth)
+        assertSame(first.events, second.events)
+        assertEquals(first.application.uiState.value.pendingRequest, second.application.uiState.value.pendingRequest)
+        assertEquals(listOf("alice"), scopes)
+        retained.clear()
+    }
+
+    @Test
+    fun accountRestartCreatesANewGraphWithTheNewAccountsPreferences() {
+        val scopes = mutableListOf<String>()
+        val authentication = FakeAuthRepository(AuthAccount(uid = "alice"))
+        val container = integrationContainer(authentication, scopes)
+        val owner = object : ViewModelStoreOwner { override val viewModelStore = ViewModelStore() }
+        val alice = ApplicationViewModels.obtain(owner, container)
+        alice.application.updateNotificationSettings(ChatNotificationSettings(enabled = false))
+        alice.auth.signOut()
+        assertTrue(alice.application.uiState.value.switchingAccount)
+        owner.viewModelStore.clear()
+        authentication.account = AuthAccount(uid = "bob")
+        val bob = ApplicationViewModels.obtain(owner, container)
+        assertNotSame(alice.application, bob.application)
+        assertEquals("bob", bob.chat.uiState.value.onlineAccountId)
+        assertTrue(bob.application.uiState.value.notifications.enabled)
+        assertEquals(listOf("alice", "bob"), scopes)
+        owner.viewModelStore.clear()
+    }
+
+    private fun integrationContainer(auth: AuthRepository, scopes: MutableList<String>): AppContainer = object : AppContainer {
+        override val authentication = auth
+        override val locationProvider = object : LocationProvider {
+            override suspend fun getFreshLocation() = null
+        }
+        override val placeSearch = object : PlaceSearchRepository {
+            override suspend fun search(query: String) = emptyList<com.example.blap.location.PlaceSearchResult>()
+        }
+        override val venues = object : VenueRepository {
+            override suspend fun findNearbyVenue() = null
+        }
+        override val privateProfiles = RecordingPrivateProfileStore()
+        private val preferences = mutableMapOf<String, NotificationSettingsRepository>()
+        override fun identityFor(accountId: String): IdentityStore = FakeIdentityStore()
+        override fun notificationSettingsFor(accountId: String) = preferences.getOrPut(accountId) {
+            object : NotificationSettingsRepository {
+                var value = ChatNotificationSettings()
+                override fun load() = value
+                override fun save(value: ChatNotificationSettings) { this.value = value }
+            }
+        }
+        override fun chatViewModelFactory(accountId: String): ViewModelProvider.Factory = error("Use session owner")
+        override fun messagingSessionFactory(accountId: String): ViewModelProvider.Factory = MessagingSessionFactory {
+            scopes.add(accountId)
+            ChatDependencies(FakeNearbyChatController(), FakeChatStore(), identityFor(accountId), accountId = accountId,
+                authRepository = auth, accountProfileRepository = FakeAccountProfiles(), ioDispatcher = Dispatchers.Unconfined)
+        }
+        override fun applicationServicesFor(accountId: String) = ApplicationServices(
+            notificationSettingsFor(accountId), object : OnboardingStore {
+                override fun hasSeenOnboarding() = true
+                override fun markSeen() = Unit
+            }, DeviceContactsSource { emptyList() }, locationProvider, placeSearch, venues,
+        )
+    }
+
+    @Test
+    fun delayedProfileLoadCannotRestoreTheSignedOutAccount() = runBlocking {
+        val pending = CompletableDeferred<PublicAccountProfile?>()
+        val authentication = FakeAuthRepository(AuthAccount(uid = "alice"))
+        val profiles = object : AccountProfileRepository {
+            override fun validate(username: String, displayName: String): String? = null
+            override suspend fun load() = pending.await()
+            override suspend fun claim(username: String, displayName: String) = PublicAccountProfile(username, displayName)
+        }
+        val identity = FakeIdentityStore()
+        val session = MessagingSession(ChatDependencies(FakeNearbyChatController(), FakeChatStore(), identity,
+            accountId = "alice", authRepository = authentication, accountProfileRepository = profiles,
+            ioDispatcher = Dispatchers.Unconfined)).also(testSessions::add)
+        val owner = ViewModelStore()
+        val auth = AuthViewModel(session).also { owner.put("auth", it) }
+        auth.initialize()
+        assertTrue(auth.uiState.value.profileLoading)
+        auth.signOut()
+        pending.complete(PublicAccountProfile("alice", "Alice"))
+        assertNull(auth.uiState.value.profile)
+        assertEquals("", auth.uiState.value.account.uid)
+        assertEquals("", session.uiState.value.displayName)
+        assertTrue(auth.uiState.value.accountChange!!.clearCredentials)
+        owner.clear()
+    }
+
+    @Test
+    fun delayedSignInCallbackCannotReplaceTheSignOutRestart() {
+        var completeSignIn: (() -> Unit)? = null
+        val base = FakeAuthRepository(AuthAccount(uid = "alice"))
+        val authentication = object : AuthRepository by base {
+            override fun signInWithEmail(email: String, password: String, onSuccess: () -> Unit, onError: (String) -> Unit) {
+                completeSignIn = onSuccess
+            }
+        }
+        val session = MessagingSession(ChatDependencies(FakeNearbyChatController(), FakeChatStore(), FakeIdentityStore(),
+            accountId = "alice", authRepository = authentication, accountProfileRepository = FakeAccountProfiles(),
+            ioDispatcher = Dispatchers.Unconfined)).also(testSessions::add)
+        val owner = ViewModelStore()
+        val auth = AuthViewModel(session).also { owner.put("auth", it) }
+        auth.signInWithEmail("alice@example.com", "password")
+        auth.signOut()
+        completeSignIn!!.invoke()
+        assertTrue(auth.uiState.value.accountChange!!.clearCredentials)
+        owner.clear()
+    }
+
+    @Test
+    fun externallyChangedAccountClosesTheOldScopeBeforeRequestingRecreation() {
+        val authentication = FakeAuthRepository(AuthAccount(uid = "alice", emailVerified = true))
+        val store = FakeChatStore()
+        val session = MessagingSession(ChatDependencies(FakeNearbyChatController(), store, FakeIdentityStore(),
+            accountId = "alice", authRepository = authentication, accountProfileRepository = FakeAccountProfiles(),
+            ioDispatcher = Dispatchers.Unconfined)).also(testSessions::add)
+        val owner = ViewModelStore()
+        val auth = AuthViewModel(session).also { owner.put("auth", it) }
+        authentication.account = AuthAccount(uid = "bob")
+        auth.refreshAccount()
+        assertTrue(store.closed)
+        assertNotNull(auth.uiState.value.accountChange)
+        assertEquals("alice", session.uiState.value.onlineAccountId)
+        owner.clear()
+    }
+
     @Test
     fun splitFeatureModelsShareOneSessionAndDoNotCloseSiblingResources() {
         val nearby = FakeNearbyChatController()

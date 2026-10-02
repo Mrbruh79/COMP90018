@@ -7,6 +7,11 @@ import com.example.blap.chat.ChatDependencies
 import com.example.blap.chat.ChatNotificationSettingsStore
 import com.example.blap.chat.ChatViewModelFactory
 import com.example.blap.chat.MessagingSessionFactory
+import com.example.blap.chat.MessagingSession
+import com.example.blap.chat.MessagingViewModelFactory
+import com.example.blap.application.ApplicationServices
+import com.example.blap.platform.AndroidDeviceContactsSource
+import com.example.blap.ui.screens.onboarding.OnboardingPreferences
 import com.example.blap.auth.AuthRepository
 import com.example.blap.auth.FirebaseAuthRepository
 import com.example.blap.auth.FirebaseAccountProfileRepository
@@ -40,6 +45,8 @@ interface AppContainer {
     fun notificationSettingsFor(accountId: String): NotificationSettingsRepository
     fun chatViewModelFactory(accountId: String): ViewModelProvider.Factory
     fun messagingSessionFactory(accountId: String): ViewModelProvider.Factory
+    fun featureViewModelFactory(session: MessagingSession): ViewModelProvider.Factory = MessagingViewModelFactory(session)
+    fun applicationServicesFor(accountId: String): ApplicationServices
 }
 
 /** Composition root. Only application context is retained; account resources are not cached. */
@@ -65,6 +72,15 @@ class DefaultAppContainer(context: Context) : AppContainer {
 
     override fun messagingSessionFactory(accountId: String): ViewModelProvider.Factory =
         MessagingSessionFactory { createDependencies(accountId) }
+
+    override fun applicationServicesFor(accountId: String) = ApplicationServices(
+        notifications = notificationSettingsFor(accountId),
+        onboarding = OnboardingPreferences(appContext),
+        deviceContacts = AndroidDeviceContactsSource(appContext),
+        location = locationProvider,
+        places = placeSearch,
+        venues = venues,
+    )
 
     private fun createDependencies(accountId: String): ChatDependencies {
         val scope = LocalDataScope.forAccount(appContext, accountId)

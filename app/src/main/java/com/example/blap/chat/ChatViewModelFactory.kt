@@ -10,7 +10,7 @@ import com.example.blap.auth.AuthViewModel
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 
-/** A fresh set of closeable resources for each ViewModel, never an application singleton. */
+/** A fresh set of closeable resources for each account session, shared by its feature ViewModels. */
 data class ChatDependencies(
     val nearbyTransport: NearbyTransport,
     val chatStore: ChatStore,

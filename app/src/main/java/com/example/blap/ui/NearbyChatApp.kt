@@ -106,7 +106,7 @@ fun NearbyChatApp(
 ) {
     BackHandler(
         enabled = chatUiState.screen != ChatScreen.WELCOME && chatUiState.screen != ChatScreen.CHATS,
-        onBack = { if (chatUiState.screen == ChatScreen.EVENTS) eventActions.onBack() else onSystemBack() },
+        onBack = onSystemBack,
     )
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(chatUiState.error, chatUiState.notice, eventUiState.error, eventUiState.notice) {

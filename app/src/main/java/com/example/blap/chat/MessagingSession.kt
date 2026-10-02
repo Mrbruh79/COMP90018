@@ -30,6 +30,7 @@ class MessagingSession(val dependencies: ChatDependencies) : AutoCloseable {
     var groupReturnScreen = ChatScreen.CHATS
     private val closed = AtomicBoolean(false)
     internal var closeEvents: (() -> Unit)? = null
+    internal var closeApplication: (() -> Unit)? = null
     val state = MutableStateFlow(
         ChatUiState(
             myPeerId = localPeerId,
@@ -116,6 +117,7 @@ class MessagingSession(val dependencies: ChatDependencies) : AutoCloseable {
 
     override fun close() {
         if (!closed.compareAndSet(false, true)) return
+        closeApplication?.invoke()
         workScope.cancel()
         cloudController?.stop()
         closeEvents?.invoke() ?: dependencies.events?.store?.close()
