@@ -33,7 +33,13 @@ internal class EventOnSiteCoordinator(
             is EventEntryDecision.Allowed -> activate(event, requireNotNull(membership), decision.method)
             is EventEntryDecision.NeedsQr -> updateState {
                 if (event.visibility == EventVisibility.PRIVATE) {
-                    it.copy(notice = "GPS is not accurate enough. Ask an on-site event admin for access.")
+                    it.copy(
+                        notice = if (membership?.isAdmin == true) {
+                            "GPS is not accurate enough. Retry when location accuracy improves."
+                        } else {
+                            "GPS is not accurate enough. Ask an on-site event admin for access."
+                        },
+                    )
                 } else it.copy(notice = decision.reason)
             }
             is EventEntryDecision.Denied -> updateState { it.copy(error = decision.reason) }
@@ -159,10 +165,13 @@ internal class EventOnSiteCoordinator(
         val state = currentState()
         val event = state.selectedEvent ?: return
         val membership = state.membership ?: return
-        if (event.visibility != EventVisibility.PRIVATE || !event.isActive(clock()) || !membership.canParticipate) {
-            updateState {
-                it.copy(error = "Manual access is only available to accepted members during a private event.")
-            }
+        EventOnSitePolicy.manualAccessRequestError(
+            event = event,
+            membership = membership,
+            activeEventId = state.activeEventId,
+            now = clock(),
+        )?.let { error ->
+            updateState { it.copy(error = error) }
             return
         }
         val request = EventAccessRequest(
@@ -323,6 +332,7 @@ internal class EventOnSiteCoordinator(
         membership: EventMembership,
         method: EventAccessMethod,
     ) {
+        pendingAccessRequest = null
         val checkedIn = membership.copy(accessMethod = method, checkedInAt = clock())
         eventStore.saveMembership(checkedIn)
         meshGateway.setActiveEvent(
@@ -336,6 +346,7 @@ internal class EventOnSiteCoordinator(
                 page = EventPage.ON_SITE_CHAT,
                 membership = checkedIn,
                 activeEventId = event.id,
+                waitingForAdminAccess = false,
                 chatMessages = eventStore.getChatMessages(event.id),
                 error = null,
             )
@@ -348,6 +359,19 @@ internal class EventOnSiteCoordinator(
 internal object EventOnSitePolicy {
     const val ACCESS_GRANT_LIFETIME_MILLIS = 10 * 60 * 1_000L
     private const val ACCESS_REQUEST_MAX_AGE_MILLIS = 10 * 60 * 1_000L
+
+    fun manualAccessRequestError(
+        event: CommunityEvent,
+        membership: EventMembership,
+        activeEventId: String?,
+        now: Long,
+    ): String? = when {
+        event.visibility != EventVisibility.PRIVATE || !event.isActive(now) || !membership.canParticipate ->
+            "Manual access is only available to accepted members during a private event."
+        membership.isAdmin -> "Event admins do not need approval. Use Enter on-site chat."
+        activeEventId == event.id -> "You already have on-site access."
+        else -> null
+    }
 
     fun canSynchronizePeer(
         event: CommunityEvent,

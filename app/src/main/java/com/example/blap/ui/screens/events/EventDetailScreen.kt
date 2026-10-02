@@ -212,7 +212,7 @@ internal fun EventDetailScreen(
                     if (membership.isAdmin) {
                         item { OutlinedButton(onClick = onShowCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Display venue check-in QR") } }
                     }
-                } else {
+                } else if (!membership.isAdmin && state.activeEventId != event.id) {
                     item {
                         OutlinedButton(
                             onClick = onRequestAdminAccess,

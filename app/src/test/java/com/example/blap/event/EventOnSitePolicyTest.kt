@@ -43,6 +43,31 @@ class EventOnSitePolicyTest {
     )
 
     @Test
+    fun manualApprovalIsOnlyAvailableToNonAdminPrivateEventMembers() {
+        assertNull(EventOnSitePolicy.manualAccessRequestError(privateEvent, attendeeMembership, null, now))
+        assertTrue(
+            EventOnSitePolicy.manualAccessRequestError(privateEvent, adminMembership, null, now)
+                .orEmpty().contains("admins do not need approval"),
+        )
+        assertTrue(
+            EventOnSitePolicy.manualAccessRequestError(
+                privateEvent,
+                attendeeMembership.copy(leftAt = now),
+                null,
+                now,
+            ).orEmpty().contains("accepted members"),
+        )
+        assertTrue(
+            EventOnSitePolicy.manualAccessRequestError(
+                privateEvent,
+                attendeeMembership,
+                privateEvent.id,
+                now,
+            ).orEmpty().contains("already have on-site access"),
+        )
+    }
+
+    @Test
     fun privatePeerMustBeAnApprovedMemberBeforeHistorySync() {
         assertTrue(EventOnSitePolicy.canSynchronizePeer(privateEvent, privateEvent.id, "member-1", true))
         assertFalse(EventOnSitePolicy.canSynchronizePeer(privateEvent, privateEvent.id, "outsider", true))
