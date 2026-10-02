@@ -25,7 +25,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 enum class AppOperation {
-    NEARBY, EVENT_GPS, EVENT_QR, EVENT_ADMIN, VENUE, CONTACTS, CONTACT_QR,
+    NEARBY, EVENT_GPS, EVENT_QR, VENUE, CONTACTS, CONTACT_QR,
     GOOGLE, MICROPHONE, NOTIFICATIONS, SETTINGS,
 }
 
@@ -102,7 +102,6 @@ class ApplicationViewModel(
     fun requestNearby() = begin(AppOperation.NEARBY, PlatformAction.NEARBY_PERMISSION)
     fun requestEventGps() = begin(AppOperation.EVENT_GPS, PlatformAction.NEARBY_PERMISSION)
     fun requestEventQr() = begin(AppOperation.EVENT_QR, PlatformAction.NEARBY_PERMISSION)
-    fun requestEventAdmin() = begin(AppOperation.EVENT_ADMIN, PlatformAction.NEARBY_PERMISSION)
     fun requestContacts() = begin(AppOperation.CONTACTS, PlatformAction.CONTACTS_PERMISSION)
     fun requestContactQr() = begin(AppOperation.CONTACT_QR, PlatformAction.CONTACT_QR)
     fun requestGoogle() = begin(AppOperation.GOOGLE, PlatformAction.GOOGLE_SIGN_IN)
@@ -156,7 +155,6 @@ class ApplicationViewModel(
                 when (request.operation) {
                     AppOperation.EVENT_GPS -> enqueue(request.operation, PlatformAction.LOCATION_PERMISSION, request.eventId)
                     AppOperation.EVENT_QR -> enqueue(request.operation, PlatformAction.EVENT_QR, request.eventId)
-                    AppOperation.EVENT_ADMIN -> commands.requestAdminAccess()
                     else -> Unit
                 }
             }
@@ -164,7 +162,7 @@ class ApplicationViewModel(
                 if (request.operation == AppOperation.VENUE) findVenue() else checkEventLocation(request.eventId)
             } else if (request.operation == AppOperation.VENUE) {
                 commands.venueStatus("Allow location access to find nearby places.", false)
-            } else commands.showError("Allow location access, or use admin approval for a private event / the venue QR for a public event.")
+            } else commands.showError("Allow location access, or use the venue QR.")
             PlatformAction.CONTACTS_PERMISSION -> if (missing.isEmpty()) importContacts()
                 else commands.showError("Contacts permission is needed to import device contacts.")
             PlatformAction.MICROPHONE_PERMISSION -> {
@@ -243,10 +241,10 @@ class ApplicationViewModel(
             val fix = services.location.getFreshLocation()
             currentCoroutineContext().ensureActive()
             if (eventId != commands.selectedEventId()) return@runWork
-            if (fix == null) commands.showError("A current location was not available. Use admin approval for a private event or the venue QR for a public event.")
+            if (fix == null) commands.showError("A current location was not available. Use the venue QR.")
             else commands.enterEventWithGps(fix)
         } catch (error: CancellationException) { throw error }
-        catch (_: Exception) { commands.showError("Location could not be checked. Use admin approval for a private event or the venue QR for a public event.") }
+        catch (_: Exception) { commands.showError("Location could not be checked. Use the venue QR.") }
     }
 
     private fun runWork(block: suspend () -> Unit) {
@@ -297,6 +295,6 @@ class ApplicationViewModel(
     override fun onCleared() = freezeForAccountChange()
 
     private companion object {
-        val EVENT_OPERATIONS = setOf(AppOperation.EVENT_GPS, AppOperation.EVENT_QR, AppOperation.EVENT_ADMIN)
+        val EVENT_OPERATIONS = setOf(AppOperation.EVENT_GPS, AppOperation.EVENT_QR)
     }
 }

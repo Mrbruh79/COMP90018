@@ -54,8 +54,6 @@ internal fun EventDetailScreen(
     onShowAnnouncements: () -> Unit,
     onShowDiscussion: () -> Unit,
     onRequestGpsEntry: () -> Unit,
-    onRequestAdminAccess: () -> Unit,
-    onApproveAdminAccess: (String) -> Unit,
     onScanCheckInQr: () -> Unit,
     onShowCheckInQr: () -> Unit,
     onShowSavedChat: () -> Unit,
@@ -219,21 +217,9 @@ internal fun EventDetailScreen(
             }
             if (event.isActive(now)) {
                 item { Button(onClick = onRequestGpsEntry, modifier = Modifier.fillMaxWidth()) { Text("Enter on-site chat") } }
-                if (event.visibility == EventVisibility.PUBLIC) {
-                    item { OutlinedButton(onClick = onScanCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Check in with venue QR") } }
-                    if (membership.isAdmin) {
-                        item { OutlinedButton(onClick = onShowCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Display venue check-in QR") } }
-                    }
-                } else if (!membership.isAdmin && state.activeEventId != event.id) {
-                    item {
-                        OutlinedButton(
-                            onClick = onRequestAdminAccess,
-                            enabled = !state.waitingForAdminAccess,
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Text(if (state.waitingForAdminAccess) "Waiting for an admin…" else "Request admin access")
-                        }
-                    }
+                item { OutlinedButton(onClick = onScanCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Check in with venue QR") } }
+                if (membership.isAdmin) {
+                    item { OutlinedButton(onClick = onShowCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Display venue check-in QR") } }
                 }
             } else {
                 item { OutlinedButton(onClick = onShowSavedChat, modifier = Modifier.fillMaxWidth()) { Text("View saved on-site chat") } }
@@ -379,22 +365,6 @@ internal fun EventDetailScreen(
                         }
                         if (invitation.status == EventInvitationStatus.PENDING) {
                             TextButton(onClick = { onRevokeInvitation(invitation.id) }) { Text("Revoke") }
-                        }
-                    }
-                }
-                if (state.accessRequests.isNotEmpty()) {
-                    item { Text("Nearby access requests", style = MaterialTheme.typography.titleMedium) }
-                    items(state.accessRequests, key = { "access-${it.id}" }) { request ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(request.displayName)
-                                Text("Accepted member waiting nearby", style = MaterialTheme.typography.bodySmall)
-                            }
-                            Button(onClick = { onApproveAdminAccess(request.id) }) { Text("Allow") }
                         }
                     }
                 }

@@ -116,31 +116,4 @@ class NearbyProtocolTest {
         assertEquals(packet, NearbyProtocol.decode(NearbyProtocol.encode(packet)))
     }
 
-    @Test
-    fun eventAccessRequestAndSignedGrantRoundTrip() {
-        val request = NearbyPacket.EventAccessRequest(
-            requestId = "request-1",
-            eventId = "event-1",
-            userId = "alice-uid",
-            peerId = "alice-peer",
-            displayName = "Alice",
-            requestedAt = 1_000L,
-            hopsRemaining = 8,
-        )
-        val grant = NearbyPacket.EventAccessGrant(
-            grantId = "grant-1",
-            requestId = request.requestId,
-            eventId = request.eventId,
-            userId = request.userId,
-            peerId = request.peerId,
-            adminId = "admin-uid",
-            issuedAt = 1_100L,
-            expiresAt = 6_100L,
-            signature = "signature",
-            hopsRemaining = 8,
-        )
-
-        assertEquals(request, NearbyProtocol.decode(NearbyProtocol.encode(request)))
-        assertEquals(grant, NearbyProtocol.decode(NearbyProtocol.encode(grant)))
-    }
 }

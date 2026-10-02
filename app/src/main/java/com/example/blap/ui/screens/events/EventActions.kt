@@ -27,8 +27,6 @@ data class EventActions(
     val onToggleDiscussionLike: (String) -> Unit,
     val onDeleteDiscussionComment: (String) -> Unit,
     val onRequestGpsEntry: () -> Unit,
-    val onRequestAdminAccess: () -> Unit,
-    val onApproveAdminAccess: (String) -> Unit,
     val onScanCheckInQr: () -> Unit,
     val onShowCheckInQr: () -> Unit,
     val onHideCheckInQr: () -> Unit,

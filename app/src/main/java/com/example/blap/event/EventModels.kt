@@ -16,7 +16,6 @@ enum class EventRole {
 enum class EventAccessMethod {
     GPS,
     VENUE_QR,
-    ADMIN_APPROVAL,
 }
 
 enum class EventVisibility {
@@ -66,9 +65,6 @@ data class CommunityEvent(
         require(adminIds.all(memberIds::contains)) { "Every event admin must remain a member." }
         require(visibility != EventVisibility.PRIVATE || privateMeshSecret.isNotBlank()) {
             "Private events require a mesh secret."
-        }
-        require(visibility != EventVisibility.PRIVATE || venueCheckInPayload.isBlank()) {
-            "Private events cannot use venue QR check-in."
         }
     }
 
@@ -122,27 +118,6 @@ data class EventInvitee(
 data class EventParticipantSearchResult(
     val membership: EventMembership,
     val username: String,
-)
-
-data class EventAccessRequest(
-    val id: String = UUID.randomUUID().toString(),
-    val eventId: String,
-    val userId: String,
-    val peerId: String,
-    val displayName: String,
-    val requestedAt: Long = System.currentTimeMillis(),
-)
-
-data class EventAccessGrant(
-    val id: String = UUID.randomUUID().toString(),
-    val requestId: String,
-    val eventId: String,
-    val userId: String,
-    val peerId: String,
-    val adminId: String,
-    val issuedAt: Long,
-    val expiresAt: Long,
-    val signature: String = "",
 )
 
 data class EventMutation(
@@ -306,6 +281,9 @@ object EventAccessPolicy {
         event.isDeleted -> EventEntryDecision.Denied("This event has been deleted by its admin.")
         membership == null || membership.eventId != event.id ->
             EventEntryDecision.Denied("Join this event before entering on-site chat.")
+
+        membership.userId !in event.memberIds ->
+            EventEntryDecision.Denied("You are no longer a member of this event.")
 
         membership.blockedAt != null ->
             EventEntryDecision.Denied("You have been removed from this event.")

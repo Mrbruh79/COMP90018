@@ -15,6 +15,7 @@ class EventAccessPolicyTest {
         startsAt = now - 1_000,
         endsAt = now + 1_000,
         createdBy = "admin-1",
+        memberIds = setOf("admin-1", "attendee-1"),
     )
     private val membership = EventMembership(
         eventId = event.id,
@@ -133,6 +134,32 @@ class EventAccessPolicyTest {
             EventAccessPolicy.evaluateQr(event, membership, credential, event.endsAt + 1) is
                 EventEntryDecision.Denied,
         )
+    }
+
+    @Test
+    fun acceptedPrivateMemberCanUseSignedVenueQr() {
+        val privateEvent = event.copy(
+            visibility = EventVisibility.PRIVATE,
+            privateMeshSecret = "private-mesh-secret",
+            venueCheckInPayload = "signed-private-qr",
+        )
+        val credential = EventCheckInCredential(privateEvent.id, "admin-1", "static-nonce")
+
+        assertTrue(
+            EventAccessPolicy.evaluateQr(privateEvent, membership, credential, now) is
+                EventEntryDecision.Allowed,
+        )
+    }
+
+    @Test
+    fun removedMemberCannotUseAStoredQr() {
+        val eventAfterRemoval = event.copy(memberIds = setOf("admin-1"))
+        val credential = EventCheckInCredential(event.id, "admin-1", "static-nonce")
+
+        val result = EventAccessPolicy.evaluateQr(eventAfterRemoval, membership, credential, now)
+
+        assertTrue(result is EventEntryDecision.Denied)
+        assertTrue((result as EventEntryDecision.Denied).reason.contains("no longer a member"))
     }
 
     @Test

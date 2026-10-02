@@ -17,7 +17,6 @@ internal class EventLifecycleCoordinator(
     private val currentState: () -> EventUiState,
     private val updateState: (((EventUiState) -> EventUiState) -> Unit),
     private val closeEventObservers: () -> Unit,
-    private val clearPendingOnSiteAccess: (String?) -> Unit,
     private val clock: () -> Long,
 ) {
     private var cachedUserId: String? = null
@@ -274,7 +273,6 @@ internal class EventLifecycleCoordinator(
                 runCatching { remoteRepository.deleteEvent(event.id) }
                     .onSuccess {
                         closeEventObservers()
-                        clearPendingOnSiteAccess(event.id)
                         meshGateway.sendEventMutation(mutation)
                         meshGateway.setActiveEvent(null)
                         eventStore.purgeEvent(event.id)
@@ -436,7 +434,6 @@ internal class EventLifecycleCoordinator(
                 reconciliation.cacheableEvents.forEach(eventStore::saveEvent)
                 val state = currentState()
                 if (state.activeEventId in locallyRemovedEventIds) meshGateway.setActiveEvent(null)
-                locallyRemovedEventIds.forEach(clearPendingOnSiteAccess)
                 val selectedEventUnavailable = state.selectedEventId != null &&
                     reconciliation.visibleEvents.none { it.id == state.selectedEventId }
                 if (selectedEventUnavailable) closeEventObservers()
@@ -568,7 +565,6 @@ internal class EventLifecycleCoordinator(
                     if (localUserId != null && cachedMembership != null && localMembership?.canParticipate != true) {
                         val event = eventStore.getEvent(eventId)
                         if (currentState().activeEventId == eventId) meshGateway.setActiveEvent(null)
-                        clearPendingOnSiteAccess(eventId)
                         closeEventObservers()
                         eventStore.purgeEvent(eventId)
                         val visibleAfterDeparture = event?.let {
@@ -682,9 +678,7 @@ internal object EventLifecyclePolicy {
         privateMeshSecret: String,
     ): EventCreation {
         val publicEvent = request.visibility == EventVisibility.PUBLIC
-        val venueCheckInPayload = if (publicEvent) {
-            EventCheckInCodec.create(eventId, userId, keys.private)
-        } else ""
+        val venueCheckInPayload = EventCheckInCodec.create(eventId, userId, keys.private)
         val event = CommunityEvent(
             id = eventId,
             title = request.title.trim().take(80),

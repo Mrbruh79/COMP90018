@@ -89,8 +89,6 @@ fun EventHub(
             actions.onShowAnnouncements,
             actions.onShowDiscussion,
             actions.onRequestGpsEntry,
-            actions.onRequestAdminAccess,
-            actions.onApproveAdminAccess,
             actions.onScanCheckInQr,
             actions.onShowCheckInQr,
             actions.onShowSavedChat,

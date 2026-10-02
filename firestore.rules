@@ -513,7 +513,6 @@ service cloud.firestore {
         && (data.visibility == 'PUBLIC' && data.privateMeshSecret == ''
           || data.visibility == 'PRIVATE' && data.privateMeshSecret.size() >= 32)
         && data.venueCheckInPayload is string && data.venueCheckInPayload.size() <= 2000
-        && (data.visibility == 'PUBLIC' || data.venueCheckInPayload == '')
         && data.createdBy in data.adminIds
         && data.createdBy in data.memberIds
         && data.memberIds.hasAll(data.adminIds)
@@ -551,8 +550,7 @@ service cloud.firestore {
         && validEvent(request.resource.data)
         && request.resource.data.createdBy == request.auth.uid
         && request.auth.uid in request.resource.data.adminIds
-        && (request.resource.data.visibility == 'PRIVATE'
-          || request.resource.data.venueCheckInPayload.size() > 0)
+        && request.resource.data.venueCheckInPayload.size() > 0
         && request.resource.data.memberIds == [request.auth.uid];
       allow update: if selfMembershipOnlyChange(eventId)
         || (isEventAdmin(eventId)
@@ -565,7 +563,6 @@ service cloud.firestore {
         && (
           request.resource.data.venueCheckInPayload == resource.data.get('venueCheckInPayload', '')
           || request.auth.uid == resource.data.createdBy
-            && resource.data.visibility == 'PUBLIC'
             && resource.data.get('venueCheckInPayload', '') == ''
             && request.resource.data.venueCheckInPayload.size() > 0
         )

@@ -108,33 +108,3 @@ object EventMutationSigner {
         ).joinToString("\u001F").toByteArray(StandardCharsets.UTF_8)
     }
 }
-
-object EventAccessGrantSigner {
-    fun sign(grant: EventAccessGrant, privateKey: PrivateKey): String {
-        val signature = Signature.getInstance("SHA256withECDSA").run {
-            initSign(privateKey)
-            update(canonicalBytes(grant))
-            sign()
-        }
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(signature)
-    }
-
-    fun verify(grant: EventAccessGrant, publicKey: PublicKey): Boolean = runCatching {
-        Signature.getInstance("SHA256withECDSA").run {
-            initVerify(publicKey)
-            update(canonicalBytes(grant))
-            verify(Base64.getUrlDecoder().decode(grant.signature))
-        }
-    }.getOrDefault(false)
-
-    private fun canonicalBytes(grant: EventAccessGrant): ByteArray = listOf(
-        grant.id,
-        grant.requestId,
-        grant.eventId,
-        grant.userId,
-        grant.peerId,
-        grant.adminId,
-        grant.issuedAt.toString(),
-        grant.expiresAt.toString(),
-    ).joinToString("\u001F").toByteArray(StandardCharsets.UTF_8)
-}

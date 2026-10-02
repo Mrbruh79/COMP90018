@@ -1,8 +1,6 @@
 package com.example.blap.chat
 
 import android.content.Context
-import com.example.blap.event.EventAccessGrant
-import com.example.blap.event.EventAccessRequest
 import com.example.blap.event.EventAnnouncement
 import com.example.blap.event.EventChatMessage
 import com.example.blap.event.EventMutation
@@ -188,20 +186,6 @@ class NearbyChatManager internal constructor(
         if (!eventSession.accessGranted || mutation.event.id != eventSession.eventId) return
         val packet = mutation.toPacket()
         meshRouter.noteOutgoingEventMutation(packet)
-        sendPacketToMany(eventSession.eventEndpoints(), packet)
-    }
-
-    override fun sendEventAccessRequest(request: EventAccessRequest) {
-        if (request.eventId != eventSession.eventId || request.userId != eventSession.userId) return
-        val packet = request.toPacket()
-        meshRouter.noteOutgoingEventAccessRequest(request.id)
-        sendPacketToMany(eventSession.eventEndpoints(), packet)
-    }
-
-    override fun sendEventAccessGrant(grant: EventAccessGrant) {
-        if (!eventSession.accessGranted || grant.eventId != eventSession.eventId) return
-        val packet = grant.toPacket()
-        meshRouter.noteOutgoingEventAccessGrant(grant.id)
         sendPacketToMany(eventSession.eventEndpoints(), packet)
     }
 
@@ -453,10 +437,6 @@ class NearbyChatManager internal constructor(
                     eventListener?.onEventAnnouncementReceived(delivery.announcement)
                 is MeshLocalDelivery.IncomingEventMutation ->
                     eventListener?.onEventMutationReceived(delivery.mutation)
-                is MeshLocalDelivery.IncomingEventAccessRequest ->
-                    eventListener?.onEventAccessRequestReceived(delivery.request)
-                is MeshLocalDelivery.IncomingEventAccessGrant ->
-                    eventListener?.onEventAccessGrantReceived(delivery.grant)
             }
         }
         val packet = decision.forwardPacket ?: return
@@ -524,29 +504,6 @@ class NearbyChatManager internal constructor(
         createdAt = event.createdAt,
         updatedAt = event.updatedAt,
         deletedAt = event.deletedAt,
-        signature = signature,
-        hopsRemaining = MeshRouter.MAX_HOPS,
-    )
-
-    private fun EventAccessRequest.toPacket() = NearbyPacket.EventAccessRequest(
-        requestId = id,
-        eventId = eventId,
-        userId = userId,
-        peerId = peerId,
-        displayName = displayName,
-        requestedAt = requestedAt,
-        hopsRemaining = MeshRouter.MAX_HOPS,
-    )
-
-    private fun EventAccessGrant.toPacket() = NearbyPacket.EventAccessGrant(
-        grantId = id,
-        requestId = requestId,
-        eventId = eventId,
-        userId = userId,
-        peerId = peerId,
-        adminId = adminId,
-        issuedAt = issuedAt,
-        expiresAt = expiresAt,
         signature = signature,
         hopsRemaining = MeshRouter.MAX_HOPS,
     )

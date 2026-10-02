@@ -21,7 +21,7 @@ data class EventCheckInCredential(
     val nonce: String,
 )
 
-/** Creates static, admin-signed venue check-in QR payloads for public events. */
+/** Creates static, admin-signed venue check-in QR payloads for public and private events. */
 object EventCheckInCodec {
     private const val PREFIX = "COMMONGROUND-CHECKIN:2:"
     private val encoder = Base64.getUrlEncoder().withoutPadding()

@@ -243,7 +243,7 @@ const eventFor = (id, creator, visibility, requiresSignIn = false) => {
     adminPublicKeys: { [creator]: 'public-key' }, visibility,
     requiresSignIn: visibility === 'PUBLIC' && requiresSignIn,
     privateMeshSecret: visibility === 'PRIVATE' ? 's'.repeat(43) : '',
-    venueCheckInPayload: visibility === 'PUBLIC' ? `signed-static-qr-${id}` : '',
+    venueCheckInPayload: `signed-static-qr-${id}`,
     createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null,
   };
 };
@@ -263,7 +263,7 @@ async function createEventAs(uid, eventId, visibility, requiresSignIn = false) {
   return event;
 }
 
-test('public event venue QR is created once and cannot be replaced', async () => {
+test('public and private event venue QRs are created once and cannot be replaced', async () => {
   await publishAccount('alice');
   const alice = client('alice');
   const event = await createEventAs('alice', 'static-qr-event', 'PUBLIC');
@@ -271,8 +271,13 @@ test('public event venue QR is created once and cannot be replaced', async () =>
   await assertFails(updateDoc(doc(alice, 'events/static-qr-event'), {
     venueCheckInPayload: 'replacement-qr', updatedAt: event.updatedAt + 1,
   }));
-  await assertFails(setDoc(doc(alice, 'events/private-with-qr'), {
-    ...eventFor('private-with-qr', 'alice', 'PRIVATE'), venueCheckInPayload: 'not-allowed',
+  const privateEvent = eventFor('private-with-qr', 'alice', 'PRIVATE');
+  await assertSucceeds(setDoc(doc(alice, 'events/private-with-qr'), privateEvent));
+  await assertFails(updateDoc(doc(alice, 'events/private-with-qr'), {
+    venueCheckInPayload: 'replacement-private-qr', updatedAt: privateEvent.updatedAt + 1,
+  }));
+  await assertFails(setDoc(doc(alice, 'events/private-without-qr'), {
+    ...eventFor('private-without-qr', 'alice', 'PRIVATE'), venueCheckInPayload: '',
   }));
   await assertFails(setDoc(doc(alice, 'events/public-without-qr'), {
     ...eventFor('public-without-qr', 'alice', 'PUBLIC'), venueCheckInPayload: '',

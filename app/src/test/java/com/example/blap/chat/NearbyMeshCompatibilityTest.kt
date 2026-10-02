@@ -1,7 +1,5 @@
 package com.example.blap.chat
 
-import com.example.blap.event.EventAccessGrant
-import com.example.blap.event.EventAccessRequest
 import com.example.blap.event.EventAnnouncement
 import com.example.blap.event.EventChatMessage
 import com.example.blap.event.EventMutation
@@ -206,7 +204,5 @@ class NearbyMeshCompatibilityTest {
         }
         override fun onEventAnnouncementReceived(announcement: EventAnnouncement) = Unit
         override fun onEventMutationReceived(mutation: EventMutation) = Unit
-        override fun onEventAccessRequestReceived(request: EventAccessRequest) = Unit
-        override fun onEventAccessGrantReceived(grant: EventAccessGrant) = Unit
     }
 }

@@ -39,7 +39,6 @@ data class ApplicationViewModels(
                 enterEventWithGps = { events.enterEventWithGps(it.latitude, it.longitude, it.accuracyMetres) },
                 enterEventWithQr = events::enterEventWithQr,
                 importContactQr = contacts::importScannedContactCard,
-                requestAdminAccess = events::requestEventAdminAccess,
                 ensureSignedIn = auth::ensureSignedIn,
                 refreshAccount = auth::refreshAccount,
                 signInWithGoogleToken = auth::signInWithGoogleToken,

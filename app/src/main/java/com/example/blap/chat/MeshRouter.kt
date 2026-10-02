@@ -1,8 +1,6 @@
 package com.example.blap.chat
 
 import com.example.blap.event.CommunityEvent
-import com.example.blap.event.EventAccessGrant
-import com.example.blap.event.EventAccessRequest
 import com.example.blap.event.EventAnnouncement
 import com.example.blap.event.EventChatMessage
 import com.example.blap.event.EventMutation
@@ -33,8 +31,6 @@ sealed interface MeshLocalDelivery {
     data class EventChat(val message: EventChatMessage) : MeshLocalDelivery
     data class IncomingEventAnnouncement(val announcement: EventAnnouncement) : MeshLocalDelivery
     data class IncomingEventMutation(val mutation: EventMutation) : MeshLocalDelivery
-    data class IncomingEventAccessRequest(val request: EventAccessRequest) : MeshLocalDelivery
-    data class IncomingEventAccessGrant(val grant: EventAccessGrant) : MeshLocalDelivery
 }
 
 data class MeshDecision(
@@ -58,8 +54,6 @@ class MeshRouter {
     private val seenEventMessageIds = boundedIdSet()
     private val seenEventAnnouncementIds = boundedIdSet()
     private val seenEventMutationIds = boundedIdSet()
-    private val seenEventAccessRequestIds = boundedIdSet()
-    private val seenEventAccessGrantIds = boundedIdSet()
     private val knownMeshPeers = mutableMapOf<String, GroupMember>()
     private val cachedGroupDefinitions = linkedMapOf<String, NearbyPacket.GroupDefinition>()
     private val cachedGroupMessages = linkedMapOf<String, NearbyPacket.Message>()
@@ -87,14 +81,6 @@ class MeshRouter {
 
     fun noteOutgoingEventMutation(packet: NearbyPacket.EventMutation) {
         rememberId(seenEventMutationIds, eventMutationKey(packet))
-    }
-
-    fun noteOutgoingEventAccessRequest(requestId: String) {
-        rememberId(seenEventAccessRequestIds, requestId)
-    }
-
-    fun noteOutgoingEventAccessGrant(grantId: String) {
-        rememberId(seenEventAccessGrantIds, grantId)
     }
 
     fun rememberGroupMessage(packet: NearbyPacket.Message) {
@@ -128,8 +114,6 @@ class MeshRouter {
         is NearbyPacket.EventChatMessage -> handleEventChatMessage(packet, context)
         is NearbyPacket.EventAnnouncement -> handleEventAnnouncement(packet, context)
         is NearbyPacket.EventMutation -> handleEventMutation(packet, context)
-        is NearbyPacket.EventAccessRequest -> handleEventAccessRequest(packet, context)
-        is NearbyPacket.EventAccessGrant -> handleEventAccessGrant(packet, context)
     }
 
     fun clear() {
@@ -139,8 +123,6 @@ class MeshRouter {
         seenEventMessageIds.clear()
         seenEventAnnouncementIds.clear()
         seenEventMutationIds.clear()
-        seenEventAccessRequestIds.clear()
-        seenEventAccessGrantIds.clear()
         knownMeshPeers.clear()
         cachedGroupDefinitions.clear()
         cachedGroupMessages.clear()
@@ -401,58 +383,6 @@ class MeshRouter {
         }.getOrNull() ?: return MeshDecision.Drop
         val delivery = MeshLocalDelivery.IncomingEventMutation(
             EventMutation(event, packet.adminId, packet.signature),
-        )
-        return forwardEvent(delivery, packet.hopsRemaining, context) {
-            packet.copy(hopsRemaining = packet.hopsRemaining - 1)
-        }
-    }
-
-    private fun handleEventAccessRequest(
-        packet: NearbyPacket.EventAccessRequest,
-        context: MeshContext,
-    ): MeshDecision {
-        if (!context.isEventEndpoint || context.fromPeer == null) return MeshDecision.Drop
-        if (packet.requestId.isBlank() || packet.eventId != context.activeEventId || packet.userId.isBlank() ||
-            packet.peerId.isBlank() || packet.hopsRemaining !in 0..MAX_HOPS
-        ) return MeshDecision.Drop
-        if (!rememberId(seenEventAccessRequestIds, packet.requestId)) return MeshDecision.Drop
-        val delivery = MeshLocalDelivery.IncomingEventAccessRequest(
-            EventAccessRequest(
-                id = packet.requestId,
-                eventId = packet.eventId,
-                userId = packet.userId,
-                peerId = packet.peerId,
-                displayName = packet.displayName.take(24),
-                requestedAt = packet.requestedAt,
-            ),
-        )
-        return forwardEvent(delivery, packet.hopsRemaining, context) {
-            packet.copy(hopsRemaining = packet.hopsRemaining - 1)
-        }
-    }
-
-    private fun handleEventAccessGrant(
-        packet: NearbyPacket.EventAccessGrant,
-        context: MeshContext,
-    ): MeshDecision {
-        if (!context.isEventEndpoint || context.fromPeer == null) return MeshDecision.Drop
-        if (packet.grantId.isBlank() || packet.requestId.isBlank() || packet.eventId != context.activeEventId ||
-            packet.userId.isBlank() || packet.adminId.isBlank() || packet.signature.isBlank() ||
-            packet.hopsRemaining !in 0..MAX_HOPS
-        ) return MeshDecision.Drop
-        if (!rememberId(seenEventAccessGrantIds, packet.grantId)) return MeshDecision.Drop
-        val delivery = MeshLocalDelivery.IncomingEventAccessGrant(
-            EventAccessGrant(
-                id = packet.grantId,
-                requestId = packet.requestId,
-                eventId = packet.eventId,
-                userId = packet.userId,
-                peerId = packet.peerId,
-                adminId = packet.adminId,
-                issuedAt = packet.issuedAt,
-                expiresAt = packet.expiresAt,
-                signature = packet.signature,
-            ),
         )
         return forwardEvent(delivery, packet.hopsRemaining, context) {
             packet.copy(hopsRemaining = packet.hopsRemaining - 1)

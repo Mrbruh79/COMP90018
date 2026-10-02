@@ -12,7 +12,6 @@ data class ApplicationCommands(
     val enterEventWithGps: (LocationFix) -> Unit,
     val enterEventWithQr: (String) -> Unit,
     val importContactQr: (String) -> Unit,
-    val requestAdminAccess: () -> Unit,
     val ensureSignedIn: ((Boolean) -> Unit) -> Unit,
     val refreshAccount: () -> Unit,
     val signInWithGoogleToken: (String) -> Unit,

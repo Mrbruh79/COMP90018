@@ -126,10 +126,6 @@ class EventViewModel(private val session: MessagingSession) : ViewModel(), Event
 
     fun enterEventWithQr(payload: String) = eventCoordinator?.enterWithQr(payload) ?: Unit
 
-    fun requestEventAdminAccess() = eventCoordinator?.requestAdminOnSiteAccess() ?: Unit
-
-    fun approveEventAdminAccess(requestId: String) = eventCoordinator?.approveOnSiteAccess(requestId) ?: Unit
-
     fun createEventCheckInQr(): String? = eventCoordinator?.createVenueCheckInQr()
 
     fun showEventCheckInQr() = eventCoordinator?.showVenueCheckInQr() ?: Unit
@@ -158,14 +154,6 @@ class EventViewModel(private val session: MessagingSession) : ViewModel(), Event
 
     override fun onEventMutationReceived(mutation: EventMutation) {
         eventCoordinator?.onEventMutationReceived(mutation)
-    }
-
-    override fun onEventAccessRequestReceived(request: EventAccessRequest) {
-        eventCoordinator?.onEventAccessRequestReceived(request)
-    }
-
-    override fun onEventAccessGrantReceived(grant: EventAccessGrant) {
-        eventCoordinator?.onEventAccessGrantReceived(grant)
     }
 
 

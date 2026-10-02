@@ -10,7 +10,7 @@ Stage 6 originally kept event forwarding in `ChatViewModel`. Stage 7 moves those
 | --- | --- |
 | `EventLifecycleCoordinator` | Account/event observers, refresh, creation, editing, deletion, event selection, local cleanup, member refresh and announcements |
 | `EventMembershipCoordinator` | Public joining, private invitations, invitation responses, participant lookup, leaving, removal and co-admin promotion |
-| `EventOnSiteCoordinator` | GPS/QR admission, private-event admin approval, on-site messages and event-mesh packet handling |
+| `EventOnSiteCoordinator` | GPS/QR admission, on-site messages and event-mesh packet handling |
 | `EventDiscussionCoordinator` | Discussion navigation, paging, observers, comments, replies, likes and deletion |
 
 `EventCoordinator` remains the stable facade used by `EventViewModel`. The Activity now wires event UI callbacks directly to that ViewModel.
@@ -27,7 +27,7 @@ Stage 6 originally kept event forwarding in `ChatViewModel`. Stage 7 moves those
 
 - Public events may be open to guests or protected so only signed-in accounts can join.
 - Private events remain invitation-only and use an event-specific mesh secret.
-- GPS, signed static QR and nearby admin approval keep their existing admission rules.
+- GPS and signed static QR are the only on-site admission methods; private events still require accepted invitations.
 - Incoming access grants, announcements and event mutations are signature-checked before local state changes.
 - Only the primary admin can delete an event; leaving as the primary admin still deletes it for everyone.
 - Admin deletion purges local event data and propagates a signed deletion mutation to connected peers.

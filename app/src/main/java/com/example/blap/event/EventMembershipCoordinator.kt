@@ -16,7 +16,6 @@ internal class EventMembershipCoordinator(
     private val updateState: (((EventUiState) -> EventUiState) -> Unit),
     private val deletePrimaryAdminEvent: () -> Unit,
     private val closeEventObservers: () -> Unit,
-    private val clearPendingOnSiteAccess: (String?) -> Unit,
     private val clock: () -> Long,
 ) {
     private var leaveRequestInFlight = false
@@ -242,7 +241,6 @@ internal class EventMembershipCoordinator(
                 runCatching { remoteRepository.leaveEvent(event, membership, leftAt) }
                     .onSuccess {
                         closeEventObservers()
-                        clearPendingOnSiteAccess(event.id)
                         meshGateway.setActiveEvent(null)
                         eventStore.purgeEvent(event.id)
                         updateState { state ->

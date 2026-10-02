@@ -43,31 +43,6 @@ class EventOnSitePolicyTest {
     )
 
     @Test
-    fun manualApprovalIsOnlyAvailableToNonAdminPrivateEventMembers() {
-        assertNull(EventOnSitePolicy.manualAccessRequestError(privateEvent, attendeeMembership, null, now))
-        assertTrue(
-            EventOnSitePolicy.manualAccessRequestError(privateEvent, adminMembership, null, now)
-                .orEmpty().contains("admins do not need approval"),
-        )
-        assertTrue(
-            EventOnSitePolicy.manualAccessRequestError(
-                privateEvent,
-                attendeeMembership.copy(leftAt = now),
-                null,
-                now,
-            ).orEmpty().contains("accepted members"),
-        )
-        assertTrue(
-            EventOnSitePolicy.manualAccessRequestError(
-                privateEvent,
-                attendeeMembership,
-                privateEvent.id,
-                now,
-            ).orEmpty().contains("already have on-site access"),
-        )
-    }
-
-    @Test
     fun privatePeerMustBeAnApprovedMemberBeforeHistorySync() {
         assertTrue(EventOnSitePolicy.canSynchronizePeer(privateEvent, privateEvent.id, "member-1", true))
         assertFalse(EventOnSitePolicy.canSynchronizePeer(privateEvent, privateEvent.id, "outsider", true))
@@ -75,99 +50,6 @@ class EventOnSitePolicyTest {
         assertFalse(EventOnSitePolicy.canSynchronizePeer(privateEvent, "other-event", "member-1", true))
     }
 
-    @Test
-    fun accessRequestMustBeCurrentAndTargetTheActivePrivateEvent() {
-        val request = EventAccessRequest(
-            id = "request-1",
-            eventId = privateEvent.id,
-            userId = "member-1",
-            peerId = "peer-1",
-            displayName = "Member",
-            requestedAt = now,
-        )
-
-        assertTrue(
-            EventOnSitePolicy.canAcceptAccessRequest(
-                privateEvent,
-                adminMembership,
-                privateEvent.id,
-                request,
-                now,
-            ),
-        )
-        assertFalse(
-            EventOnSitePolicy.canAcceptAccessRequest(
-                privateEvent,
-                adminMembership,
-                privateEvent.id,
-                request.copy(requestedAt = now - 10 * 60 * 1_000L - 1),
-                now,
-            ),
-        )
-        assertFalse(
-            EventOnSitePolicy.canAcceptAccessRequest(
-                privateEvent,
-                attendeeMembership,
-                privateEvent.id,
-                request,
-                now,
-            ),
-        )
-    }
-
-    @Test
-    fun accessGrantIsBoundToRequestMemberPeerAdminAndLifetime() {
-        val request = EventAccessRequest(
-            id = "request-1",
-            eventId = privateEvent.id,
-            userId = attendeeMembership.userId,
-            peerId = "peer-1",
-            displayName = attendeeMembership.displayName,
-            requestedAt = now,
-        )
-        val unsigned = EventAccessGrant(
-            id = "grant-1",
-            requestId = request.id,
-            eventId = privateEvent.id,
-            userId = attendeeMembership.userId,
-            peerId = request.peerId,
-            adminId = "admin-1",
-            issuedAt = now - 100,
-            expiresAt = now + 1_000,
-        )
-        val grant = unsigned.copy(signature = EventAccessGrantSigner.sign(unsigned, adminKeys.private))
-
-        assertTrue(
-            EventOnSitePolicy.isValidAccessGrant(
-                request,
-                privateEvent,
-                attendeeMembership,
-                request.peerId,
-                grant,
-                now,
-            ),
-        )
-        assertFalse(
-            EventOnSitePolicy.isValidAccessGrant(
-                request,
-                privateEvent,
-                attendeeMembership,
-                "different-peer",
-                grant,
-                now,
-            ),
-        )
-        assertFalse(
-            EventOnSitePolicy.isValidAccessGrant(
-                request,
-                privateEvent,
-                attendeeMembership,
-                request.peerId,
-                grant.copy(expiresAt = now + EventOnSitePolicy.ACCESS_GRANT_LIFETIME_MILLIS + 1),
-                now,
-            ),
-        )
-    }
 
     @Test
     fun chatMessageRequiresActiveEventAndKnownActiveSender() {

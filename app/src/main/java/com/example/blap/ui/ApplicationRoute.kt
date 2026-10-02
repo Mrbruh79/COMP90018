@@ -135,8 +135,6 @@ fun ApplicationRoute(models: ApplicationViewModels) {
             onToggleDiscussionLike = eventViewModel::toggleEventDiscussionLike,
             onDeleteDiscussionComment = eventViewModel::deleteEventDiscussionComment,
             onRequestGpsEntry = applicationViewModel::requestEventGps,
-            onRequestAdminAccess = applicationViewModel::requestEventAdmin,
-            onApproveAdminAccess = eventViewModel::approveEventAdminAccess,
             onScanCheckInQr = applicationViewModel::requestEventQr,
             onShowCheckInQr = eventViewModel::showEventCheckInQr,
             onHideCheckInQr = eventViewModel::hideEventCheckInQr,

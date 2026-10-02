@@ -100,28 +100,6 @@ sealed interface NearbyPacket {
         val hopsRemaining: Int,
     ) : NearbyPacket
 
-    data class EventAccessRequest(
-        val requestId: String,
-        val eventId: String,
-        val userId: String,
-        val peerId: String,
-        val displayName: String,
-        val requestedAt: Long,
-        val hopsRemaining: Int,
-    ) : NearbyPacket
-
-    data class EventAccessGrant(
-        val grantId: String,
-        val requestId: String,
-        val eventId: String,
-        val userId: String,
-        val peerId: String,
-        val adminId: String,
-        val issuedAt: Long,
-        val expiresAt: Long,
-        val signature: String,
-        val hopsRemaining: Int,
-    ) : NearbyPacket
 }
 
 object NearbyProtocol {
@@ -136,8 +114,6 @@ object NearbyProtocol {
     private const val EVENT_CHAT_MESSAGE = 7
     private const val EVENT_ANNOUNCEMENT = 8
     private const val EVENT_MUTATION = 9
-    private const val EVENT_ACCESS_REQUEST = 10
-    private const val EVENT_ACCESS_GRANT = 11
 
     fun encode(packet: NearbyPacket): ByteArray {
         val bytes = ByteArrayOutputStream()
@@ -263,30 +239,6 @@ object NearbyProtocol {
                     output.writeInt(packet.hopsRemaining)
                 }
 
-                is NearbyPacket.EventAccessRequest -> {
-                    output.writeInt(EVENT_ACCESS_REQUEST)
-                    output.writeUTF(packet.requestId)
-                    output.writeUTF(packet.eventId)
-                    output.writeUTF(packet.userId)
-                    output.writeUTF(packet.peerId)
-                    output.writeUTF(packet.displayName)
-                    output.writeLong(packet.requestedAt)
-                    output.writeInt(packet.hopsRemaining)
-                }
-
-                is NearbyPacket.EventAccessGrant -> {
-                    output.writeInt(EVENT_ACCESS_GRANT)
-                    output.writeUTF(packet.grantId)
-                    output.writeUTF(packet.requestId)
-                    output.writeUTF(packet.eventId)
-                    output.writeUTF(packet.userId)
-                    output.writeUTF(packet.peerId)
-                    output.writeUTF(packet.adminId)
-                    output.writeLong(packet.issuedAt)
-                    output.writeLong(packet.expiresAt)
-                    output.writeUTF(packet.signature)
-                    output.writeInt(packet.hopsRemaining)
-                }
             }
         }
         return bytes.toByteArray()
@@ -426,29 +378,6 @@ object NearbyProtocol {
                         input.readInt(),
                     )
                 }
-
-                EVENT_ACCESS_REQUEST -> NearbyPacket.EventAccessRequest(
-                    requestId = input.readUTF(),
-                    eventId = input.readUTF(),
-                    userId = input.readUTF(),
-                    peerId = input.readUTF(),
-                    displayName = input.readUTF(),
-                    requestedAt = input.readLong(),
-                    hopsRemaining = input.readInt(),
-                )
-
-                EVENT_ACCESS_GRANT -> NearbyPacket.EventAccessGrant(
-                    grantId = input.readUTF(),
-                    requestId = input.readUTF(),
-                    eventId = input.readUTF(),
-                    userId = input.readUTF(),
-                    peerId = input.readUTF(),
-                    adminId = input.readUTF(),
-                    issuedAt = input.readLong(),
-                    expiresAt = input.readLong(),
-                    signature = input.readUTF(),
-                    hopsRemaining = input.readInt(),
-                )
 
                 else -> null
             }

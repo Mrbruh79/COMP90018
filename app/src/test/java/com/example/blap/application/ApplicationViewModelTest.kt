@@ -129,26 +129,6 @@ class ApplicationViewModelTest {
         assertEquals(listOf("This QR code has no readable contact data.", "Scanner unavailable"), f.errors)
     }
 
-    @Test fun changingSelectedEventDiscardsTheOldPermissionResult() {
-        val f = Fixture()
-        val model = f.model()
-        model.requestEventAdmin()
-        val request = model.uiState.value.pendingRequest!!
-        f.eventId = "another-event"
-        model.permissionResult(request.id, emptyList())
-        assertEquals(0, f.adminRequests)
-        assertEquals(0, f.nearbyStarts)
-    }
-
-    @Test fun adminEntryStartsTransportOnlyAfterPermissionIsGranted() {
-        val f = Fixture()
-        val model = f.model()
-        model.requestEventAdmin()
-        model.permissionResult(model.uiState.value.pendingRequest!!.id, emptyList())
-        assertEquals(1, f.nearbyStarts)
-        assertEquals(1, f.adminRequests)
-    }
-
     @Test fun contactImportHandlesPermissionAndReadFailures() {
         val f = Fixture()
         val model = f.model()
@@ -316,7 +296,6 @@ class ApplicationViewModelTest {
         val notifications = FakeNotifications()
         var seen = false
         var nearbyStarts = 0
-        var adminRequests = 0
         var enteredFix: LocationFix? = null
         var eventQr: String? = null
         var contactQr: String? = null
@@ -351,7 +330,7 @@ class ApplicationViewModelTest {
             ApplicationCommands(
                 startNearby = { nearbyStarts++ }, importContacts = { imported = it },
                 enterEventWithGps = { enteredFix = it }, enterEventWithQr = { eventQr = it },
-                importContactQr = { contactQr = it }, requestAdminAccess = { adminRequests++ },
+                importContactQr = { contactQr = it },
                 ensureSignedIn = { authCallbacks.add(it) }, refreshAccount = {},
                 signInWithGoogleToken = { googleToken = it }, showError = { errors.add(it) },
                 showNotice = { notices.add(it) }, venueStatus = { text, _ -> venueMessages.add(text) },

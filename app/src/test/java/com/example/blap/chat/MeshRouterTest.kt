@@ -145,24 +145,6 @@ class MeshRouterTest {
     }
 
     @Test
-    fun eventAccessRequestsAreRelayedWithoutRequiringLocalAccess() {
-        val packet = NearbyPacket.EventAccessRequest(
-            requestId = "request-1",
-            eventId = "event-1",
-            userId = "carol-uid",
-            peerId = "carol",
-            displayName = "Carol",
-            requestedAt = 50L,
-            hopsRemaining = 2,
-        )
-
-        val decision = router.ingest(packet, eventContext(accessGranted = false))
-
-        assertEquals(1, decision.deliveries.filterIsInstance<MeshLocalDelivery.IncomingEventAccessRequest>().size)
-        assertEquals(1, (decision.forwardPacket as NearbyPacket.EventAccessRequest).hopsRemaining)
-    }
-
-    @Test
     fun eventMutationRoundTripKeepsVisibilityAndDeletion() {
         val packet = NearbyPacket.EventMutation(
             eventId = "event-1",

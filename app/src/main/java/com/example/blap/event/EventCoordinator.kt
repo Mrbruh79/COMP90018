@@ -30,7 +30,6 @@ class EventCoordinator(
         eventStore = eventStore,
         remoteRepository = remoteRepository,
         adminKeyStore = adminKeyStore,
-        identityStore = identityStore,
         meshGateway = nearbyController,
         scope = scope,
         currentState = { _uiState.value },
@@ -48,7 +47,6 @@ class EventCoordinator(
         currentState = { _uiState.value },
         updateState = { transform -> _uiState.update(transform) },
         closeEventObservers = discussionCoordinator::closeObservers,
-        clearPendingOnSiteAccess = onSiteCoordinator::clearPendingAccess,
         clock = clock,
     )
     private val membershipCoordinator = EventMembershipCoordinator(
@@ -62,7 +60,6 @@ class EventCoordinator(
         updateState = { transform -> _uiState.update(transform) },
         deletePrimaryAdminEvent = lifecycleCoordinator::deleteSelectedEvent,
         closeEventObservers = discussionCoordinator::closeObservers,
-        clearPendingOnSiteAccess = onSiteCoordinator::clearPendingAccess,
         clock = clock,
     )
 
@@ -71,7 +68,6 @@ class EventCoordinator(
     }
 
     fun accountChanged() {
-        onSiteCoordinator.clearPendingAccess()
         lifecycleCoordinator.accountChanged()
     }
 
@@ -85,7 +81,6 @@ class EventCoordinator(
                 members = emptyList(),
                 eventInvitations = emptyList(),
                 participantSearchResult = null,
-                accessRequests = emptyList(),
                 announcements = emptyList(),
                 chatMessages = emptyList(),
                 discussionRoots = emptyList(),
@@ -94,7 +89,6 @@ class EventCoordinator(
                 selectedDiscussionThreadId = null,
                 discussionHasMoreRoots = false,
                 checkInQrPayload = null,
-                waitingForAdminAccess = false,
                 error = null,
             )
         }
@@ -218,18 +212,8 @@ class EventCoordinator(
 
     fun showSavedOnSiteHistory() = onSiteCoordinator.showSavedHistory()
 
-    fun requestAdminOnSiteAccess() = onSiteCoordinator.requestAdminAccess()
-
-    fun approveOnSiteAccess(requestId: String) = onSiteCoordinator.approveAccess(requestId)
-
     fun onEventPeerAvailable(peerId: String, eventId: String, userId: String, accessGranted: Boolean) =
         onSiteCoordinator.onPeerAvailable(peerId, eventId, userId, accessGranted)
-
-    fun onEventAccessRequestReceived(request: EventAccessRequest) =
-        onSiteCoordinator.onAccessRequestReceived(request)
-
-    fun onEventAccessGrantReceived(grant: EventAccessGrant) =
-        onSiteCoordinator.onAccessGrantReceived(grant)
 
     fun onEventChatMessageReceived(message: EventChatMessage) =
         onSiteCoordinator.onChatMessageReceived(message)

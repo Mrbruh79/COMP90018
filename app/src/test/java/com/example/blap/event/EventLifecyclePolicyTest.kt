@@ -71,7 +71,7 @@ class EventLifecyclePolicyTest {
     }
 
     @Test
-    fun privateCreationUsesMeshSecretAndNeverCreatesVenueQr() {
+    fun privateCreationUsesMeshSecretAndCreatesSignedVenueQr() {
         val creation = EventLifecyclePolicy.createModels(
             request = request.copy(visibility = EventVisibility.PRIVATE, requiresSignIn = true),
             eventId = "private-event",
@@ -85,7 +85,13 @@ class EventLifecyclePolicyTest {
 
         assertEquals(EventVisibility.PRIVATE, creation.event.visibility)
         assertEquals("mesh-secret", creation.event.privateMeshSecret)
-        assertTrue(creation.event.venueCheckInPayload.isBlank())
+        assertNotNull(
+            EventCheckInCodec.verify(
+                creation.event.venueCheckInPayload,
+                creation.event.id,
+                keys.public,
+            ),
+        )
         assertFalse(creation.event.requiresSignIn)
     }
 
