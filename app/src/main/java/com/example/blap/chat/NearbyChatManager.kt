@@ -18,6 +18,7 @@ class NearbyChatManager internal constructor(
     private val establishedEndpoints = mutableSetOf<String>()
     private val peerByEndpoint = mutableMapOf<String, ConnectedPeer>()
     private val endpointByPeer = mutableMapOf<String, String>()
+    private val deferredEventEndpoints = mutableMapOf<String, String>()
 
     private var localDisplayName = ""
     private var localPeerId = ""
@@ -158,7 +159,16 @@ class NearbyChatManager internal constructor(
         val switched = eventId != eventSession.eventId || meshSecret != eventSession.meshSecret
         if (!switched) {
             eventSession.setActiveEvent(eventId, meshSecret, userId, accessGranted)
-            broadcastEventPresence(eventId)
+            if (
+                eventId != null &&
+                eventSession.eventEndpoints().isEmpty() &&
+                advertisingRequested &&
+                discoveryRequested
+            ) {
+                restartForCurrentMode()
+            } else {
+                broadcastEventPresence(eventId)
+            }
             return
         }
         broadcastEventPresence(null)
@@ -229,6 +239,7 @@ class NearbyChatManager internal constructor(
         establishedEndpoints.clear()
         peerByEndpoint.clear()
         endpointByPeer.clear()
+        deferredEventEndpoints.clear()
         meshRouter.clear()
         // Stopping Nearby pauses the transport; it does not leave the active event.
         // Retaining the identity lets a restart directly resume the same private mesh.
@@ -246,7 +257,11 @@ class NearbyChatManager internal constructor(
     }
 
     override fun onEndpointFound(endpointId: String, endpointName: String) {
-        if (endpointId in establishedEndpoints || endpointId in pendingDevices) return
+        if (endpointId in establishedEndpoints || endpointId in pendingDevices) {
+            if (eventSession.isEventMode) deferredEventEndpoints[endpointId] = endpointName
+            return
+        }
+        deferredEventEndpoints.remove(endpointId)
         val eventPeerId = EventMeshSession.eventPeerIdOrNull(endpointName)
         val isEventDiscovery = eventSession.isEventMode
         if (isEventDiscovery && (eventPeerId == null || eventPeerId == localPeerId)) return
@@ -266,6 +281,10 @@ class NearbyChatManager internal constructor(
 
     override fun onEndpointLost(endpointId: String) {
         knownDevices.remove(endpointId)
+        if (endpointId !in establishedEndpoints) {
+            deferredEventEndpoints.remove(endpointId)
+            pendingDevices.remove(endpointId)
+        }
         listener?.onDeviceLost(endpointId)
     }
 
@@ -298,17 +317,20 @@ class NearbyChatManager internal constructor(
     override fun onConnectionFailed(endpointId: String, message: String) {
         pendingDevices.remove(endpointId)
         listener?.onError(message)
+        resumeDeferredEventEndpoint(endpointId)
     }
 
     override fun onDisconnected(endpointId: String) {
         establishedEndpoints.remove(endpointId)
         pendingDevices.remove(endpointId)
         val wasEventConnection = eventSession.removeEndpoint(endpointId)
-        val peer = peerByEndpoint.remove(endpointId) ?: return
-        if (endpointByPeer[peer.peerId] == endpointId) {
-            endpointByPeer.remove(peer.peerId)
-            if (!wasEventConnection) listener?.onDisconnected(peer.peerId)
+        peerByEndpoint.remove(endpointId)?.let { peer ->
+            if (endpointByPeer[peer.peerId] == endpointId) {
+                endpointByPeer.remove(peer.peerId)
+                if (!wasEventConnection) listener?.onDisconnected(peer.peerId)
+            }
         }
+        resumeDeferredEventEndpoint(endpointId)
     }
 
     override fun onBytesReceived(endpointId: String, bytes: ByteArray) {
@@ -386,6 +408,7 @@ class NearbyChatManager internal constructor(
         establishedEndpoints.clear()
         peerByEndpoint.clear()
         endpointByPeer.clear()
+        deferredEventEndpoints.clear()
         meshRouter.resetKnownPeers()
         if (localPeerId.isNotBlank()) {
             meshRouter.rememberPeer(GroupMember(localPeerId, localDisplayName, localPhoneHash))
@@ -394,6 +417,12 @@ class NearbyChatManager internal constructor(
         if (localPeerId.isBlank()) return
         if (advertisingRequested) startAdvertisingForCurrentMode()
         if (discoveryRequested) startDiscoveryForCurrentMode()
+    }
+
+    private fun resumeDeferredEventEndpoint(endpointId: String) {
+        val endpointName = deferredEventEndpoints.remove(endpointId) ?: return
+        if (!eventSession.isEventMode || !advertisingRequested || !discoveryRequested) return
+        onEndpointFound(endpointId, endpointName)
     }
 
     private fun broadcastEventPresence(

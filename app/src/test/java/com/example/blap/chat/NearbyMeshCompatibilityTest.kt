@@ -142,6 +142,8 @@ class NearbyMeshCompatibilityTest {
         assertEquals(privateServiceId, transport.advertisedServiceIds.last())
         assertEquals(privateServiceId, transport.discoveredServiceIds.last())
 
+        transport.findEndpoint("endpoint-bob", "${EventMeshSession.EVENT_ENDPOINT_PREFIX}bob")
+        assertEquals(listOf("endpoint-bob"), transport.requestedEndpointIds)
         transport.succeedConnection("endpoint-bob")
         transport.receive(
             "endpoint-bob",
@@ -164,6 +166,66 @@ class NearbyMeshCompatibilityTest {
             as NearbyPacket.EventChatMessage
         assertEquals("event-message-after-restart", sent.messageId)
         assertEquals("Mesh is back", sent.text)
+    }
+
+    @Test
+    fun restartingNearbyAutomaticallyReconnectsToTheSamePublicEventMesh() {
+        manager.listener = listener
+        manager.eventListener = listener
+        manager.startAdvertising("Alice", "alice", "alice-hash")
+        manager.startDiscovery()
+        manager.setActiveEvent("event-1", "", "alice-uid", accessGranted = true)
+        val publicServiceId = EventMeshSession.eventServiceId("event-1")
+
+        manager.stop()
+        manager.startAdvertising("Alice", "alice", "alice-hash")
+        manager.startDiscovery()
+        transport.findEndpoint("endpoint-bob", "${EventMeshSession.EVENT_ENDPOINT_PREFIX}bob")
+
+        assertEquals(publicServiceId, transport.advertisedServiceIds.last())
+        assertEquals(publicServiceId, transport.discoveredServiceIds.last())
+        assertEquals(listOf("endpoint-bob"), transport.requestedEndpointIds)
+    }
+
+    @Test
+    fun reenteringAnEmptyEventMeshRestartsAdvertisingAndDiscovery() {
+        manager.startAdvertising("Alice", "alice", "alice-hash")
+        manager.startDiscovery()
+        manager.setActiveEvent("event-1", "private-secret", "alice-uid", accessGranted = true)
+        val advertisingStarts = transport.advertisedServiceIds.size
+        val discoveryStarts = transport.discoveredServiceIds.size
+
+        manager.setActiveEvent("event-1", "private-secret", "alice-uid", accessGranted = true)
+
+        assertEquals(advertisingStarts + 1, transport.advertisedServiceIds.size)
+        assertEquals(discoveryStarts + 1, transport.discoveredServiceIds.size)
+    }
+
+    @Test
+    fun rediscoveryBeforeOldDisconnectIsReplayedAfterTheLinkCloses() {
+        manager.listener = listener
+        manager.eventListener = listener
+        connectEventPeer()
+
+        transport.findEndpoint("endpoint-bob", "${EventMeshSession.EVENT_ENDPOINT_PREFIX}bob")
+        assertTrue(transport.requestedEndpointIds.isEmpty())
+        transport.loseEndpoint("endpoint-bob")
+        transport.disconnectEndpoint("endpoint-bob")
+
+        assertEquals(listOf("endpoint-bob"), transport.requestedEndpointIds)
+    }
+
+    @Test
+    fun lostPendingEventEndpointCanBeRequestedWhenItAppearsAgain() {
+        manager.startAdvertising("Alice", "alice", "alice-hash")
+        manager.startDiscovery()
+        manager.setActiveEvent("event-1", "", "alice-uid", accessGranted = true)
+
+        transport.findEndpoint("endpoint-bob", "${EventMeshSession.EVENT_ENDPOINT_PREFIX}bob")
+        transport.loseEndpoint("endpoint-bob")
+        transport.findEndpoint("endpoint-bob", "${EventMeshSession.EVENT_ENDPOINT_PREFIX}bob")
+
+        assertEquals(listOf("endpoint-bob", "endpoint-bob"), transport.requestedEndpointIds)
     }
 
     private fun connectChatPeer() {
@@ -192,6 +254,7 @@ class NearbyMeshCompatibilityTest {
         val sent = mutableListOf<Pair<String, ByteArray>>()
         val advertisedServiceIds = mutableListOf<String>()
         val discoveredServiceIds = mutableListOf<String>()
+        val requestedEndpointIds = mutableListOf<String>()
 
         fun payloadsTo(endpointId: String): List<ByteArray> = sent.mapNotNull { (id, bytes) ->
             bytes.takeIf { id == endpointId }
@@ -206,13 +269,27 @@ class NearbyMeshCompatibilityTest {
             listener?.onBytesReceived(endpointId, bytes)
         }
 
+        fun findEndpoint(endpointId: String, endpointName: String) {
+            listener?.onEndpointFound(endpointId, endpointName)
+        }
+
+        fun disconnectEndpoint(endpointId: String) {
+            listener?.onDisconnected(endpointId)
+        }
+
+        fun loseEndpoint(endpointId: String) {
+            listener?.onEndpointLost(endpointId)
+        }
+
         override fun startAdvertising(endpointName: String, serviceId: String) {
             advertisedServiceIds += serviceId
         }
         override fun startDiscovery(serviceId: String) {
             discoveredServiceIds += serviceId
         }
-        override fun requestConnection(localEndpointName: String, endpointId: String) = Unit
+        override fun requestConnection(localEndpointName: String, endpointId: String) {
+            requestedEndpointIds += endpointId
+        }
         override fun acceptConnection(endpointId: String) = Unit
         override fun rejectConnection(endpointId: String) = Unit
         override fun send(endpointId: String, bytes: ByteArray) {
