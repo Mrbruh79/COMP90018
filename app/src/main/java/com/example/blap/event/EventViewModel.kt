@@ -3,6 +3,7 @@ package com.example.blap.event
 import androidx.lifecycle.ViewModel
 import com.example.blap.chat.ChatScreen
 import com.example.blap.chat.MessagingSession
+import com.example.blap.location.LocationFix
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
@@ -45,6 +46,29 @@ class EventViewModel(private val session: MessagingSession) : ViewModel(), Event
     }
 
     fun beginCreateEvent() = eventCoordinator?.beginCreate() ?: Unit
+
+    fun selectEventListSection(section: EventListSection) =
+        eventCoordinator?.selectEventListSection(section) ?: Unit
+
+    fun updateEventSearchQuery(query: String) = eventCoordinator?.updateEventSearchQuery(query) ?: Unit
+
+    fun searchEvents() = eventCoordinator?.searchEvents() ?: Unit
+
+    fun clearEventSearch() = eventCoordinator?.clearEventSearch() ?: Unit
+
+    fun discoverEventsInCity(city: String) = eventCoordinator?.discoverEventsInCity(city) ?: Unit
+
+    fun discoverNearbyEvents(location: LocationFix) =
+        eventCoordinator?.discoverNearbyEvents(location.coordinates) ?: Unit
+
+    fun setEventDiscoveryDistance(distanceKm: Int) =
+        eventCoordinator?.setEventDiscoveryDistance(distanceKm) ?: Unit
+
+    fun setEventDateFilter(filter: EventDateFilter) = eventCoordinator?.setEventDateFilter(filter) ?: Unit
+
+    fun setEventAccessFilter(filter: EventAccessFilter) = eventCoordinator?.setEventAccessFilter(filter) ?: Unit
+
+    fun loadMoreDiscoveredEvents() = eventCoordinator?.loadMoreDiscoveredEvents() ?: Unit
 
     fun beginEditEvent() = eventCoordinator?.beginEdit() ?: Unit
 

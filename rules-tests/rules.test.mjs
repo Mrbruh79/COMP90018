@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { after, before, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import {
-  arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, query, runTransaction, setDoc, updateDoc, where,
+  arrayUnion, collection, deleteDoc, doc, endAt, getDoc, getDocs, orderBy, query, runTransaction,
+  setDoc, startAt, updateDoc, where,
   writeBatch,
 } from 'firebase/firestore';
 
@@ -245,6 +246,7 @@ const eventFor = (id, creator, visibility, requiresSignIn = false) => {
     requiresSignIn: visibility === 'PUBLIC' && requiresSignIn,
     privateMeshSecret: visibility === 'PRIVATE' ? 's'.repeat(43) : '',
     venueCheckInPayload: `signed-static-qr-${id}`,
+    searchTokens: [visibility.toLowerCase(), 'event', 'venue'], geohash: 'r1r0fs2w',
     createdAt: Date.now(), updatedAt: Date.now(), deletedAt: null,
   };
 };
@@ -320,6 +322,37 @@ test('private events are invisible until an in-app invitation is accepted', asyn
   await assertSucceeds(getDoc(doc(bob, 'events/private-event')));
   await assertSucceeds(getDocs(query(collection(bob, 'events'), where('memberIds', 'array-contains', 'bob'))));
   await assertFails(getDoc(doc(carol, 'events/private-event')));
+});
+
+test('event discovery queries expose indexed public events but never private events', async () => {
+  await publishAccount('alice');
+  await publishAccount('bob');
+  await createEventAs('alice', 'public-event', 'PUBLIC');
+  await createEventAs('alice', 'private-event', 'PRIVATE');
+  const bob = client('bob');
+
+  const publicSearch = await assertSucceeds(getDocs(query(
+    collection(bob, 'events'),
+    where('visibility', '==', 'PUBLIC'),
+    where('searchTokens', 'array-contains', 'event'),
+  )));
+  if (publicSearch.docs.map(result => result.id).join(',') !== 'public-event') {
+    throw new Error('Public discovery returned a private or missing event');
+  }
+  const publicNearby = await assertSucceeds(getDocs(query(
+    collection(bob, 'events'),
+    where('visibility', '==', 'PUBLIC'),
+    orderBy('geohash'),
+    startAt('r1r'),
+    endAt('r1r\uf8ff'),
+  )));
+  if (publicNearby.docs.map(result => result.id).join(',') !== 'public-event') {
+    throw new Error('Nearby discovery returned a private or missing event');
+  }
+  await assertFails(getDocs(query(
+    collection(bob, 'events'),
+    where('searchTokens', 'array-contains', 'event'),
+  )));
 });
 
 test('a private event cannot be joined without an accepted invitation', async () => {

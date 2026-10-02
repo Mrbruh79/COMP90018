@@ -194,7 +194,7 @@ class EventLifecyclePolicyTest {
     }
 
     @Test
-    fun publicCatalogueEventIsVisibleButNotCachedBeforeJoining() {
+    fun membershipSynchronizationHidesPublicEventBeforeJoining() {
         val publicEvent = publicEvent().copy(memberIds = setOf("admin-1"))
 
         val result = EventLifecyclePolicy.reconcileEvents(
@@ -204,7 +204,7 @@ class EventLifecyclePolicyTest {
             currentUserId = "member-1",
         )
 
-        assertEquals(listOf(publicEvent), result.visibleEvents)
+        assertTrue(result.visibleEvents.isEmpty())
         assertTrue(result.cacheableEvents.isEmpty())
         assertTrue(result.removedEventIds.isEmpty())
     }
@@ -240,7 +240,7 @@ class EventLifecyclePolicyTest {
     }
 
     @Test
-    fun authoritativeMembershipRemovalPurgesPackageButKeepsPublicEventVisible() {
+    fun authoritativeMembershipRemovalPurgesPackageAndHidesEvent() {
         val cachedJoinedEvent = publicEvent().copy(memberIds = setOf("admin-1", "member-1"))
         val remoteWithoutMember = cachedJoinedEvent.copy(memberIds = setOf("admin-1"))
 
@@ -251,7 +251,7 @@ class EventLifecyclePolicyTest {
             currentUserId = "member-1",
         )
 
-        assertEquals(listOf(remoteWithoutMember), result.visibleEvents)
+        assertTrue(result.visibleEvents.isEmpty())
         assertTrue(result.cacheableEvents.isEmpty())
         assertEquals(setOf(cachedJoinedEvent.id), result.removedEventIds)
         assertFalse(result.showingOfflineEvents)

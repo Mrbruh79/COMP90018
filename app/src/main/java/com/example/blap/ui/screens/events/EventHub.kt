@@ -55,11 +55,22 @@ fun EventHub(
 
     when (state.page) {
         EventPage.LIST -> EventListScreen(
-            state,
-            actions.onBeginCreate,
-            actions.onOpen,
-            actions.onAcceptInvitation,
-            actions.onDeclineInvitation,
+            state = state,
+            onBeginCreate = actions.onBeginCreate,
+            onSelectListSection = actions.onSelectListSection,
+            onSearchQueryChanged = actions.onSearchQueryChanged,
+            onSearchEvents = actions.onSearchEvents,
+            onClearEventSearch = actions.onClearEventSearch,
+            onDiscoverCity = actions.onDiscoverCity,
+            onDiscoverNearby = actions.onDiscoverNearby,
+            onDiscoveryDistanceChanged = actions.onDiscoveryDistanceChanged,
+            onDateFilterChanged = actions.onDateFilterChanged,
+            onAccessFilterChanged = actions.onAccessFilterChanged,
+            onLoadMoreEvents = actions.onLoadMoreEvents,
+            onOpen = actions.onOpen,
+            onAcceptInvitation = actions.onAcceptInvitation,
+            onDeclineInvitation = actions.onDeclineInvitation,
+            getCurrentLocation = getCurrentLocation,
         )
         EventPage.CREATE -> EventFormScreen(
             null,

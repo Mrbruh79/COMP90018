@@ -249,10 +249,8 @@ internal class EventMembershipCoordinator(
                                 event,
                                 membership.userId,
                             )?.let(remainingEvents::upsertEvent) ?: remainingEvents
-                            EventUiState(
+                            state.returnToEventList(
                                 events = visibleEvents,
-                                invitations = state.invitations,
-                                currentUserId = state.currentUserId,
                                 notice = "You left the event. All local event data was deleted.",
                             )
                         }

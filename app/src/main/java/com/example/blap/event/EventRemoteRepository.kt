@@ -8,6 +8,8 @@ import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.Source
 import java.util.Locale
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.tasks.await
 
 interface EventRemoteRepository {
@@ -15,6 +17,8 @@ interface EventRemoteRepository {
     fun hasSignedInAccount(): Boolean
     suspend fun createEvent(event: CommunityEvent, creator: EventMembership)
     suspend fun listEvents(): List<CommunityEvent>
+    suspend fun discoverEvents(request: EventDiscoveryRequest): EventDiscoveryResult =
+        EventDiscoveryResult(emptyList(), hasMore = false)
     suspend fun updateEvent(event: CommunityEvent)
     suspend fun deleteEvent(eventId: String)
     fun observeEvents(
@@ -108,23 +112,98 @@ class FirebaseEventRemoteRepository(
     }
 
     override suspend fun listEvents(): List<CommunityEvent> {
-        val uid = requireUserId()
-        val public = firestore.collection(EVENTS)
-            .whereEqualTo("visibility", EventVisibility.PUBLIC.name)
+        requireUserId()
+        val user = requireNotNull(auth.currentUser)
+        return joinedEventsQuery(user.uid, user.isAnonymous)
             .get(Source.SERVER).await().documents
-        val joined = if (auth.currentUser?.isAnonymous == false) {
-            firestore.collection(EVENTS).whereArrayContains("memberIds", uid)
-                .get(Source.SERVER).await().documents
-        } else emptyList()
-        return (public + joined)
-            .distinctBy(DocumentSnapshot::getId)
             .mapNotNull { document -> document.data?.toEvent(document.id) }
             .sortedBy(CommunityEvent::startsAt)
+    }
+
+    override suspend fun discoverEvents(request: EventDiscoveryRequest): EventDiscoveryResult {
+        requireUserId()
+        val fetchLimit = (request.limit * DISCOVERY_FETCH_FACTOR)
+            .coerceIn(request.limit, MAX_DISCOVERY_FETCH)
+        val indexedAttempt = runCatching { indexedDiscoveryDocuments(request, fetchLimit) }
+        if (request.mode == EventDiscoveryMode.UPCOMING) indexedAttempt.getOrThrow()
+        val indexed = indexedAttempt.getOrDefault(emptyList())
+        val compatibilityAttempt = if (request.mode == EventDiscoveryMode.UPCOMING) {
+            indexedAttempt
+        } else runCatching { upcomingPublicDocuments(request.now, fetchLimit) }
+        if (indexedAttempt.isFailure && compatibilityAttempt.isFailure) {
+            throw compatibilityAttempt.exceptionOrNull()
+                ?: indexedAttempt.exceptionOrNull()
+                ?: IllegalStateException("Event discovery is unavailable.")
+        }
+        val compatibility = compatibilityAttempt.getOrDefault(emptyList())
+        val candidates = (indexed + compatibility)
+            .distinctBy(DocumentSnapshot::getId)
+            .mapNotNull { document -> document.data?.toEvent(document.id) }
+        val events = EventDiscoveryPolicy.filterAndSort(candidates, request)
+        return EventDiscoveryResult(events, hasMore = events.size >= request.limit)
     }
 
     override suspend fun updateEvent(event: CommunityEvent) {
         firestore.collection(EVENTS).document(event.id).set(event.toRemoteMap()).await()
     }
+
+    private fun joinedEventsQuery(userId: String, anonymous: Boolean): Query {
+        val joined = firestore.collection(EVENTS).whereArrayContains("memberIds", userId)
+        return if (anonymous) {
+            joined.whereEqualTo("visibility", EventVisibility.PUBLIC.name)
+        } else joined
+    }
+
+    private suspend fun indexedDiscoveryDocuments(
+        request: EventDiscoveryRequest,
+        fetchLimit: Int,
+    ): List<DocumentSnapshot> {
+        val publicEvents = firestore.collection(EVENTS)
+            .whereEqualTo("visibility", EventVisibility.PUBLIC.name)
+        return when (request.mode) {
+            EventDiscoveryMode.UPCOMING -> upcomingPublicDocuments(request.now, fetchLimit)
+            EventDiscoveryMode.SEARCH -> {
+                val token = EventSearchIndex.lookupToken(request.searchQuery) ?: return emptyList()
+                publicEvents.whereArrayContains("searchTokens", token)
+                    .limit(fetchLimit.toLong()).get(Source.SERVER).await().documents
+            }
+            EventDiscoveryMode.CITY -> {
+                val token = EventSearchIndex.lookupToken(request.cityQuery) ?: return emptyList()
+                publicEvents.whereArrayContains("searchTokens", token)
+                    .limit(fetchLimit.toLong()).get(Source.SERVER).await().documents
+            }
+            EventDiscoveryMode.NEARBY -> {
+                val centre = request.centre ?: return emptyList()
+                val prefixes = EventGeoHash.coveringPrefixes(centre, request.distanceKm)
+                if (prefixes.isEmpty()) return emptyList()
+                val centrePrefix = EventGeoHash.encode(centre, prefixes.first().length)
+                val surroundingLimit = (fetchLimit / (prefixes.size - 1).coerceAtLeast(1))
+                    .coerceAtLeast(MIN_GEOHASH_QUERY_LIMIT)
+                coroutineScope {
+                    prefixes.map { prefix ->
+                        async {
+                            publicEvents.orderBy("geohash")
+                                .startAt(prefix)
+                                .endAt("$prefix\uf8ff")
+                                .limit(
+                                    if (prefix == centrePrefix) fetchLimit.toLong()
+                                    else surroundingLimit.toLong(),
+                                )
+                                .get(Source.SERVER).await().documents
+                        }
+                    }.map { it.await() }.flatten()
+                }
+            }
+        }
+    }
+
+    private suspend fun upcomingPublicDocuments(now: Long, limit: Int): List<DocumentSnapshot> =
+        firestore.collection(EVENTS)
+            .whereEqualTo("visibility", EventVisibility.PUBLIC.name)
+            .whereGreaterThanOrEqualTo("endsAt", now)
+            .orderBy("endsAt", Query.Direction.ASCENDING)
+            .limit(limit.toLong())
+            .get(Source.SERVER).await().documents
 
     override suspend fun deleteEvent(eventId: String) {
         val eventRef = firestore.collection(EVENTS).document(eventId)
@@ -145,52 +224,18 @@ class FirebaseEventRemoteRepository(
             onError(IllegalStateException("Could not connect to events."))
             return AutoCloseable { }
         }
-        val publicEvents = linkedMapOf<String, CommunityEvent>()
-        val joinedEvents = linkedMapOf<String, CommunityEvent>()
-        var publicLoaded = false
-        var joinedLoaded = user.isAnonymous
-        var publicServer = false
-        var joinedServer = user.isAnonymous
-
-        fun publish() {
-            if (!publicLoaded || !joinedLoaded) return
-            onEvents(
-                (publicEvents.values + joinedEvents.values).distinctBy(CommunityEvent::id)
-                    .sortedBy(CommunityEvent::startsAt),
-                publicServer && joinedServer,
-            )
-        }
-
-        val registrations = mutableListOf<ListenerRegistration>()
-        registrations += firestore.collection(EVENTS)
-            .whereEqualTo("visibility", EventVisibility.PUBLIC.name)
+        val registration = joinedEventsQuery(uid, user.isAnonymous)
             .addSnapshotListener { snapshot, error ->
                 if (error != null) onError(error)
                 else if (snapshot != null) {
-                    publicEvents.clear()
-                    snapshot.documents.mapNotNull { it.data?.toEvent(it.id) }
-                        .associateByTo(publicEvents, CommunityEvent::id)
-                    publicLoaded = true
-                    publicServer = !snapshot.metadata.isFromCache
-                    publish()
+                    onEvents(
+                        snapshot.documents.mapNotNull { it.data?.toEvent(it.id) }
+                            .sortedBy(CommunityEvent::startsAt),
+                        !snapshot.metadata.isFromCache,
+                    )
                 }
             }
-        if (!user.isAnonymous) {
-            registrations += firestore.collection(EVENTS)
-                .whereArrayContains("memberIds", uid)
-                .addSnapshotListener { snapshot, error ->
-                    if (error != null) onError(error)
-                    else if (snapshot != null) {
-                        joinedEvents.clear()
-                        snapshot.documents.mapNotNull { it.data?.toEvent(it.id) }
-                            .associateByTo(joinedEvents, CommunityEvent::id)
-                        joinedLoaded = true
-                        joinedServer = !snapshot.metadata.isFromCache
-                        publish()
-                    }
-                }
-        }
-        return AutoCloseable { registrations.forEach(ListenerRegistration::remove) }
+        return AutoCloseable(registration::remove)
     }
 
     override fun observeInvitations(
@@ -640,6 +685,10 @@ class FirebaseEventRemoteRepository(
         "requiresSignIn" to requiresSignIn, "privateMeshSecret" to privateMeshSecret,
         "venueCheckInPayload" to venueCheckInPayload, "createdAt" to createdAt,
         "updatedAt" to updatedAt, "deletedAt" to deletedAt,
+        "searchTokens" to EventSearchIndex.tokensFor(this),
+        "geohash" to EventGeoHash.encode(
+            com.example.blap.location.GeoCoordinates(latitude, longitude),
+        ),
     )
 
     private fun EventMembership.toRemoteMap(): Map<String, Any?> = mapOf(
@@ -784,6 +833,9 @@ class FirebaseEventRemoteRepository(
         const val DISCUSSION_COMMENTS = "comments"
         const val DISCUSSION_LIKES = "discussionLikes"
         const val DELETE_BATCH_SIZE = 450
+        const val DISCOVERY_FETCH_FACTOR = 3
+        const val MAX_DISCOVERY_FETCH = 450
+        const val MIN_GEOHASH_QUERY_LIMIT = 10
         val USERNAME_PATTERN = Regex("^[a-z0-9_]{3,20}$")
         val EMAIL_PATTERN = Regex("^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$")
     }

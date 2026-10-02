@@ -199,10 +199,8 @@ internal class EventOnSiteCoordinator(
             eventStore.purgeEvent(updated.id)
             meshGateway.setActiveEvent(null)
             updateState {
-                EventUiState(
+                it.returnToEventList(
                     events = it.events.withoutEvent(updated.id),
-                    invitations = it.invitations,
-                    currentUserId = it.currentUserId,
                     notice = "The event and its local data were deleted by the primary admin.",
                 )
             }

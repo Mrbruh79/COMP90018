@@ -513,6 +513,10 @@ service cloud.firestore {
         && (data.visibility == 'PUBLIC' && data.privateMeshSecret == ''
           || data.visibility == 'PRIVATE' && data.privateMeshSecret.size() >= 32)
         && data.venueCheckInPayload is string && data.venueCheckInPayload.size() <= 2000
+        && data.get('searchTokens', []) is list
+        && data.get('searchTokens', []).size() <= 200
+        && data.get('geohash', '') is string
+        && data.get('geohash', '').matches('^([0-9bcdefghjkmnpqrstuvwxyz]{0,12})$')
         && data.createdBy in data.adminIds
         && data.createdBy in data.memberIds
         && data.memberIds.hasAll(data.adminIds)

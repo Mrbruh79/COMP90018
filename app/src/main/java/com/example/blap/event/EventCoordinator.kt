@@ -62,12 +62,20 @@ class EventCoordinator(
         closeEventObservers = discussionCoordinator::closeObservers,
         clock = clock,
     )
+    private val discoveryCoordinator = EventDiscoveryCoordinator(
+        remoteRepository = remoteRepository,
+        scope = scope,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        clock = clock,
+    )
 
     init {
         lifecycleCoordinator.start()
     }
 
     fun accountChanged() {
+        discoveryCoordinator.resetForAccount()
         lifecycleCoordinator.accountChanged()
     }
 
@@ -94,6 +102,7 @@ class EventCoordinator(
             )
         }
         refreshEvents()
+        discoveryCoordinator.refresh()
     }
 
     fun beginCreate() {
@@ -137,6 +146,27 @@ class EventCoordinator(
     }
 
     fun refreshEvents() = lifecycleCoordinator.refreshEvents()
+
+    fun selectEventListSection(section: EventListSection) = discoveryCoordinator.selectSection(section)
+
+    fun updateEventSearchQuery(query: String) = discoveryCoordinator.updateSearchQuery(query)
+
+    fun searchEvents() = discoveryCoordinator.search()
+
+    fun clearEventSearch() = discoveryCoordinator.clearSearch()
+
+    fun discoverEventsInCity(city: String) = discoveryCoordinator.discoverCity(city)
+
+    fun discoverNearbyEvents(coordinates: com.example.blap.location.GeoCoordinates) =
+        discoveryCoordinator.discoverNearby(coordinates)
+
+    fun setEventDiscoveryDistance(distanceKm: Int) = discoveryCoordinator.setDistance(distanceKm)
+
+    fun setEventDateFilter(filter: EventDateFilter) = discoveryCoordinator.setDateFilter(filter)
+
+    fun setEventAccessFilter(filter: EventAccessFilter) = discoveryCoordinator.setAccessFilter(filter)
+
+    fun loadMoreDiscoveredEvents() = discoveryCoordinator.loadMore()
 
     fun createEvent(
         title: String,

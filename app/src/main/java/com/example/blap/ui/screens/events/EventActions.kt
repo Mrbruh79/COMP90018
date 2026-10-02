@@ -1,9 +1,23 @@
 package com.example.blap.ui.screens.events
 
 import com.example.blap.event.EventCreateRequest
+import com.example.blap.event.EventAccessFilter
+import com.example.blap.event.EventDateFilter
+import com.example.blap.event.EventListSection
+import com.example.blap.location.LocationFix
 
 data class EventActions(
     val onBeginCreate: () -> Unit,
+    val onSelectListSection: (EventListSection) -> Unit,
+    val onSearchQueryChanged: (String) -> Unit,
+    val onSearchEvents: () -> Unit,
+    val onClearEventSearch: () -> Unit,
+    val onDiscoverCity: (String) -> Unit,
+    val onDiscoverNearby: (LocationFix) -> Unit,
+    val onDiscoveryDistanceChanged: (Int) -> Unit,
+    val onDateFilterChanged: (EventDateFilter) -> Unit,
+    val onAccessFilterChanged: (EventAccessFilter) -> Unit,
+    val onLoadMoreEvents: () -> Unit,
     val onBeginEdit: () -> Unit,
     val onCreate: (EventCreateRequest) -> Unit,
     val onOpen: (String) -> Unit,
