@@ -384,7 +384,13 @@ private fun DiscoveryControls(
                 enabled = cityQuery.trim().length >= 2 && !state.discoveryLoading,
             ) { Text("Apply") }
             OutlinedButton(onClick = onDiscoverNearby, enabled = !locating) {
-                Text(if (locating) "Locating…" else "Near me")
+                Text(
+                    when {
+                        locating -> "Locating…"
+                        state.discoveryCentre == null -> "Use current location"
+                        else -> "Refresh location"
+                    },
+                )
             }
         }
         locationError?.let { message ->
