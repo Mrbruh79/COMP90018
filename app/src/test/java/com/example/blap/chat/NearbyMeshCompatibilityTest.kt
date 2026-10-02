@@ -126,6 +126,46 @@ class NearbyMeshCompatibilityTest {
         assertTrue(transport.payloadsTo("endpoint-carol").isEmpty())
     }
 
+    @Test
+    fun restartingNearbyResumesTheSamePrivateEventMeshAndCanSendAgain() {
+        manager.listener = listener
+        manager.eventListener = listener
+        manager.startAdvertising("Alice", "alice", "alice-hash")
+        manager.startDiscovery()
+        manager.setActiveEvent("event-1", "private-secret", "alice-uid", accessGranted = true)
+        val privateServiceId = EventMeshSession.eventServiceId("event-1", "private-secret")
+
+        manager.stop()
+        manager.startAdvertising("Alice", "alice", "alice-hash")
+        manager.startDiscovery()
+
+        assertEquals(privateServiceId, transport.advertisedServiceIds.last())
+        assertEquals(privateServiceId, transport.discoveredServiceIds.last())
+
+        transport.succeedConnection("endpoint-bob")
+        transport.receive(
+            "endpoint-bob",
+            NearbyProtocol.encode(NearbyPacket.Hello("bob", "Bob", "bob-hash")),
+        )
+        transport.sent.clear()
+
+        manager.sendEventChatMessage(
+            EventChatMessage(
+                id = "event-message-after-restart",
+                eventId = "event-1",
+                senderId = "alice",
+                senderName = "Alice",
+                text = "Mesh is back",
+                createdAt = 30L,
+            ),
+        )
+
+        val sent = NearbyProtocol.decode(transport.payloadsTo("endpoint-bob").single())
+            as NearbyPacket.EventChatMessage
+        assertEquals("event-message-after-restart", sent.messageId)
+        assertEquals("Mesh is back", sent.text)
+    }
+
     private fun connectChatPeer() {
         manager.startAdvertising("Alice", "alice", "alice-hash")
         manager.startDiscovery()
@@ -150,6 +190,8 @@ class NearbyMeshCompatibilityTest {
     private class FakeNearbyConnectionTransport : NearbyConnectionTransport {
         override var listener: NearbyConnectionTransport.Listener? = null
         val sent = mutableListOf<Pair<String, ByteArray>>()
+        val advertisedServiceIds = mutableListOf<String>()
+        val discoveredServiceIds = mutableListOf<String>()
 
         fun payloadsTo(endpointId: String): List<ByteArray> = sent.mapNotNull { (id, bytes) ->
             bytes.takeIf { id == endpointId }
@@ -164,8 +206,12 @@ class NearbyMeshCompatibilityTest {
             listener?.onBytesReceived(endpointId, bytes)
         }
 
-        override fun startAdvertising(endpointName: String, serviceId: String) = Unit
-        override fun startDiscovery(serviceId: String) = Unit
+        override fun startAdvertising(endpointName: String, serviceId: String) {
+            advertisedServiceIds += serviceId
+        }
+        override fun startDiscovery(serviceId: String) {
+            discoveredServiceIds += serviceId
+        }
         override fun requestConnection(localEndpointName: String, endpointId: String) = Unit
         override fun acceptConnection(endpointId: String) = Unit
         override fun rejectConnection(endpointId: String) = Unit

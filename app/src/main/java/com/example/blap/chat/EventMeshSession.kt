@@ -28,6 +28,11 @@ class EventMeshSession {
 
     fun removeEndpoint(endpointId: String): Boolean = eventEndpoints.remove(endpointId)
 
+    /** Clears transport connections while retaining the active event identity for a later resume. */
+    fun clearEndpoints() {
+        eventEndpoints.clear()
+    }
+
     fun currentServiceId(): String = eventId
         ?.let { eventServiceId(it, meshSecret) }
         ?: SERVICE_ID
@@ -73,7 +78,7 @@ class EventMeshSession {
         meshSecret = ""
         userId = ""
         accessGranted = false
-        eventEndpoints.clear()
+        clearEndpoints()
     }
 
     companion object {

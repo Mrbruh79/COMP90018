@@ -230,13 +230,16 @@ class NearbyChatManager internal constructor(
         peerByEndpoint.clear()
         endpointByPeer.clear()
         meshRouter.clear()
-        eventSession.clear()
+        // Stopping Nearby pauses the transport; it does not leave the active event.
+        // Retaining the identity lets a restart directly resume the same private mesh.
+        eventSession.clearEndpoints()
         advertisingRequested = false
         discoveryRequested = false
     }
 
     override fun close() {
         stop()
+        eventSession.clear()
         listener = null
         eventListener = null
         connections.listener = null
