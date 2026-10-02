@@ -6,6 +6,7 @@ import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.Source
 import java.util.Locale
 import kotlinx.coroutines.tasks.await
 
@@ -28,7 +29,7 @@ interface EventRemoteRepository {
     suspend fun listEventInvitations(eventId: String): List<EventInvitation>
     suspend fun findInvitee(identifier: String): EventInvitee?
     suspend fun invite(invitation: EventInvitation)
-    suspend fun acceptInvitation(invitation: EventInvitation, membership: EventMembership)
+    suspend fun acceptInvitation(invitation: EventInvitation, membership: EventMembership): CommunityEvent?
     suspend fun declineInvitation(invitation: EventInvitation)
     suspend fun revokeInvitation(invitation: EventInvitation)
     suspend fun joinEvent(membership: EventMembership)
@@ -104,10 +105,10 @@ class FirebaseEventRemoteRepository(
         val uid = requireUserId()
         val public = firestore.collection(EVENTS)
             .whereEqualTo("visibility", EventVisibility.PUBLIC.name)
-            .get().await().documents
+            .get(Source.SERVER).await().documents
         val joined = if (auth.currentUser?.isAnonymous == false) {
             firestore.collection(EVENTS).whereArrayContains("memberIds", uid)
-                .get().await().documents
+                .get(Source.SERVER).await().documents
         } else emptyList()
         return (public + joined)
             .distinctBy(DocumentSnapshot::getId)
@@ -244,7 +245,10 @@ class FirebaseEventRemoteRepository(
         firestore.collection(INVITATIONS).document(invitation.id).set(invitation.toRemoteMap()).await()
     }
 
-    override suspend fun acceptInvitation(invitation: EventInvitation, membership: EventMembership) {
+    override suspend fun acceptInvitation(
+        invitation: EventInvitation,
+        membership: EventMembership,
+    ): CommunityEvent? {
         val uid = requireAccountUserId()
         require(invitation.recipientUid == uid && membership.userId == uid)
         val invitationRef = firestore.collection(INVITATIONS).document(invitation.id)
@@ -254,6 +258,10 @@ class FirebaseEventRemoteRepository(
             batch.update(eventRef, "memberIds", FieldValue.arrayUnion(uid))
             batch.set(eventRef.collection(MEMBERS).document(uid), membership.toRemoteMap())
         }.await()
+        return runCatching {
+            val eventDocument = eventRef.get(Source.SERVER).await()
+            eventDocument.data?.toEvent(eventDocument.id)
+        }.getOrNull()
     }
 
     override suspend fun declineInvitation(invitation: EventInvitation) {

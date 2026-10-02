@@ -38,11 +38,20 @@ internal class EventMembershipCoordinator(
                     existing = eventStore.getMembership(event.id, userId),
                     joinedAt = clock(),
                 )
-                eventStore.saveMembership(membership)
                 remoteRepository.joinEvent(membership)
-                membership
-            }.onSuccess { membership ->
-                updateState { it.copy(membership = membership, loading = false, notice = "Joined event.") }
+                val joinedEvent = event.copy(memberIds = event.memberIds + userId)
+                eventStore.saveEvent(joinedEvent)
+                eventStore.saveMembership(membership)
+                joinedEvent to membership
+            }.onSuccess { (joinedEvent, membership) ->
+                updateState {
+                    it.copy(
+                        events = it.events.upsertEvent(joinedEvent),
+                        membership = membership,
+                        loading = false,
+                        notice = "Joined event. It is now available for offline check-in.",
+                    )
+                }
             }.onFailure { failure ->
                 updateState { it.copy(loading = false, error = failure.readableEventMessage("Could not join event")) }
             }
@@ -151,16 +160,24 @@ internal class EventMembershipCoordinator(
                     role = EventRole.ATTENDEE,
                     joinedAt = clock(),
                 )
-                remoteRepository.acceptInvitation(invitation, membership)
+                val acceptedEvent = remoteRepository.acceptInvitation(invitation, membership)
+                if (acceptedEvent != null) {
+                    eventStore.saveEvent(acceptedEvent)
+                }
                 eventStore.saveMembership(membership)
-                remoteRepository.listEvents().forEach(eventStore::saveEvent)
-            }.onSuccess {
+                acceptedEvent to membership
+            }.onSuccess { (acceptedEvent, membership) ->
                 updateState { state ->
                     state.copy(
-                        events = eventStore.getEvents(),
+                        events = acceptedEvent?.let(state.events::upsertEvent) ?: state.events,
+                        membership = if (state.selectedEventId == acceptedEvent?.id) membership else state.membership,
                         invitations = state.invitations.filterNot { it.id == invitationId },
                         loading = false,
-                        notice = "Private event invitation accepted.",
+                        notice = if (acceptedEvent != null) {
+                            "Private event invitation accepted and saved for offline check-in."
+                        } else {
+                            "Invitation accepted. The offline event package will download when updates resume."
+                        },
                     )
                 }
             }.onFailure { failure ->
@@ -228,11 +245,14 @@ internal class EventMembershipCoordinator(
                         clearPendingOnSiteAccess(event.id)
                         meshGateway.setActiveEvent(null)
                         eventStore.purgeEvent(event.id)
-                        EventMembershipPolicy.eventVisibleAfterDeparture(event, membership.userId)
-                            ?.let(eventStore::saveEvent)
                         updateState { state ->
+                            val remainingEvents = state.events.withoutEvent(event.id)
+                            val visibleEvents = EventMembershipPolicy.eventVisibleAfterDeparture(
+                                event,
+                                membership.userId,
+                            )?.let(remainingEvents::upsertEvent) ?: remainingEvents
                             EventUiState(
-                                events = eventStore.getEvents(),
+                                events = visibleEvents,
                                 invitations = state.invitations,
                                 currentUserId = state.currentUserId,
                                 notice = "You left the event. All local event data was deleted.",
@@ -265,10 +285,11 @@ internal class EventMembershipCoordinator(
         scope.launch {
             runCatching { remoteRepository.promoteToCoAdmin(event.id, userId) }
                 .onSuccess {
-                    eventStore.saveEvent(event.copy(adminIds = event.adminIds + userId))
+                    val updated = event.copy(adminIds = event.adminIds + userId)
+                    eventStore.saveEvent(updated)
                     updateState {
                         it.copy(
-                            events = eventStore.getEvents(),
+                            events = it.events.upsertEvent(updated),
                             members = it.members.map { member ->
                                 if (member.userId == userId) member.copy(role = EventRole.CO_ADMIN) else member
                             },
@@ -299,16 +320,15 @@ internal class EventMembershipCoordinator(
         scope.launch {
             runCatching { remoteRepository.blockMember(event.id, userId, blockedAt) }
                 .onSuccess {
-                    eventStore.saveEvent(
-                        event.copy(
-                            adminIds = event.adminIds - userId,
-                            memberIds = event.memberIds - userId,
-                            adminPublicKeys = event.adminPublicKeys - userId,
-                        ),
+                    val updated = event.copy(
+                        adminIds = event.adminIds - userId,
+                        memberIds = event.memberIds - userId,
+                        adminPublicKeys = event.adminPublicKeys - userId,
                     )
+                    eventStore.saveEvent(updated)
                     updateState {
                         it.copy(
-                            events = eventStore.getEvents(),
+                            events = it.events.upsertEvent(updated),
                             members = it.members.map { member ->
                                 if (member.userId == userId) member.copy(blockedAt = blockedAt) else member
                             },

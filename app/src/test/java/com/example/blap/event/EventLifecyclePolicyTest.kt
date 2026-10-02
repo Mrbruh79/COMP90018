@@ -146,7 +146,7 @@ class EventLifecyclePolicyTest {
     }
 
     @Test
-    fun cachedNonAuthoritativeSnapshotDoesNotPurgeMissingEvents() {
+    fun nonAuthoritativeSnapshotKeepsMissingJoinedEventAsOfflineFallback() {
         val first = publicEvent(id = "event-1")
         val second = publicEvent(id = "event-2")
 
@@ -154,14 +154,17 @@ class EventLifecyclePolicyTest {
             localEvents = listOf(first, second),
             remoteEvents = listOf(first.copy(title = "Updated")),
             authoritative = false,
+            currentUserId = "admin-1",
         )
 
         assertTrue(result.removedEventIds.isEmpty())
-        assertEquals(listOf("event-1"), result.activeEvents.map(CommunityEvent::id))
+        assertEquals(listOf("event-1", "event-2"), result.visibleEvents.map(CommunityEvent::id))
+        assertEquals(listOf("event-1"), result.cacheableEvents.map(CommunityEvent::id))
+        assertTrue(result.showingOfflineEvents)
     }
 
     @Test
-    fun tombstonesAlwaysRemoveWhileAuthoritativeSnapshotRemovesMissingEvents() {
+    fun tombstonesAlwaysRemoveWhileAuthoritativeSnapshotRemovesMissingPackages() {
         val first = publicEvent(id = "event-1")
         val second = publicEvent(id = "event-2")
         val tombstone = second.copy(deletedAt = now + 1, updatedAt = now + 1)
@@ -170,11 +173,13 @@ class EventLifecyclePolicyTest {
             localEvents = listOf(first, second),
             remoteEvents = listOf(first, tombstone),
             authoritative = false,
+            currentUserId = "admin-1",
         )
         val authoritative = EventLifecyclePolicy.reconcileEvents(
             localEvents = listOf(first, second),
             remoteEvents = listOf(first),
             authoritative = true,
+            currentUserId = "admin-1",
         )
 
         assertEquals(setOf("event-2"), cached.removedEventIds)
@@ -183,34 +188,67 @@ class EventLifecyclePolicyTest {
     }
 
     @Test
-    fun confirmedMembershipRemovalPurgesOnlyAfterAuthoritativeSnapshot() {
-        val membership = membership("event-1", "member-1", EventRole.ATTENDEE)
-        val remoteWithoutMember = publicEvent().copy(memberIds = setOf("admin-1"))
+    fun publicCatalogueEventIsVisibleButNotCachedBeforeJoining() {
+        val publicEvent = publicEvent().copy(memberIds = setOf("admin-1"))
 
-        assertFalse(
-            EventLifecyclePolicy.hasAuthoritativeAccessRemoval(
-                remoteWithoutMember,
-                membership,
-                membership.userId,
-                authoritative = false,
-            ),
+        val result = EventLifecyclePolicy.reconcileEvents(
+            localEvents = emptyList(),
+            remoteEvents = listOf(publicEvent),
+            authoritative = true,
+            currentUserId = "member-1",
         )
-        assertTrue(
-            EventLifecyclePolicy.hasAuthoritativeAccessRemoval(
-                remoteWithoutMember,
-                membership,
-                membership.userId,
-                authoritative = true,
-            ),
+
+        assertEquals(listOf(publicEvent), result.visibleEvents)
+        assertTrue(result.cacheableEvents.isEmpty())
+        assertTrue(result.removedEventIds.isEmpty())
+    }
+
+    @Test
+    fun cachedFirestoreSnapshotHidesPublicEventsThatWereNeverJoined() {
+        val publicEvent = publicEvent().copy(memberIds = setOf("admin-1"))
+
+        val result = EventLifecyclePolicy.reconcileEvents(
+            localEvents = emptyList(),
+            remoteEvents = listOf(publicEvent),
+            authoritative = false,
+            currentUserId = "member-1",
         )
-        assertFalse(
-            EventLifecyclePolicy.hasAuthoritativeAccessRemoval(
-                remoteWithoutMember,
-                cachedMembership = null,
-                currentUserId = membership.userId,
-                authoritative = true,
-            ),
+
+        assertTrue(result.visibleEvents.isEmpty())
+        assertTrue(result.cacheableEvents.isEmpty())
+        assertFalse(result.showingOfflineEvents)
+    }
+
+    @Test
+    fun confirmedJoinedEventIsIncludedInOfflinePackageSet() {
+        val joinedEvent = publicEvent().copy(memberIds = setOf("admin-1", "member-1"))
+
+        val result = EventLifecyclePolicy.reconcileEvents(
+            localEvents = emptyList(),
+            remoteEvents = listOf(joinedEvent),
+            authoritative = true,
+            currentUserId = "member-1",
         )
+
+        assertEquals(listOf(joinedEvent), result.cacheableEvents)
+    }
+
+    @Test
+    fun authoritativeMembershipRemovalPurgesPackageButKeepsPublicEventVisible() {
+        val cachedJoinedEvent = publicEvent().copy(memberIds = setOf("admin-1", "member-1"))
+        val remoteWithoutMember = cachedJoinedEvent.copy(memberIds = setOf("admin-1"))
+
+        val result = EventLifecyclePolicy.reconcileEvents(
+            localEvents = listOf(cachedJoinedEvent),
+            remoteEvents = listOf(remoteWithoutMember),
+            authoritative = true,
+            currentUserId = "member-1",
+        )
+
+        assertEquals(listOf(remoteWithoutMember), result.visibleEvents)
+        assertTrue(result.cacheableEvents.isEmpty())
+        assertEquals(setOf(cachedJoinedEvent.id), result.removedEventIds)
+        assertFalse(result.showingOfflineEvents)
     }
 
     private fun publicEvent(id: String = "event-1", updatedAt: Long = now): CommunityEvent = CommunityEvent(

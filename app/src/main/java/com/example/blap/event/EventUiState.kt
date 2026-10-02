@@ -31,6 +31,7 @@ data class EventUiState(
     val activeEventId: String? = null,
     val checkInQrPayload: String? = null,
     val waitingForAdminAccess: Boolean = false,
+    val showingOfflineEvents: Boolean = false,
     val currentUserId: String = "",
     val loading: Boolean = false,
     val notice: String? = null,
@@ -42,3 +43,9 @@ data class EventUiState(
     val selectedDiscussionRoot: EventDiscussionComment?
         get() = discussionRoots.firstOrNull { it.id == selectedDiscussionThreadId }
 }
+
+internal fun List<CommunityEvent>.upsertEvent(event: CommunityEvent): List<CommunityEvent> =
+    (filterNot { it.id == event.id } + event).sortedBy(CommunityEvent::startsAt)
+
+internal fun List<CommunityEvent>.withoutEvent(eventId: String): List<CommunityEvent> =
+    filterNot { it.id == eventId }

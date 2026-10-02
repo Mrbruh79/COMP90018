@@ -16,7 +16,7 @@ class EventCoordinator(
     private val scope: CoroutineScope,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    private val _uiState = MutableStateFlow(EventUiState(events = eventStore.getEvents()))
+    private val _uiState = MutableStateFlow(EventUiState())
     val uiState: StateFlow<EventUiState> = _uiState.asStateFlow()
 
     private val discussionCoordinator = EventDiscussionCoordinator(

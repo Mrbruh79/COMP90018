@@ -52,6 +52,15 @@ internal fun EventListScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             contentPadding = PaddingValues(vertical = 16.dp),
         ) {
+            if (state.showingOfflineEvents) {
+                item {
+                    Text(
+                        "Offline: showing joined events saved on this device.",
+                        color = MaterialTheme.colorScheme.tertiary,
+                        style = MaterialTheme.typography.labelLarge,
+                    )
+                }
+            }
             if (state.invitations.isNotEmpty()) {
                 item { Text("Private invitations", style = MaterialTheme.typography.titleLarge) }
                 items(state.invitations, key = { "invite-${it.id}" }) { invitation ->

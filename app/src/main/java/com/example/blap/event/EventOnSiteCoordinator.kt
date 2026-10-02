@@ -105,7 +105,7 @@ internal class EventOnSiteCoordinator(
         val unsigned = EventMutation(updated, membership.userId)
         val mutation = unsigned.copy(signature = EventMutationSigner.sign(unsigned, keys.private))
         eventStore.saveEvent(updated)
-        updateState { it.copy(events = eventStore.getEvents()) }
+        updateState { it.copy(events = it.events.upsertEvent(updated)) }
         scope.launch {
             runCatching { remoteRepository.updateEvent(updated) }
                 .onSuccess { meshGateway.sendEventMutation(mutation) }
@@ -320,7 +320,9 @@ internal class EventOnSiteCoordinator(
             meshGateway.setActiveEvent(null)
             updateState {
                 EventUiState(
-                    events = eventStore.getEvents(),
+                    events = it.events.withoutEvent(updated.id),
+                    invitations = it.invitations,
+                    currentUserId = it.currentUserId,
                     notice = "The event and its local data were deleted by the primary admin.",
                 )
             }
@@ -328,7 +330,7 @@ internal class EventOnSiteCoordinator(
         }
         eventStore.saveEvent(updated)
         updateState { state ->
-            state.copy(events = eventStore.getEvents(), notice = "Event details were updated.")
+            state.copy(events = state.events.upsertEvent(updated), notice = "Event details were updated.")
         }
     }
 

@@ -31,7 +31,15 @@ internal class EventLifecycleCoordinator(
         scope.launch {
             runCatching {
                 val userId = requireUserId()
-                updateState { it.copy(currentUserId = userId) }
+                val cachedEvents = cachedEventPackages(userId)
+                updateState {
+                    it.copy(
+                        events = cachedEvents,
+                        showingOfflineEvents = cachedEvents.isNotEmpty(),
+                        currentUserId = userId,
+                        loading = true,
+                    )
+                }
                 startEventObserver()
                 startInvitationObserver()
             }.onFailure { failure ->
@@ -60,30 +68,46 @@ internal class EventLifecycleCoordinator(
     }
 
     fun refreshEvents() {
-        updateState { it.copy(events = eventStore.getEvents(), loading = true, error = null) }
+        updateState { it.copy(loading = true, error = null) }
         scope.launch {
             runCatching {
-                requireUserId()
+                val userId = requireUserId()
                 startEventObserver()
-                remoteRepository.listEvents()
-            }.onSuccess { remoteEvents ->
-                remoteEvents.forEach(eventStore::saveEvent)
+                userId to remoteRepository.listEvents()
+            }.onSuccess { (userId, remoteEvents) ->
+                val reconciliation = EventLifecyclePolicy.reconcileEvents(
+                    localEvents = cachedEventPackages(userId),
+                    remoteEvents = remoteEvents,
+                    authoritative = true,
+                    currentUserId = userId,
+                )
+                val packageIds = reconciliation.cacheableEvents.mapTo(mutableSetOf(), CommunityEvent::id)
+                eventStore.getEvents().map(CommunityEvent::id).filterNot(packageIds::contains)
+                    .forEach(eventStore::purgeEvent)
+                reconciliation.removedEventIds.forEach(eventStore::purgeEvent)
+                reconciliation.cacheableEvents.forEach(eventStore::saveEvent)
                 val invitations = runCatching { remoteRepository.listInvitations() }.getOrDefault(emptyList())
                 updateState {
                     it.copy(
-                        events = eventStore.getEvents(),
+                        events = reconciliation.visibleEvents,
                         invitations = invitations.filter { invitation ->
                             invitation.status == EventInvitationStatus.PENDING
                         },
+                        showingOfflineEvents = reconciliation.showingOfflineEvents,
                         loading = false,
                     )
                 }
             }.onFailure { failure ->
                 updateState {
+                    val cachedEvents = cachedEventPackages(it.currentUserId)
                     it.copy(
+                        events = cachedEvents,
+                        showingOfflineEvents = cachedEvents.isNotEmpty(),
                         loading = false,
-                        notice = if (it.events.isEmpty()) null else "Showing cached events.",
-                        error = if (it.events.isEmpty()) {
+                        notice = if (cachedEvents.isNotEmpty()) {
+                            "Event updates will resume when you are online."
+                        } else null,
+                        error = if (cachedEvents.isEmpty()) {
                             failure.readableEventMessage("Events could not be loaded")
                         } else null,
                     )
@@ -159,7 +183,7 @@ internal class EventLifecycleCoordinator(
                     updateState {
                         it.copy(
                             page = EventPage.DETAIL,
-                            events = eventStore.getEvents(),
+                            events = it.events.upsertEvent(creation.event),
                             selectedEventId = creation.event.id,
                             membership = creation.membership,
                             loading = false,
@@ -209,7 +233,7 @@ internal class EventLifecycleCoordinator(
                         updateState {
                             it.copy(
                                 page = EventPage.DETAIL,
-                                events = eventStore.getEvents(),
+                                events = it.events.upsertEvent(updated),
                                 loading = false,
                                 notice = "Event updated for all attendees.",
                             )
@@ -256,7 +280,9 @@ internal class EventLifecycleCoordinator(
                         eventStore.purgeEvent(event.id)
                         updateState {
                             EventUiState(
-                                events = eventStore.getEvents(),
+                                events = it.events.withoutEvent(event.id),
+                                invitations = it.invitations,
+                                currentUserId = it.currentUserId,
                                 notice = "Event and all associated data were permanently deleted.",
                             )
                         }
@@ -273,7 +299,9 @@ internal class EventLifecycleCoordinator(
     }
 
     fun openEvent(eventId: String) {
-        val event = eventStore.getEvent(eventId) ?: return
+        val event = currentState().events.firstOrNull { it.id == eventId }
+            ?: eventStore.getEvent(eventId)
+            ?: return
         closeEventObservers()
         updateState {
             it.copy(
@@ -389,57 +417,80 @@ internal class EventLifecycleCoordinator(
         if (eventObserver != null) return
         eventObserver = remoteRepository.observeEvents(
             onEvents = { remoteEvents, authoritative ->
-                val localEvents = eventStore.getEvents()
-                val userId = cachedUserId
-                val accessRemovedEventIds = if (authoritative && userId != null) {
-                    remoteEvents.asSequence()
-                        .filter { remote ->
-                            EventLifecyclePolicy.hasAuthoritativeAccessRemoval(
-                                remoteEvent = remote,
-                                cachedMembership = eventStore.getMembership(remote.id, userId),
-                                currentUserId = userId,
-                                authoritative = true,
-                            )
-                        }
-                        .map(CommunityEvent::id)
-                        .toSet()
-                } else emptySet()
+                val userId = cachedUserId ?: return@observeEvents
+                val storedEvents = eventStore.getEvents()
+                val localEvents = cachedEventPackages(userId)
                 val reconciliation = EventLifecyclePolicy.reconcileEvents(
                     localEvents = localEvents,
                     remoteEvents = remoteEvents,
                     authoritative = authoritative,
+                    currentUserId = userId,
                 )
-                val locallyRemovedEventIds = reconciliation.removedEventIds + accessRemovedEventIds
+                val locallyRemovedEventIds = reconciliation.removedEventIds
+                if (authoritative) {
+                    val localPackageIds = localEvents.mapTo(mutableSetOf(), CommunityEvent::id)
+                    storedEvents.map(CommunityEvent::id).filterNot(localPackageIds::contains)
+                        .forEach(eventStore::purgeEvent)
+                }
                 locallyRemovedEventIds.forEach(eventStore::purgeEvent)
-                reconciliation.activeEvents.forEach(eventStore::saveEvent)
+                reconciliation.cacheableEvents.forEach(eventStore::saveEvent)
                 val state = currentState()
                 if (state.activeEventId in locallyRemovedEventIds) meshGateway.setActiveEvent(null)
                 locallyRemovedEventIds.forEach(clearPendingOnSiteAccess)
-                if (state.selectedEventId in locallyRemovedEventIds) closeEventObservers()
+                val selectedEventUnavailable = state.selectedEventId != null &&
+                    reconciliation.visibleEvents.none { it.id == state.selectedEventId }
+                if (selectedEventUnavailable) closeEventObservers()
                 updateState { current ->
-                    if (current.selectedEventId in locallyRemovedEventIds) {
+                    if (selectedEventUnavailable) {
                         EventUiState(
-                            events = eventStore.getEvents(),
+                            events = reconciliation.visibleEvents,
                             invitations = current.invitations,
                             currentUserId = current.currentUserId,
-                            notice = if (current.selectedEventId in accessRemovedEventIds) {
-                                "You were removed from the event. All local event data was deleted."
+                            showingOfflineEvents = reconciliation.showingOfflineEvents,
+                            notice = if (current.selectedEventId in locallyRemovedEventIds) {
+                                "You no longer have access to this event. All local event data was deleted."
+                            } else if (authoritative) {
+                                "This event is no longer available."
                             } else {
-                                "This event is no longer available. All local event data was deleted."
+                                "Join this event online before using it offline."
                             },
                         )
                     } else {
-                        current.copy(events = eventStore.getEvents(), loading = false)
+                        current.copy(
+                            events = reconciliation.visibleEvents,
+                            showingOfflineEvents = reconciliation.showingOfflineEvents,
+                            loading = false,
+                        )
                     }
                 }
                 if (authoritative) reconciliation.tombstones.forEach(::finishLegacyDeletion)
             },
             onError = { failure ->
                 updateState { state ->
-                    if (state.events.isEmpty()) {
-                        state.copy(error = failure.readableEventMessage("Events could not be updated"))
+                    val cachedEvents = cachedEventPackages(state.currentUserId)
+                    if (state.selectedEventId != null && cachedEvents.none { it.id == state.selectedEventId }) {
+                        closeEventObservers()
+                        EventUiState(
+                            events = cachedEvents,
+                            invitations = state.invitations,
+                            currentUserId = state.currentUserId,
+                            showingOfflineEvents = cachedEvents.isNotEmpty(),
+                            notice = "Join this event online before using it offline.",
+                        )
+                    } else if (cachedEvents.isEmpty()) {
+                        state.copy(
+                            events = emptyList(),
+                            loading = false,
+                            showingOfflineEvents = false,
+                            error = failure.readableEventMessage("Events could not be updated"),
+                        )
                     } else {
-                        state.copy(notice = "Event updates will resume when you are online.")
+                        state.copy(
+                            events = cachedEvents,
+                            loading = false,
+                            showingOfflineEvents = true,
+                            notice = "Event updates will resume when you are online.",
+                        )
                     }
                 }
             },
@@ -451,6 +502,10 @@ internal class EventLifecycleCoordinator(
         invitationObserver?.close()
         eventObserver = null
         invitationObserver = null
+    }
+
+    private fun cachedEventPackages(userId: String): List<CommunityEvent> = eventStore.getEvents().filter { event ->
+        !event.isDeleted && eventStore.getMembership(event.id, userId)?.canParticipate == true
     }
 
     private fun finishLegacyDeletion(event: CommunityEvent) {
@@ -516,18 +571,22 @@ internal class EventLifecycleCoordinator(
                         clearPendingOnSiteAccess(eventId)
                         closeEventObservers()
                         eventStore.purgeEvent(eventId)
-                        event?.let { EventMembershipPolicy.eventVisibleAfterDeparture(it, localUserId) }
-                            ?.let(eventStore::saveEvent)
+                        val visibleAfterDeparture = event?.let {
+                            EventMembershipPolicy.eventVisibleAfterDeparture(it, localUserId)
+                        }
                         updateState { state ->
+                            val visibleEvents = state.events.withoutEvent(eventId).let { events ->
+                                visibleAfterDeparture?.let(events::upsertEvent) ?: events
+                            }
                             if (state.selectedEventId == eventId) {
                                 EventUiState(
-                                    events = eventStore.getEvents(),
+                                    events = visibleEvents,
                                     invitations = state.invitations,
                                     currentUserId = state.currentUserId,
                                     notice = "You no longer have access to this event. All local event data was deleted.",
                                 )
                             } else {
-                                state.copy(events = eventStore.getEvents())
+                                state.copy(events = visibleEvents)
                             }
                         }
                     } else if (localMembership != null) {
@@ -556,8 +615,9 @@ internal class EventLifecycleCoordinator(
         val encoded = EventCheckInCodec.encodePublicKey(keys.public)
         runCatching { remoteRepository.registerAdminPublicKey(eventId, userId, encoded) }
             .onSuccess {
-                eventStore.saveEvent(event.copy(adminPublicKeys = event.adminPublicKeys + (userId to encoded)))
-                updateState { it.copy(events = eventStore.getEvents()) }
+                val updated = event.copy(adminPublicKeys = event.adminPublicKeys + (userId to encoded))
+                eventStore.saveEvent(updated)
+                updateState { it.copy(events = it.events.upsertEvent(updated)) }
             }
     }
 
@@ -569,9 +629,11 @@ internal data class EventCreation(
 )
 
 internal data class EventReconciliation(
-    val activeEvents: List<CommunityEvent>,
+    val visibleEvents: List<CommunityEvent>,
+    val cacheableEvents: List<CommunityEvent>,
     val removedEventIds: Set<String>,
     val tombstones: List<CommunityEvent>,
+    val showingOfflineEvents: Boolean,
 )
 
 /** Pure validation and construction rules for event lifecycle operations. */
@@ -679,22 +741,31 @@ internal object EventLifecyclePolicy {
         localEvents: List<CommunityEvent>,
         remoteEvents: List<CommunityEvent>,
         authoritative: Boolean,
+        currentUserId: String,
     ): EventReconciliation {
         val tombstones = remoteEvents.filter(CommunityEvent::isDeleted)
         val activeEvents = remoteEvents.filterNot(CommunityEvent::isDeleted)
-        val activeRemoteIds = activeEvents.mapTo(mutableSetOf(), CommunityEvent::id)
+        val cacheableEvents = activeEvents.filter { currentUserId in it.memberIds }
+        val visibleRemoteEvents = if (authoritative) activeEvents else cacheableEvents
+        val cacheableRemoteIds = cacheableEvents.mapTo(mutableSetOf(), CommunityEvent::id)
+        val tombstoneIds = tombstones.mapTo(mutableSetOf(), CommunityEvent::id)
         val removedEventIds = if (authoritative) {
-            localEvents.map(CommunityEvent::id).filterNot(activeRemoteIds::contains).toSet()
+            localEvents.map(CommunityEvent::id).filterNot(cacheableRemoteIds::contains).toSet()
         } else {
-            tombstones.mapTo(mutableSetOf(), CommunityEvent::id)
+            tombstoneIds
         }
-        return EventReconciliation(activeEvents, removedEventIds, tombstones)
+        val fallbackEvents = if (authoritative) emptyList() else localEvents.filter { cached ->
+            cached.id !in tombstoneIds && visibleRemoteEvents.none { it.id == cached.id }
+        }
+        val visibleEvents = (visibleRemoteEvents + fallbackEvents)
+            .distinctBy(CommunityEvent::id)
+            .sortedBy(CommunityEvent::startsAt)
+        return EventReconciliation(
+            visibleEvents = visibleEvents,
+            cacheableEvents = cacheableEvents,
+            removedEventIds = removedEventIds,
+            tombstones = tombstones,
+            showingOfflineEvents = !authoritative && visibleEvents.isNotEmpty(),
+        )
     }
-
-    fun hasAuthoritativeAccessRemoval(
-        remoteEvent: CommunityEvent,
-        cachedMembership: EventMembership?,
-        currentUserId: String,
-        authoritative: Boolean,
-    ): Boolean = authoritative && cachedMembership != null && currentUserId !in remoteEvent.memberIds
 }

@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import androidx.core.database.sqlite.transaction
 
 interface EventStore {
+    /** Saves the minimal offline package for an event whose membership is confirmed online. */
     fun saveEvent(event: CommunityEvent)
     fun getEvent(eventId: String): CommunityEvent?
     fun getEvents(): List<CommunityEvent>
