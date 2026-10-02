@@ -15,7 +15,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
-import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventPage
 import com.example.blap.event.EventUiState
 import com.example.blap.location.LocationFix
@@ -25,45 +24,13 @@ import com.example.blap.ui.components.createQrBitmap
 @Composable
 fun EventHub(
     state: EventUiState,
-    onBeginCreate: () -> Unit,
-    onBeginEdit: () -> Unit,
-    onCreate: (EventCreateRequest) -> Unit,
-    onOpen: (String) -> Unit,
-    onUpdate: (EventCreateRequest) -> Unit,
-    onDeleteEvent: () -> Unit,
-    onJoin: () -> Unit,
-    onInvite: (String) -> Unit,
-    onSearchParticipant: (String) -> Unit,
-    onAcceptInvitation: (String) -> Unit,
-    onDeclineInvitation: (String) -> Unit,
-    onRevokeInvitation: (String) -> Unit,
-    onLeave: () -> Unit,
-    onPromoteMember: (String) -> Unit,
-    onRemoveMember: (String) -> Unit,
-    onDeleteLocalData: () -> Unit,
-    onShowAnnouncements: () -> Unit,
-    onPublishAnnouncement: (String) -> Unit,
-    onShowDiscussion: () -> Unit,
-    onLoadMoreDiscussion: () -> Unit,
-    onOpenDiscussionThread: (String) -> Unit,
-    onCreateDiscussionComment: (String, String?) -> Unit,
-    onToggleDiscussionLike: (String) -> Unit,
-    onDeleteDiscussionComment: (String) -> Unit,
-    onRequestGpsEntry: () -> Unit,
-    onRequestAdminAccess: () -> Unit,
-    onApproveAdminAccess: (String) -> Unit,
-    onScanCheckInQr: () -> Unit,
-    onShowCheckInQr: () -> Unit,
-    onHideCheckInQr: () -> Unit,
-    onShowSavedChat: () -> Unit,
-    onSendChat: (String) -> Unit,
-    onBack: () -> Unit,
+    actions: EventActions,
     getCurrentLocation: suspend () -> LocationFix?,
     searchPlaces: suspend (String) -> List<PlaceSearchResult>,
 ) {
     state.checkInQrPayload?.let { payload ->
         AlertDialog(
-            onDismissRequest = onHideCheckInQr,
+            onDismissRequest = actions.onHideCheckInQr,
             title = { Text("Venue check-in") },
             text = {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -80,73 +47,73 @@ fun EventHub(
                     )
                 }
             },
-            confirmButton = { TextButton(onClick = onHideCheckInQr) { Text("Close") } },
+            confirmButton = { TextButton(onClick = actions.onHideCheckInQr) { Text("Close") } },
         )
     }
 
     when (state.page) {
         EventPage.LIST -> EventListScreen(
             state,
-            onBeginCreate,
-            onOpen,
-            onAcceptInvitation,
-            onDeclineInvitation,
+            actions.onBeginCreate,
+            actions.onOpen,
+            actions.onAcceptInvitation,
+            actions.onDeclineInvitation,
         )
         EventPage.CREATE -> EventFormScreen(
             null,
             state.loading,
-            onCreate,
-            onBack,
+            actions.onCreate,
+            actions.onBack,
             getCurrentLocation,
             searchPlaces,
         )
         EventPage.EDIT -> EventFormScreen(
             state.selectedEvent,
             state.loading,
-            onUpdate,
-            onBack,
+            actions.onUpdate,
+            actions.onBack,
             getCurrentLocation,
             searchPlaces,
         )
         EventPage.DETAIL -> EventDetailScreen(
             state,
-            onBeginEdit,
-            onDeleteEvent,
-            onJoin,
-            onInvite,
-            onSearchParticipant,
-            onRevokeInvitation,
-            onLeave,
-            onPromoteMember,
-            onRemoveMember,
-            onDeleteLocalData,
-            onShowAnnouncements,
-            onShowDiscussion,
-            onRequestGpsEntry,
-            onRequestAdminAccess,
-            onApproveAdminAccess,
-            onScanCheckInQr,
-            onShowCheckInQr,
-            onShowSavedChat,
-            onBack,
+            actions.onBeginEdit,
+            actions.onDeleteEvent,
+            actions.onJoin,
+            actions.onInvite,
+            actions.onSearchParticipant,
+            actions.onRevokeInvitation,
+            actions.onLeave,
+            actions.onPromoteMember,
+            actions.onRemoveMember,
+            actions.onDeleteLocalData,
+            actions.onShowAnnouncements,
+            actions.onShowDiscussion,
+            actions.onRequestGpsEntry,
+            actions.onRequestAdminAccess,
+            actions.onApproveAdminAccess,
+            actions.onScanCheckInQr,
+            actions.onShowCheckInQr,
+            actions.onShowSavedChat,
+            actions.onBack,
         )
-        EventPage.ANNOUNCEMENTS -> EventAnnouncementsScreen(state, onPublishAnnouncement, onBack)
-        EventPage.ON_SITE_CHAT -> EventChatScreen(state, onSendChat, onBack)
+        EventPage.ANNOUNCEMENTS -> EventAnnouncementsScreen(state, actions.onPublishAnnouncement, actions.onBack)
+        EventPage.ON_SITE_CHAT -> EventChatScreen(state, actions.onSendChat, actions.onBack)
         EventPage.DISCUSSION -> EventDiscussionScreen(
             state = state,
-            onCreateComment = { text -> onCreateDiscussionComment(text, null) },
-            onOpenThread = onOpenDiscussionThread,
-            onToggleLike = onToggleDiscussionLike,
-            onDeleteComment = onDeleteDiscussionComment,
-            onLoadMore = onLoadMoreDiscussion,
-            onBack = onBack,
+            onCreateComment = { text -> actions.onCreateDiscussionComment(text, null) },
+            onOpenThread = actions.onOpenDiscussionThread,
+            onToggleLike = actions.onToggleDiscussionLike,
+            onDeleteComment = actions.onDeleteDiscussionComment,
+            onLoadMore = actions.onLoadMoreDiscussion,
+            onBack = actions.onBack,
         )
         EventPage.DISCUSSION_THREAD -> EventDiscussionThreadScreen(
             state = state,
-            onReply = onCreateDiscussionComment,
-            onToggleLike = onToggleDiscussionLike,
-            onDeleteComment = onDeleteDiscussionComment,
-            onBack = onBack,
+            onReply = actions.onCreateDiscussionComment,
+            onToggleLike = actions.onToggleDiscussionLike,
+            onDeleteComment = actions.onDeleteDiscussionComment,
+            onBack = actions.onBack,
         )
     }
 }

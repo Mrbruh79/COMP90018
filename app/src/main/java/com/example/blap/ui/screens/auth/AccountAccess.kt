@@ -31,9 +31,7 @@ import com.example.blap.auth.AuthAccount
 @Composable
 internal fun AccountAccess(
     authAccount: AuthAccount,
-    onCreateEmailAccount: (String, String) -> Unit,
-    onSignInWithEmail: (String, String) -> Unit,
-    onSignInWithGoogle: () -> Unit,
+    actions: AuthActions,
 ) {
     var accountEmail by rememberSaveable { mutableStateOf("") }
     var accountPassword by remember { mutableStateOf("") }
@@ -81,11 +79,11 @@ internal fun AccountAccess(
                             modifier = Modifier.fillMaxWidth(),
                         )
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            TextButton(onClick = { onCreateEmailAccount(accountEmail, accountPassword) }) {
+                            TextButton(onClick = { actions.onCreateEmailAccount(accountEmail, accountPassword) }) {
                                 Text(if (authAccount.hasGoogle) "Add email sign-in" else "Create account")
                             }
                             if (!authAccount.hasGoogle) {
-                                TextButton(onClick = { onSignInWithEmail(accountEmail, accountPassword) }) {
+                                TextButton(onClick = { actions.onSignInWithEmail(accountEmail, accountPassword) }) {
                                     Text("Sign in")
                                 }
                             }
@@ -96,7 +94,7 @@ internal fun AccountAccess(
                     if (authAccount.hasGoogle) {
                         Text("Google connected", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else {
-                        OutlinedButton(onClick = onSignInWithGoogle) { Text("Continue with Google") }
+                        OutlinedButton(onClick = actions.onSignInWithGoogle) { Text("Continue with Google") }
                     }
                 }
             }

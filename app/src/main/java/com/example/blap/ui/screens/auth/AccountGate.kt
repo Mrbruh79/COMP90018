@@ -34,12 +34,7 @@ internal fun AccountGate(
     modifier: Modifier,
     signedIn: Boolean,
     loading: Boolean,
-    onRegisterEmail: (String, String, String, String) -> Unit,
-    onSignInWithEmail: (String, String) -> Unit,
-    onSignInWithGoogle: () -> Unit,
-    onCompleteProfile: (String, String) -> Unit,
-    onRetry: () -> Unit,
-    onSignOut: () -> Unit,
+    actions: AuthActions,
 ) {
     var email by rememberSaveable { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
@@ -73,12 +68,12 @@ internal fun AccountGate(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Button(onClick = { onCompleteProfile(username, displayName) }, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = { actions.onCompleteAccountProfile(username, displayName) }, modifier = Modifier.fillMaxWidth()) {
                     Text("Save and continue")
                 }
-                TextButton(onClick = onRetry) { Text("Retry loading my profile") }
+                TextButton(onClick = actions.onRetryAccountProfile) { Text("Retry loading my profile") }
             }
-            TextButton(onClick = onSignOut) { Text("Sign out") }
+            TextButton(onClick = actions.onSignOut) { Text("Sign out") }
         } else {
             Text("Sign in to see your chats and contacts on this phone.")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -121,12 +116,12 @@ internal fun AccountGate(
             )
             Button(
                 onClick = {
-                    if (creatingAccount) onRegisterEmail(email, password, username, displayName)
-                    else onSignInWithEmail(email, password)
+                    if (creatingAccount) actions.onRegisterEmail(email, password, username, displayName)
+                    else actions.onSignInWithEmail(email, password)
                 },
                 modifier = Modifier.fillMaxWidth(),
             ) { Text(if (creatingAccount) "Create account" else "Sign in with email") }
-            OutlinedButton(onClick = onSignInWithGoogle, modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = actions.onSignInWithGoogle, modifier = Modifier.fillMaxWidth()) {
                 Text("Continue with Google")
             }
             Text(
