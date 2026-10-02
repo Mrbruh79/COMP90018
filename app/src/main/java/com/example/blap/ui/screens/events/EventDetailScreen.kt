@@ -351,6 +351,14 @@ internal fun EventDetailScreen(
                     }
                 }
                 items(state.eventInvitations, key = { "outgoing-${it.id}" }) { invitation ->
+                    val invitationStatus = if (
+                        invitation.status == EventInvitationStatus.ACCEPTED &&
+                        invitation.recipientUid !in event.memberIds
+                    ) {
+                        "left"
+                    } else {
+                        invitation.status.name.lowercase()
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -359,7 +367,7 @@ internal fun EventDetailScreen(
                         Column(Modifier.weight(1f)) {
                             Text(invitation.recipientName.ifBlank { "@${invitation.recipientUsername}" })
                             Text(
-                                "@${invitation.recipientUsername} · ${invitation.status.name.lowercase()}",
+                                "@${invitation.recipientUsername} · $invitationStatus",
                                 style = MaterialTheme.typography.bodySmall,
                             )
                         }

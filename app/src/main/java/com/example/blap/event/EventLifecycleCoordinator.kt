@@ -471,6 +471,14 @@ internal class EventLifecycleCoordinator(
                         )
                     }
                 }
+                val selectedEvent = remoteEvents.firstOrNull { it.id == currentState().selectedEventId }
+                if (
+                    authoritative &&
+                    selectedEvent?.visibility == EventVisibility.PRIVATE &&
+                    selectedEvent.isAdmin(userId)
+                ) {
+                    refreshEventInvitations(selectedEvent.id)
+                }
                 if (authoritative) reconciliation.tombstones.forEach(::finishLegacyDeletion)
             },
             onError = { failure ->

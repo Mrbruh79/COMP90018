@@ -670,8 +670,23 @@ service cloud.firestore {
             || isEventAdmin(resource.data.eventId)
               && request.resource.data.status == 'REVOKED'
           )
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && isEventAdmin(resource.data.eventId)
+          && resource.data.status == 'ACCEPTED'
+          && request.resource.data.status == 'REVOKED'
+          && !(resource.data.recipientUid in eventData(resource.data.eventId).memberIds)
+        || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+          && resource.data.recipientUid == request.auth.uid
+          && resource.data.status == 'ACCEPTED'
+          && request.resource.data.status == 'REVOKED'
+          && request.auth.uid in eventData(resource.data.eventId).memberIds
+          && !(request.auth.uid in getAfter(
+            /databases/$(database)/documents/events/$(resource.data.eventId)
+          ).data.memberIds)
         || isEventAdmin(resource.data.eventId)
-          && resource.data.status in ['PENDING', 'DECLINED', 'REVOKED']
+          && resource.data.status in ['PENDING', 'ACCEPTED', 'DECLINED', 'REVOKED']
+          && (resource.data.status != 'ACCEPTED'
+            || !(resource.data.recipientUid in eventData(resource.data.eventId).memberIds))
           && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'eventTitle', 'inviterUid', 'inviterName', 'recipientName',
             'recipientUsername', 'startsAt', 'endsAt', 'createdAt', 'expiresAt', 'status'

@@ -375,6 +375,13 @@ class FirebaseEventRemoteRepository(
                 batch.update(eventRef, "memberIds", FieldValue.arrayRemove(userId))
             }
             batch.update(eventRef.collection(MEMBERS).document(userId), "leftAt", leftAt)
+            if (event.visibility == EventVisibility.PRIVATE) {
+                batch.update(
+                    firestore.collection(INVITATIONS).document("${event.id}_$userId"),
+                    "status",
+                    EventInvitationStatus.REVOKED.name,
+                )
+            }
         }.await()
     }
 

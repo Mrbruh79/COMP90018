@@ -324,6 +324,95 @@ test('private events are invisible until an in-app invitation is accepted', asyn
   await assertFails(getDoc(doc(carol, 'events/private-event')));
 });
 
+test('a private member leave revokes the accepted invitation and allows a fresh invite', async () => {
+  await publishAccount('alice');
+  await publishAccount('bob');
+  const privateEvent = await createEventAs('alice', 'private-reinvite-event', 'PRIVATE');
+  const alice = client('alice');
+  const bob = client('bob');
+  const invitationId = 'private-reinvite-event_bob';
+  const invitationPath = `eventInvitations/${invitationId}`;
+  const invitation = {
+    eventId: 'private-reinvite-event', eventTitle: privateEvent.title,
+    inviterUid: 'alice', inviterName: 'alice', recipientUid: 'bob',
+    recipientName: 'bob', recipientUsername: 'bob', startsAt: privateEvent.startsAt,
+    endsAt: privateEvent.endsAt, createdAt: Date.now(), expiresAt: privateEvent.endsAt,
+    status: 'PENDING',
+  };
+  await assertSucceeds(setDoc(doc(alice, invitationPath), invitation));
+
+  const accept = writeBatch(bob);
+  accept.update(doc(bob, invitationPath), { status: 'ACCEPTED' });
+  accept.update(doc(bob, 'events/private-reinvite-event'), { memberIds: ['alice', 'bob'] });
+  accept.set(
+    doc(bob, 'events/private-reinvite-event/members/bob'),
+    membershipFor('private-reinvite-event', 'bob'),
+  );
+  await assertSucceeds(accept.commit());
+
+  await assertFails(setDoc(doc(alice, invitationPath), {
+    ...invitation,
+    createdAt: Date.now() + 1,
+    status: 'PENDING',
+  }));
+  await assertFails(updateDoc(doc(bob, invitationPath), { status: 'REVOKED' }));
+
+  const leave = writeBatch(bob);
+  leave.update(doc(bob, 'events/private-reinvite-event'), { memberIds: ['alice'] });
+  leave.update(
+    doc(bob, 'events/private-reinvite-event/members/bob'),
+    { leftAt: Date.now() },
+  );
+  leave.update(doc(bob, invitationPath), { status: 'REVOKED' });
+  await assertSucceeds(leave.commit());
+
+  await assertSucceeds(setDoc(doc(alice, invitationPath), {
+    ...invitation,
+    createdAt: Date.now() + 1,
+    status: 'PENDING',
+  }));
+});
+
+test('an admin can repair a legacy accepted invite after its recipient has left', async () => {
+  await publishAccount('alice');
+  await publishAccount('bob');
+  const privateEvent = await createEventAs('alice', 'legacy-reinvite-event', 'PRIVATE');
+  const alice = client('alice');
+  const bob = client('bob');
+  const invitationPath = 'eventInvitations/legacy-reinvite-event_bob';
+  const invitation = {
+    eventId: 'legacy-reinvite-event', eventTitle: privateEvent.title,
+    inviterUid: 'alice', inviterName: 'alice', recipientUid: 'bob',
+    recipientName: 'bob', recipientUsername: 'bob', startsAt: privateEvent.startsAt,
+    endsAt: privateEvent.endsAt, createdAt: Date.now(), expiresAt: privateEvent.endsAt,
+    status: 'PENDING',
+  };
+  await assertSucceeds(setDoc(doc(alice, invitationPath), invitation));
+
+  const accept = writeBatch(bob);
+  accept.update(doc(bob, invitationPath), { status: 'ACCEPTED' });
+  accept.update(doc(bob, 'events/legacy-reinvite-event'), { memberIds: ['alice', 'bob'] });
+  accept.set(
+    doc(bob, 'events/legacy-reinvite-event/members/bob'),
+    membershipFor('legacy-reinvite-event', 'bob'),
+  );
+  await assertSucceeds(accept.commit());
+
+  const legacyLeave = writeBatch(bob);
+  legacyLeave.update(doc(bob, 'events/legacy-reinvite-event'), { memberIds: ['alice'] });
+  legacyLeave.update(
+    doc(bob, 'events/legacy-reinvite-event/members/bob'),
+    { leftAt: Date.now() },
+  );
+  await assertSucceeds(legacyLeave.commit());
+
+  await assertSucceeds(setDoc(doc(alice, invitationPath), {
+    ...invitation,
+    createdAt: Date.now() + 1,
+    status: 'PENDING',
+  }));
+});
+
 test('event discovery queries expose indexed public events but never private events', async () => {
   await publishAccount('alice');
   await publishAccount('bob');
