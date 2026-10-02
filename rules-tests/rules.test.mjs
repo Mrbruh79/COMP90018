@@ -2,7 +2,8 @@ import { readFileSync } from 'node:fs';
 import { after, before, beforeEach, test } from 'node:test';
 import { initializeTestEnvironment, assertFails, assertSucceeds } from '@firebase/rules-unit-testing';
 import {
-  collection, deleteDoc, doc, getDoc, getDocs, query, runTransaction, setDoc, updateDoc, where, writeBatch,
+  arrayUnion, collection, deleteDoc, doc, getDoc, getDocs, query, runTransaction, setDoc, updateDoc, where,
+  writeBatch,
 } from 'firebase/firestore';
 
 let environment;
@@ -421,6 +422,55 @@ test('a co-admin can leave while preserving the primary admin and event validity
   });
   leave.update(doc(bob, 'events/co-admin-leave-event/members/bob'), { leftAt: Date.now() });
   await assertSucceeds(leave.commit());
+});
+
+test('a newly promoted private-event co-admin keeps discussion access', async () => {
+  await publishAccount('alice');
+  await publishAccount('bob');
+  const eventId = 'co-admin-discussion-event';
+  const event = await createEventAs('alice', eventId, 'PRIVATE');
+  const alice = client('alice');
+  const bob = client('bob');
+
+  const invitationId = 'co-admin-discussion-event_bob';
+  await assertSucceeds(setDoc(doc(alice, `eventInvitations/${invitationId}`), {
+    eventId, eventTitle: event.title,
+    inviterUid: 'alice', inviterName: 'alice', recipientUid: 'bob',
+    recipientName: 'bob', recipientUsername: 'bob', startsAt: event.startsAt,
+    endsAt: event.endsAt, createdAt: Date.now(), expiresAt: event.endsAt,
+    status: 'PENDING',
+  }));
+  const accept = writeBatch(bob);
+  accept.update(doc(bob, `eventInvitations/${invitationId}`), { status: 'ACCEPTED' });
+  accept.update(doc(bob, `events/${eventId}`), { memberIds: ['alice', 'bob'] });
+  accept.set(doc(bob, `events/${eventId}/members/bob`), membershipFor(eventId, 'bob'));
+  await assertSucceeds(accept.commit());
+
+  const promote = writeBatch(alice);
+  promote.update(doc(alice, `events/${eventId}`), {
+    adminIds: arrayUnion('bob'),
+    memberIds: arrayUnion('bob'),
+  });
+  promote.update(
+    doc(alice, `events/${eventId}/members/bob`),
+    { role: 'CO_ADMIN' },
+  );
+  await assertSucceeds(promote.commit());
+
+  await assertSucceeds(getDocs(collection(
+    bob,
+    `events/${eventId}/discussionThreads`,
+  )));
+  const rootPath = `events/${eventId}/discussionThreads/co-admin-thread`;
+  await assertSucceeds(setDoc(
+    doc(bob, rootPath),
+    discussionCommentFor(
+      eventId,
+      'co-admin-thread',
+      'co-admin-thread',
+      'bob',
+    ),
+  ));
 });
 
 const discussionCommentFor = (eventId, threadId, id, authorId, options = {}) => ({
