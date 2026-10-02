@@ -27,7 +27,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -255,17 +259,23 @@ internal fun ChatScreen(
                 TextButton(onClick = { finishRecording(false) }) { Text("Cancel") }
                 TextButton(onClick = { finishRecording(true) }) { Text("Send") }
             } else {
-                TextButton(onClick = { showPollDialog = true }) { Text("Poll") }
-                TextButton(onClick = {
+                IconButton(onClick = {
                     if (!microphonePermissionGranted) {
                         onRequestMicrophonePermission()
-                        return@TextButton
+                        return@IconButton
                     }
                     if (recorder.start()) {
                         elapsedMs = 0
                         recording = true
                     }
-                }) { Text("Mic") }
+                }) { 
+                    Icon(
+                        imageVector = Icons.Default.Mic,
+                        contentDescription = "Mic",
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                }
+                TextButton(onClick = { showPollDialog = true }) { Text("Poll") }
                 Box(Modifier.weight(1f)) {
                     MessageComposer(
                         text = if (editingId != null) editingText else draft,
