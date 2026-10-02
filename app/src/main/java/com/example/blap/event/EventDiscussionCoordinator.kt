@@ -184,7 +184,11 @@ internal class EventDiscussionCoordinator(
                 updateState {
                     it.copy(
                         loading = false,
-                        notice = if (adminRemoval) "Comment branch removed." else "Comment deleted.",
+                        notice = when {
+                            adminRemoval && comment.isRoot -> "Discussion thread deleted."
+                            adminRemoval -> "Reply branch deleted."
+                            else -> "Comment deleted."
+                        },
                     )
                 }
             }.onFailure { failure ->

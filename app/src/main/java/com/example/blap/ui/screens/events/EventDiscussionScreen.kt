@@ -229,8 +229,8 @@ private fun DiscussionCommentCard(
             title = {
                 Text(
                     when {
-                        adminDelete && comment.isRoot -> "Remove this entire thread?"
-                        adminDelete -> "Remove this reply branch?"
+                        adminDelete && comment.isRoot -> "Delete this entire thread?"
+                        adminDelete -> "Delete this reply branch?"
                         else -> "Delete your comment?"
                     },
                 )
@@ -238,7 +238,7 @@ private fun DiscussionCommentCard(
             text = {
                 Text(
                     if (adminDelete) {
-                        "This removes the selected comment and all replies beneath it for every event member."
+                        "This permanently deletes the selected comment and all replies beneath it for every event member."
                     } else {
                         "Your text will be replaced with [deleted] so existing replies keep their context."
                     },
@@ -254,7 +254,7 @@ private fun DiscussionCommentCard(
                         onDelete()
                     },
                 ) {
-                    Text(if (adminDelete) "Remove" else "Delete", color = MaterialTheme.colorScheme.error)
+                    Text("Delete", color = MaterialTheme.colorScheme.error)
                 }
             },
         )
@@ -299,8 +299,8 @@ private fun DiscussionCommentCard(
                     TextButton(onClick = { showDeleteConfirmation = true }) {
                         Text(
                             when {
-                                adminDelete && comment.isRoot -> "Remove thread"
-                                adminDelete -> "Remove branch"
+                                adminDelete && comment.isRoot -> "Delete thread"
+                                adminDelete -> "Delete branch"
                                 else -> "Delete"
                             },
                             color = MaterialTheme.colorScheme.error,
