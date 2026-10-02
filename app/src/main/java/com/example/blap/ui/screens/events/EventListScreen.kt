@@ -133,7 +133,7 @@ internal fun EventListScreen(
                         Text(
                             listOfNotNull(
                                 event.venueName.takeIf(String::isNotBlank),
-                                "${formatEventTime(event.startsAt)} · ${event.radiusMetres.toInt()} m venue area",
+                                formatEventTime(event.startsAt),
                             ).joinToString("\n"),
                             modifier = Modifier.padding(top = 10.dp),
                             style = MaterialTheme.typography.bodySmall,

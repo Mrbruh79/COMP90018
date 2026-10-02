@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import com.example.blap.event.EventPage
 import com.example.blap.event.EventUiState
+import com.example.blap.location.GeoCoordinates
 import com.example.blap.location.LocationFix
 import com.example.blap.location.PlaceSearchResult
 import com.example.blap.ui.components.createQrBitmap
@@ -27,6 +28,7 @@ fun EventHub(
     actions: EventActions,
     getCurrentLocation: suspend () -> LocationFix?,
     searchPlaces: suspend (String) -> List<PlaceSearchResult>,
+    addressForCoordinates: suspend (GeoCoordinates) -> String?,
 ) {
     state.checkInQrPayload?.let { payload ->
         AlertDialog(
@@ -66,6 +68,7 @@ fun EventHub(
             actions.onBack,
             getCurrentLocation,
             searchPlaces,
+            addressForCoordinates,
         )
         EventPage.EDIT -> EventFormScreen(
             state.selectedEvent,
@@ -74,6 +77,7 @@ fun EventHub(
             actions.onBack,
             getCurrentLocation,
             searchPlaces,
+            addressForCoordinates,
         )
         EventPage.DETAIL -> EventDetailScreen(
             state,

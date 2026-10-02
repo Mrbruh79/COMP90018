@@ -7,4 +7,7 @@ data class PlaceSearchResult(
 
 interface PlaceSearchRepository {
     suspend fun search(query: String): List<PlaceSearchResult>
+
+    /** Returns a readable address for coordinates when reverse lookup is available. */
+    suspend fun reverse(coordinates: GeoCoordinates): String? = null
 }

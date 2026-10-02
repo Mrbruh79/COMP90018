@@ -45,6 +45,7 @@ import androidx.compose.ui.semantics.contentDescription
 import com.example.blap.R
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.blap.location.GeoCoordinates
 import com.example.blap.chat.ChatScreen
 import com.example.blap.chat.ChatNotificationSettings
 import com.example.blap.chat.ChatUiState
@@ -100,6 +101,7 @@ fun NearbyChatApp(
     onShowEvents: () -> Unit,
     getCurrentLocation: suspend () -> LocationFix?,
     searchPlaces: suspend (String) -> List<PlaceSearchResult>,
+    addressForCoordinates: suspend (GeoCoordinates) -> String?,
     onSystemBack: () -> Unit,
     onDismissEventMessage: () -> Unit,
     onOpenSettings: () -> Unit,
@@ -346,6 +348,7 @@ fun NearbyChatApp(
                         actions = eventActions,
                         getCurrentLocation = getCurrentLocation,
                         searchPlaces = searchPlaces,
+                        addressForCoordinates = addressForCoordinates,
                     )
 
                     ChatScreen.GROUP_SETTINGS -> CreateGroupScreen(

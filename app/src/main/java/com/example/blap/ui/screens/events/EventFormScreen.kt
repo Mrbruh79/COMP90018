@@ -55,6 +55,7 @@ internal fun EventFormScreen(
     onBack: () -> Unit,
     getCurrentLocation: suspend () -> LocationFix?,
     searchPlaces: suspend (String) -> List<PlaceSearchResult>,
+    addressForCoordinates: suspend (GeoCoordinates) -> String?,
 ) {
     var title by remember(existing?.id) { mutableStateOf(existing?.title.orEmpty()) }
     var description by remember(existing?.id) { mutableStateOf(existing?.description.orEmpty()) }
@@ -218,6 +219,7 @@ internal fun EventFormScreen(
                 onSelectionChanged = { locationSelection = it },
                 getCurrentLocation = getCurrentLocation,
                 searchPlaces = searchPlaces,
+                addressForCoordinates = addressForCoordinates,
             )
         }
         item {

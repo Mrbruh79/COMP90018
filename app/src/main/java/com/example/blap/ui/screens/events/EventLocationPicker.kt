@@ -31,6 +31,7 @@ import com.example.blap.location.LocationFix
 import com.example.blap.location.PlaceSearchResult
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
+import java.util.Locale
 import kotlinx.coroutines.launch
 
 internal data class EventLocationSelection(
@@ -45,6 +46,7 @@ internal fun EventLocationPicker(
     onSelectionChanged: (EventLocationSelection) -> Unit,
     getCurrentLocation: suspend () -> LocationFix?,
     searchPlaces: suspend (String) -> List<PlaceSearchResult>,
+    addressForCoordinates: suspend (GeoCoordinates) -> String?,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -64,10 +66,19 @@ internal fun EventLocationPicker(
                     if (location == null || !location.coordinates.isValid) {
                         locationError = "Current location was not available."
                     } else {
-                        val updated = EventLocationSelection("Current location", location.coordinates)
+                        val address = runCatching {
+                            addressForCoordinates(location.coordinates)
+                        }.getOrNull()?.takeIf(String::isNotBlank)
+                        val updated = EventLocationSelection(
+                            address ?: location.coordinates.displayLabel(),
+                            location.coordinates,
+                        )
                         onSelectionChanged(updated)
                         searchQuery = updated.venueName
                         searchResults = emptyList()
+                        if (address == null) {
+                            locationError = "Location found, but its address could not be loaded. You can edit it below."
+                        }
                     }
                 }
                 .onFailure { locationError = "Current location was not available." }
@@ -194,6 +205,13 @@ private fun Throwable.toLocationSearchMessage(): String = when {
 
     else -> localizedMessage ?: "Location search failed."
 }
+
+private fun GeoCoordinates.displayLabel(): String = String.format(
+    Locale.US,
+    "%.5f, %.5f",
+    latitude,
+    longitude,
+)
 
 private const val MIN_SEARCH_LENGTH = 3
 private const val MAX_VENUE_NAME_LENGTH = 200

@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import com.example.blap.chat.ChatNotificationSettings
 import com.example.blap.chat.ChatScreen
 import com.example.blap.event.EventPage
+import com.example.blap.location.GeoCoordinates
 import com.example.blap.location.LocationFix
 import com.example.blap.location.PlaceSearchResult
 import java.util.concurrent.atomic.AtomicLong
@@ -265,6 +266,12 @@ class ApplicationViewModel(
     suspend fun searchPlaces(query: String): List<PlaceSearchResult> {
         if (!scope.isActive) throw CancellationException("Account changed")
         return services.places.search(query).also {
+            if (!scope.isActive) throw CancellationException("Account changed")
+        }
+    }
+    suspend fun addressForCoordinates(coordinates: GeoCoordinates): String? {
+        if (!scope.isActive) throw CancellationException("Account changed")
+        return services.places.reverse(coordinates).also {
             if (!scope.isActive) throw CancellationException("Account changed")
         }
     }

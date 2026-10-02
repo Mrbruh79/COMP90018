@@ -161,6 +161,7 @@ fun ApplicationRoute(models: ApplicationViewModels) {
         onShowEvents = eventViewModel::showEvents,
         getCurrentLocation = applicationViewModel::currentLocation,
         searchPlaces = applicationViewModel::searchPlaces,
+        addressForCoordinates = applicationViewModel::addressForCoordinates,
         onSystemBack = applicationViewModel::handleBack,
         onDismissEventMessage = eventViewModel::dismissEventMessage,
         onOpenSettings = applicationViewModel::requestSettings,
