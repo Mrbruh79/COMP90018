@@ -314,7 +314,7 @@ internal class EventMembershipCoordinator(
         }
         val blockedAt = clock()
         scope.launch {
-            runCatching { remoteRepository.blockMember(event.id, userId, blockedAt) }
+            runCatching { remoteRepository.blockMember(event, userId, blockedAt) }
                 .onSuccess {
                     val updated = event.copy(
                         adminIds = event.adminIds - userId,
@@ -327,6 +327,16 @@ internal class EventMembershipCoordinator(
                             events = it.events.upsertEvent(updated),
                             members = it.members.map { member ->
                                 if (member.userId == userId) member.copy(blockedAt = blockedAt) else member
+                            },
+                            eventInvitations = it.eventInvitations.map { invitation ->
+                                if (
+                                    event.visibility == EventVisibility.PRIVATE &&
+                                    invitation.recipientUid == userId
+                                ) {
+                                    invitation.copy(status = EventInvitationStatus.REVOKED)
+                                } else {
+                                    invitation
+                                }
                             },
                             participantSearchResult = it.participantSearchResult
                                 ?.takeUnless { result -> result.membership.userId == userId },

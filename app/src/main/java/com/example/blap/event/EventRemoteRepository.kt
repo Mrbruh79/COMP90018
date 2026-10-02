@@ -40,7 +40,7 @@ interface EventRemoteRepository {
     suspend fun leaveEvent(event: CommunityEvent, membership: EventMembership, leftAt: Long)
     suspend fun listMembers(eventId: String): List<EventMembership>
     suspend fun promoteToCoAdmin(eventId: String, userId: String)
-    suspend fun blockMember(eventId: String, userId: String, blockedAt: Long)
+    suspend fun blockMember(event: CommunityEvent, userId: String, blockedAt: Long)
     suspend fun registerAdminPublicKey(eventId: String, userId: String, encodedPublicKey: String)
     suspend fun saveAnnouncement(announcement: EventAnnouncement)
     suspend fun getAnnouncements(eventId: String, limit: Int = 100): List<EventAnnouncement>
@@ -293,7 +293,25 @@ class FirebaseEventRemoteRepository(
 
     override suspend fun invite(invitation: EventInvitation) {
         require(requireAccountUserId() == invitation.inviterUid)
-        firestore.collection(INVITATIONS).document(invitation.id).set(invitation.toRemoteMap()).await()
+        val invitationRef = firestore.collection(INVITATIONS).document(invitation.id)
+        val membershipRef = firestore.collection(EVENTS).document(invitation.eventId)
+            .collection(MEMBERS).document(invitation.recipientUid)
+        firestore.runTransaction { transaction ->
+            val existingMembership = transaction.get(membershipRef)
+            transaction.set(invitationRef, invitation.toRemoteMap())
+            if (existingMembership.exists() && existingMembership.getLong("blockedAt") != null) {
+                transaction.update(
+                    membershipRef,
+                    mapOf(
+                        "role" to EventRole.ATTENDEE.name,
+                        "blockedAt" to null,
+                        "leftAt" to null,
+                        "accessMethod" to null,
+                        "checkedInAt" to null,
+                    ),
+                )
+            }
+        }.await()
     }
 
     override suspend fun acceptInvitation(
@@ -403,8 +421,8 @@ class FirebaseEventRemoteRepository(
         }.await()
     }
 
-    override suspend fun blockMember(eventId: String, userId: String, blockedAt: Long) {
-        val eventRef = firestore.collection(EVENTS).document(eventId)
+    override suspend fun blockMember(event: CommunityEvent, userId: String, blockedAt: Long) {
+        val eventRef = firestore.collection(EVENTS).document(event.id)
         firestore.runBatch { batch ->
             batch.update(
                 eventRef,
@@ -415,6 +433,13 @@ class FirebaseEventRemoteRepository(
                 ),
             )
             batch.update(eventRef.collection(MEMBERS).document(userId), "blockedAt", blockedAt)
+            if (event.visibility == EventVisibility.PRIVATE) {
+                batch.update(
+                    firestore.collection(INVITATIONS).document("${event.id}_$userId"),
+                    "status",
+                    EventInvitationStatus.REVOKED.name,
+                )
+            }
         }.await()
     }
 

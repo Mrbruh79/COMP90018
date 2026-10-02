@@ -494,6 +494,17 @@ service cloud.firestore {
         && invite.expiresAt >= request.time.toMillis();
     }
 
+    function acceptingFreshInvite(eventId, uid) {
+      let path = /databases/$(database)/documents/eventInvitations/$(inviteId(eventId, uid));
+      let invite = get(path).data;
+      let inviteAfter = getAfter(path).data;
+      return invite.eventId == eventId
+        && invite.recipientUid == uid
+        && invite.status == 'PENDING'
+        && inviteAfter.status == 'ACCEPTED'
+        && inviteAfter.expiresAt >= request.time.toMillis();
+    }
+
     function validEvent(data) {
       return data.keys().hasAll([
           'title', 'description', 'venueName', 'latitude', 'longitude', 'radiusMetres',
@@ -596,6 +607,29 @@ service cloud.firestore {
             || request.auth.uid == userId
               && request.resource.data.role == resource.data.role
               && request.resource.data.blockedAt == resource.data.blockedAt
+            || request.auth.uid == userId
+              && resource.data.get('blockedAt', null) != null
+              && request.resource.data.keys().hasAll([
+                'userId', 'displayName', 'role', 'joinedAt', 'blockedAt', 'leftAt',
+                'accessMethod', 'checkedInAt'
+              ])
+              && request.resource.data.keys().hasOnly([
+                'userId', 'displayName', 'role', 'joinedAt', 'blockedAt', 'leftAt',
+                'accessMethod', 'checkedInAt'
+              ])
+              && request.resource.data.userId == userId
+              && request.resource.data.displayName is string
+              && request.resource.data.displayName.size() > 0
+              && request.resource.data.displayName.size() <= 24
+              && request.resource.data.role == 'ATTENDEE'
+              && request.resource.data.joinedAt is int
+              && request.resource.data.blockedAt == null
+              && request.resource.data.leftAt == null
+              && request.resource.data.accessMethod == null
+              && request.resource.data.checkedInAt == null
+              && !(userId in eventData(eventId).memberIds)
+              && userId in getAfter(/databases/$(database)/documents/events/$(eventId)).data.memberIds
+              && acceptingFreshInvite(eventId, userId)
           );
         allow delete: if isEventAdmin(eventId);
       }
@@ -674,7 +708,12 @@ service cloud.firestore {
           && isEventAdmin(resource.data.eventId)
           && resource.data.status == 'ACCEPTED'
           && request.resource.data.status == 'REVOKED'
-          && !(resource.data.recipientUid in eventData(resource.data.eventId).memberIds)
+          && (
+            !(resource.data.recipientUid in eventData(resource.data.eventId).memberIds)
+            || !(resource.data.recipientUid in getAfter(
+              /databases/$(database)/documents/events/$(resource.data.eventId)
+            ).data.memberIds)
+          )
         || request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
           && resource.data.recipientUid == request.auth.uid
           && resource.data.status == 'ACCEPTED'

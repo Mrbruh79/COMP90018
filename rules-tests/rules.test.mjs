@@ -413,6 +413,51 @@ test('an admin can repair a legacy accepted invite after its recipient has left'
   }));
 });
 
+test('an admin can remove, re-invite and readmit a private event member', async () => {
+  await publishAccount('alice');
+  await publishAccount('bob');
+  const privateEvent = await createEventAs('alice', 'private-readmit-event', 'PRIVATE');
+  const alice = client('alice');
+  const bob = client('bob');
+  const eventPath = 'events/private-readmit-event';
+  const memberPath = `${eventPath}/members/bob`;
+  const invitationPath = 'eventInvitations/private-readmit-event_bob';
+  const invitation = {
+    eventId: 'private-readmit-event', eventTitle: privateEvent.title,
+    inviterUid: 'alice', inviterName: 'alice', recipientUid: 'bob',
+    recipientName: 'bob', recipientUsername: 'bob', startsAt: privateEvent.startsAt,
+    endsAt: privateEvent.endsAt, createdAt: Date.now(), expiresAt: privateEvent.endsAt,
+    status: 'PENDING',
+  };
+  await assertSucceeds(setDoc(doc(alice, invitationPath), invitation));
+
+  const firstAccept = writeBatch(bob);
+  firstAccept.update(doc(bob, invitationPath), { status: 'ACCEPTED' });
+  firstAccept.update(doc(bob, eventPath), { memberIds: ['alice', 'bob'] });
+  firstAccept.set(doc(bob, memberPath), membershipFor('private-readmit-event', 'bob'));
+  await assertSucceeds(firstAccept.commit());
+
+  const remove = writeBatch(alice);
+  remove.update(doc(alice, eventPath), { memberIds: ['alice'] });
+  remove.update(doc(alice, memberPath), { blockedAt: Date.now() });
+  remove.update(doc(alice, invitationPath), { status: 'REVOKED' });
+  await assertSucceeds(remove.commit());
+
+  const reinvite = writeBatch(alice);
+  reinvite.set(doc(alice, invitationPath), {
+    ...invitation,
+    createdAt: Date.now() + 1,
+    status: 'PENDING',
+  });
+  await assertSucceeds(reinvite.commit());
+
+  const secondAccept = writeBatch(bob);
+  secondAccept.update(doc(bob, invitationPath), { status: 'ACCEPTED' });
+  secondAccept.update(doc(bob, eventPath), { memberIds: ['alice', 'bob'] });
+  secondAccept.set(doc(bob, memberPath), membershipFor('private-readmit-event', 'bob'));
+  await assertSucceeds(secondAccept.commit());
+});
+
 test('event discovery queries expose indexed public events but never private events', async () => {
   await publishAccount('alice');
   await publishAccount('bob');
