@@ -102,8 +102,6 @@ class EventViewModel(private val session: MessagingSession) : ViewModel(), Event
 
     fun removeEventMember(userId: String) = eventCoordinator?.blockMember(userId) ?: Unit
 
-    fun deleteSelectedEventData() = eventCoordinator?.deleteSelectedEventData() ?: Unit
-
     fun showEventAnnouncements() = eventCoordinator?.showAnnouncements() ?: Unit
 
     fun publishEventAnnouncement(text: String) = eventCoordinator?.publishAnnouncement(text) ?: Unit

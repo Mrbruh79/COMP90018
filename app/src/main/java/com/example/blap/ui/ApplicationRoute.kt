@@ -126,7 +126,6 @@ fun ApplicationRoute(models: ApplicationViewModels) {
             onLeave = eventViewModel::leaveSelectedEvent,
             onPromoteMember = eventViewModel::promoteEventMember,
             onRemoveMember = eventViewModel::removeEventMember,
-            onDeleteLocalData = eventViewModel::deleteSelectedEventData,
             onShowAnnouncements = eventViewModel::showEventAnnouncements,
             onPublishAnnouncement = eventViewModel::publishEventAnnouncement,
             onShowDiscussion = eventViewModel::showEventDiscussion,

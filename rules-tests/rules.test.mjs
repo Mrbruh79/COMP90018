@@ -380,6 +380,44 @@ test('protected public events remain visible but reject guest joins', async () =
   await assertSucceeds(accountJoin.commit());
 });
 
+test('a co-admin can leave while preserving the primary admin and event validity', async () => {
+  await publishAccount('alice');
+  await publishAccount('bob');
+  const event = await createEventAs('alice', 'co-admin-leave-event', 'PUBLIC');
+  const alice = client('alice');
+  const bob = client('bob');
+
+  const join = writeBatch(bob);
+  join.update(doc(bob, 'events/co-admin-leave-event'), { memberIds: ['alice', 'bob'] });
+  join.set(
+    doc(bob, 'events/co-admin-leave-event/members/bob'),
+    membershipFor('co-admin-leave-event', 'bob'),
+  );
+  await assertSucceeds(join.commit());
+
+  const promote = writeBatch(alice);
+  promote.update(doc(alice, 'events/co-admin-leave-event'), {
+    adminIds: ['alice', 'bob'],
+    adminPublicKeys: { alice: 'public-key', bob: 'bob-public-key' },
+    updatedAt: event.updatedAt + 1,
+  });
+  promote.update(
+    doc(alice, 'events/co-admin-leave-event/members/bob'),
+    { role: 'CO_ADMIN' },
+  );
+  await assertSucceeds(promote.commit());
+
+  const leave = writeBatch(bob);
+  leave.update(doc(bob, 'events/co-admin-leave-event'), {
+    adminIds: ['alice'],
+    memberIds: ['alice'],
+    adminPublicKeys: { alice: 'public-key' },
+    updatedAt: event.updatedAt + 2,
+  });
+  leave.update(doc(bob, 'events/co-admin-leave-event/members/bob'), { leftAt: Date.now() });
+  await assertSucceeds(leave.commit());
+});
+
 const discussionCommentFor = (eventId, threadId, id, authorId, options = {}) => ({
   eventId,
   threadId,

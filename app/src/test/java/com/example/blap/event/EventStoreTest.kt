@@ -38,7 +38,7 @@ class EventStoreTest {
     }
 
     @Test
-    fun deletingLocalEventDataDoesNotAffectOtherEvents() {
+    fun purgingDepartedEventDataDoesNotAffectOtherEvents() {
         val store = InMemoryEventStore()
         val first = event("event-1")
         val second = event("event-2")
@@ -47,7 +47,7 @@ class EventStoreTest {
         store.saveMembership(EventMembership(first.id, "user-1", "Alice", EventRole.ATTENDEE, 1L))
         store.saveChatMessage(EventChatMessage(eventId = first.id, senderId = "user-1", senderName = "Alice", text = "Hi"))
 
-        store.deleteLocalEventData(first.id, "user-1")
+        store.purgeEvent(first.id)
 
         assertNull(store.getEvent(first.id))
         assertTrue(store.getRecentChatMessages(first.id).isEmpty())

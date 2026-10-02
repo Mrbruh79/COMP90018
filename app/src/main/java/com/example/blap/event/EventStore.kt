@@ -19,7 +19,6 @@ interface EventStore {
     fun saveChatMessage(message: EventChatMessage): Boolean
     fun getChatMessages(eventId: String, limit: Int = 5_000): List<EventChatMessage>
     fun getRecentChatMessages(eventId: String, limit: Int = 50): List<EventChatMessage>
-    fun deleteLocalEventData(eventId: String, userId: String)
     fun purgeEvent(eventId: String)
     fun close()
 }
@@ -81,13 +80,6 @@ class InMemoryEventStore : EventStore {
         .filter { it.eventId == eventId }
         .sortedBy(EventChatMessage::createdAt)
         .takeLast(limit.coerceIn(1, 5_000))
-
-    override fun deleteLocalEventData(eventId: String, userId: String) {
-        events.remove(eventId)
-        memberships.remove(eventId to userId)
-        announcements.entries.removeAll { it.value.eventId == eventId }
-        messages.entries.removeAll { it.value.eventId == eventId }
-    }
 
     override fun purgeEvent(eventId: String) {
         events.remove(eventId)
@@ -427,20 +419,6 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             }
         }
         return messages.asReversed()
-    }
-
-    @Synchronized
-    override fun deleteLocalEventData(eventId: String, userId: String) {
-        writableDatabase.transaction {
-            delete("event_chat_messages", "event_id = ?", arrayOf(eventId))
-            delete("event_announcements", "event_id = ?", arrayOf(eventId))
-            delete(
-                "event_memberships",
-                "event_id = ? AND user_id = ?",
-                arrayOf(eventId, userId),
-            )
-            delete("events", "event_id = ?", arrayOf(eventId))
-        }
     }
 
     @Synchronized

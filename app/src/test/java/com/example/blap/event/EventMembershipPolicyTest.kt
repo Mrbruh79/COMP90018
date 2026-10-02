@@ -2,6 +2,7 @@ package com.example.blap.event
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Test
 
@@ -152,5 +153,24 @@ class EventMembershipPolicyTest {
         )
         assertNull(EventMembershipPolicy.removalError(primaryAdmin, attendee))
         assertFalse(EventMembershipPolicy.removalAdminError(privateEvent, attendee) == null)
+    }
+
+    @Test
+    fun departureRetainsOnlyPublicDiscoveryMetadata() {
+        val coAdminId = "co-admin-1"
+        val joinedPublicEvent = publicEvent.copy(
+            adminIds = publicEvent.adminIds + coAdminId,
+            memberIds = publicEvent.memberIds + coAdminId,
+            adminPublicKeys = mapOf("admin-1" to "primary-key", coAdminId to "co-admin-key"),
+        )
+
+        val retained = EventMembershipPolicy.eventVisibleAfterDeparture(joinedPublicEvent, coAdminId)
+
+        assertNotNull(retained)
+        assertFalse(coAdminId in requireNotNull(retained).memberIds)
+        assertFalse(coAdminId in retained.adminIds)
+        assertFalse(coAdminId in retained.adminPublicKeys)
+        assertNull(EventMembershipPolicy.eventVisibleAfterDeparture(privateEvent, attendee.userId))
+        assertNull(EventMembershipPolicy.eventVisibleAfterDeparture(publicEvent, publicEvent.createdBy))
     }
 }

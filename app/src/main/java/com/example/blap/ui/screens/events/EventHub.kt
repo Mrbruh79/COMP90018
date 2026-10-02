@@ -86,7 +86,6 @@ fun EventHub(
             actions.onLeave,
             actions.onPromoteMember,
             actions.onRemoveMember,
-            actions.onDeleteLocalData,
             actions.onShowAnnouncements,
             actions.onShowDiscussion,
             actions.onRequestGpsEntry,

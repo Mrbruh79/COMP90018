@@ -26,18 +26,6 @@ class EventCoordinator(
         updateState = { transform -> _uiState.update(transform) },
         clock = clock,
     )
-    private val lifecycleCoordinator = EventLifecycleCoordinator(
-        eventStore = eventStore,
-        remoteRepository = remoteRepository,
-        adminKeyStore = adminKeyStore,
-        identityStore = identityStore,
-        meshGateway = nearbyController,
-        scope = scope,
-        currentState = { _uiState.value },
-        updateState = { transform -> _uiState.update(transform) },
-        closeEventObservers = discussionCoordinator::closeObservers,
-        clock = clock,
-    )
     private val onSiteCoordinator = EventOnSiteCoordinator(
         eventStore = eventStore,
         remoteRepository = remoteRepository,
@@ -50,6 +38,19 @@ class EventCoordinator(
         closeEventObservers = discussionCoordinator::closeObservers,
         clock = clock,
     )
+    private val lifecycleCoordinator = EventLifecycleCoordinator(
+        eventStore = eventStore,
+        remoteRepository = remoteRepository,
+        adminKeyStore = adminKeyStore,
+        identityStore = identityStore,
+        meshGateway = nearbyController,
+        scope = scope,
+        currentState = { _uiState.value },
+        updateState = { transform -> _uiState.update(transform) },
+        closeEventObservers = discussionCoordinator::closeObservers,
+        clearPendingOnSiteAccess = onSiteCoordinator::clearPendingAccess,
+        clock = clock,
+    )
     private val membershipCoordinator = EventMembershipCoordinator(
         eventStore = eventStore,
         remoteRepository = remoteRepository,
@@ -60,6 +61,8 @@ class EventCoordinator(
         currentState = { _uiState.value },
         updateState = { transform -> _uiState.update(transform) },
         deletePrimaryAdminEvent = lifecycleCoordinator::deleteSelectedEvent,
+        closeEventObservers = discussionCoordinator::closeObservers,
+        clearPendingOnSiteAccess = onSiteCoordinator::clearPendingAccess,
         clock = clock,
     )
 
@@ -67,7 +70,10 @@ class EventCoordinator(
         lifecycleCoordinator.start()
     }
 
-    fun accountChanged() = lifecycleCoordinator.accountChanged()
+    fun accountChanged() {
+        onSiteCoordinator.clearPendingAccess()
+        lifecycleCoordinator.accountChanged()
+    }
 
     fun showList() {
         discussionCoordinator.closeObservers()
@@ -179,8 +185,6 @@ class EventCoordinator(
     fun promoteMemberToCoAdmin(userId: String) = membershipCoordinator.promoteToCoAdmin(userId)
 
     fun blockMember(userId: String) = membershipCoordinator.blockMember(userId)
-
-    fun deleteSelectedEventData() = lifecycleCoordinator.deleteSelectedEventData()
 
     fun showAnnouncements() = lifecycleCoordinator.showAnnouncements()
 

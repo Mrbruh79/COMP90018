@@ -182,6 +182,37 @@ class EventLifecyclePolicyTest {
         assertEquals(setOf("event-2"), authoritative.removedEventIds)
     }
 
+    @Test
+    fun confirmedMembershipRemovalPurgesOnlyAfterAuthoritativeSnapshot() {
+        val membership = membership("event-1", "member-1", EventRole.ATTENDEE)
+        val remoteWithoutMember = publicEvent().copy(memberIds = setOf("admin-1"))
+
+        assertFalse(
+            EventLifecyclePolicy.hasAuthoritativeAccessRemoval(
+                remoteWithoutMember,
+                membership,
+                membership.userId,
+                authoritative = false,
+            ),
+        )
+        assertTrue(
+            EventLifecyclePolicy.hasAuthoritativeAccessRemoval(
+                remoteWithoutMember,
+                membership,
+                membership.userId,
+                authoritative = true,
+            ),
+        )
+        assertFalse(
+            EventLifecyclePolicy.hasAuthoritativeAccessRemoval(
+                remoteWithoutMember,
+                cachedMembership = null,
+                currentUserId = membership.userId,
+                authoritative = true,
+            ),
+        )
+    }
+
     private fun publicEvent(id: String = "event-1", updatedAt: Long = now): CommunityEvent = CommunityEvent(
         id = id,
         title = "Event",

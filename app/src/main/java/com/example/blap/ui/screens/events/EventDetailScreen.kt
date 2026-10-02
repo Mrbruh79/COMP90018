@@ -51,7 +51,6 @@ internal fun EventDetailScreen(
     onLeave: () -> Unit,
     onPromoteMember: (String) -> Unit,
     onRemoveMember: (String) -> Unit,
-    onDeleteLocalData: () -> Unit,
     onShowAnnouncements: () -> Unit,
     onShowDiscussion: () -> Unit,
     onRequestGpsEntry: () -> Unit,
@@ -95,13 +94,21 @@ internal fun EventDetailScreen(
         )
     }
     if (showLeaveConfirmation) {
+        val deletesWholeEvent = membership?.role == com.example.blap.event.EventRole.PRIMARY_ADMIN
         AlertDialog(
             onDismissRequest = { showLeaveConfirmation = false },
-            title = { Text("Leave and delete ${event.title}?") },
+            title = {
+                Text(if (deletesWholeEvent) "Leave and delete ${event.title}?" else "Leave ${event.title}?")
+            },
             text = {
                 Text(
-                    "You are the primary admin. Leaving will permanently delete this event " +
-                        "and all of its data for everyone.",
+                    if (deletesWholeEvent) {
+                        "You are the primary admin. Leaving will permanently delete this event " +
+                            "and all of its data for everyone."
+                    } else {
+                        "Leaving permanently deletes this event's messages, announcements, check-in " +
+                            "and other local data from this device. This cannot be undone."
+                    },
                 )
             },
             dismissButton = {
@@ -114,7 +121,12 @@ internal fun EventDetailScreen(
                         onLeave()
                     },
                     enabled = !state.loading,
-                ) { Text("Leave and delete", color = MaterialTheme.colorScheme.error) }
+                ) {
+                    Text(
+                        if (deletesWholeEvent) "Leave and delete" else "Leave event",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             },
         )
     }
@@ -228,13 +240,7 @@ internal fun EventDetailScreen(
             }
             item {
                 OutlinedButton(
-                    onClick = {
-                        if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) {
-                            showLeaveConfirmation = true
-                        } else {
-                            onLeave()
-                        }
-                    },
+                    onClick = { showLeaveConfirmation = true },
                     modifier = Modifier.fillMaxWidth(),
                 ) { Text(if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) "Leave and delete event" else "Leave event") }
             }
@@ -393,7 +399,6 @@ internal fun EventDetailScreen(
                     }
                 }
             }
-            item { TextButton(onClick = onDeleteLocalData, modifier = Modifier.fillMaxWidth()) { Text("Delete local event data") } }
         }
     }
 }

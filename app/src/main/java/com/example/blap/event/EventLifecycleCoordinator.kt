@@ -17,6 +17,7 @@ internal class EventLifecycleCoordinator(
     private val currentState: () -> EventUiState,
     private val updateState: (((EventUiState) -> EventUiState) -> Unit),
     private val closeEventObservers: () -> Unit,
+    private val clearPendingOnSiteAccess: (String?) -> Unit,
     private val clock: () -> Long,
 ) {
     private var cachedUserId: String? = null
@@ -249,6 +250,7 @@ internal class EventLifecycleCoordinator(
                 runCatching { remoteRepository.deleteEvent(event.id) }
                     .onSuccess {
                         closeEventObservers()
+                        clearPendingOnSiteAccess(event.id)
                         meshGateway.sendEventMutation(mutation)
                         meshGateway.setActiveEvent(null)
                         eventStore.purgeEvent(event.id)
@@ -295,18 +297,6 @@ internal class EventLifecycleCoordinator(
             refreshAnnouncements(event.id)
             if (event.visibility == EventVisibility.PRIVATE && event.isAdmin(userId)) {
                 refreshEventInvitations(event.id)
-            }
-        }
-    }
-
-    fun deleteSelectedEventData() {
-        val event = currentState().selectedEvent ?: return
-        scope.launch {
-            val userId = cachedUserId ?: runCatching { requireUserId() }.getOrNull() ?: return@launch
-            eventStore.deleteLocalEventData(event.id, userId)
-            meshGateway.setActiveEvent(null)
-            updateState {
-                EventUiState(events = eventStore.getEvents(), notice = "Local event data deleted.")
             }
         }
     }
@@ -399,21 +389,44 @@ internal class EventLifecycleCoordinator(
         if (eventObserver != null) return
         eventObserver = remoteRepository.observeEvents(
             onEvents = { remoteEvents, authoritative ->
+                val localEvents = eventStore.getEvents()
+                val userId = cachedUserId
+                val accessRemovedEventIds = if (authoritative && userId != null) {
+                    remoteEvents.asSequence()
+                        .filter { remote ->
+                            EventLifecyclePolicy.hasAuthoritativeAccessRemoval(
+                                remoteEvent = remote,
+                                cachedMembership = eventStore.getMembership(remote.id, userId),
+                                currentUserId = userId,
+                                authoritative = true,
+                            )
+                        }
+                        .map(CommunityEvent::id)
+                        .toSet()
+                } else emptySet()
                 val reconciliation = EventLifecyclePolicy.reconcileEvents(
-                    localEvents = eventStore.getEvents(),
+                    localEvents = localEvents,
                     remoteEvents = remoteEvents,
                     authoritative = authoritative,
                 )
+                val locallyRemovedEventIds = reconciliation.removedEventIds + accessRemovedEventIds
+                locallyRemovedEventIds.forEach(eventStore::purgeEvent)
                 reconciliation.activeEvents.forEach(eventStore::saveEvent)
-                reconciliation.removedEventIds.forEach(eventStore::purgeEvent)
                 val state = currentState()
-                if (state.activeEventId in reconciliation.removedEventIds) meshGateway.setActiveEvent(null)
-                if (state.selectedEventId in reconciliation.removedEventIds) closeEventObservers()
+                if (state.activeEventId in locallyRemovedEventIds) meshGateway.setActiveEvent(null)
+                locallyRemovedEventIds.forEach(clearPendingOnSiteAccess)
+                if (state.selectedEventId in locallyRemovedEventIds) closeEventObservers()
                 updateState { current ->
-                    if (current.selectedEventId in reconciliation.removedEventIds) {
+                    if (current.selectedEventId in locallyRemovedEventIds) {
                         EventUiState(
                             events = eventStore.getEvents(),
-                            notice = "The event was deleted by its primary admin.",
+                            invitations = current.invitations,
+                            currentUserId = current.currentUserId,
+                            notice = if (current.selectedEventId in accessRemovedEventIds) {
+                                "You were removed from the event. All local event data was deleted."
+                            } else {
+                                "This event is no longer available. All local event data was deleted."
+                            },
                         )
                     } else {
                         current.copy(events = eventStore.getEvents(), loading = false)
@@ -497,22 +510,40 @@ internal class EventLifecycleCoordinator(
                     val localUserId = cachedUserId
                     val localMembership = members.firstOrNull { it.userId == localUserId }
                     val cachedMembership = localUserId?.let { eventStore.getMembership(eventId, it) }
-                    if (localMembership != null) {
+                    if (localUserId != null && cachedMembership != null && localMembership?.canParticipate != true) {
+                        val event = eventStore.getEvent(eventId)
+                        if (currentState().activeEventId == eventId) meshGateway.setActiveEvent(null)
+                        clearPendingOnSiteAccess(eventId)
+                        closeEventObservers()
+                        eventStore.purgeEvent(eventId)
+                        event?.let { EventMembershipPolicy.eventVisibleAfterDeparture(it, localUserId) }
+                            ?.let(eventStore::saveEvent)
+                        updateState { state ->
+                            if (state.selectedEventId == eventId) {
+                                EventUiState(
+                                    events = eventStore.getEvents(),
+                                    invitations = state.invitations,
+                                    currentUserId = state.currentUserId,
+                                    notice = "You no longer have access to this event. All local event data was deleted.",
+                                )
+                            } else {
+                                state.copy(events = eventStore.getEvents())
+                            }
+                        }
+                    } else if (localMembership != null) {
                         eventStore.saveMembership(localMembership)
                         if (localMembership.isAdmin) registerLocalAdminKey(eventId, localMembership.userId)
-                    } else if (
-                        cachedMembership?.canParticipate == true &&
-                        eventStore.getEvent(eventId)?.visibility == EventVisibility.PUBLIC
-                    ) {
-                        runCatching { remoteRepository.joinEvent(cachedMembership) }
-                    }
-                    updateState { state ->
-                        if (state.selectedEventId == eventId) {
-                            state.copy(
-                                members = members,
-                                membership = localMembership ?: state.membership,
-                            )
-                        } else state
+                        updateState { state ->
+                            if (state.selectedEventId == eventId) {
+                                state.copy(members = members, membership = localMembership)
+                            } else state
+                        }
+                    } else {
+                        updateState { state ->
+                            if (state.selectedEventId == eventId) {
+                                state.copy(members = members, membership = null)
+                            } else state
+                        }
                     }
                 }
         }
@@ -659,4 +690,11 @@ internal object EventLifecyclePolicy {
         }
         return EventReconciliation(activeEvents, removedEventIds, tombstones)
     }
+
+    fun hasAuthoritativeAccessRemoval(
+        remoteEvent: CommunityEvent,
+        cachedMembership: EventMembership?,
+        currentUserId: String,
+        authoritative: Boolean,
+    ): Boolean = authoritative && cachedMembership != null && currentUserId !in remoteEvent.memberIds
 }

@@ -32,7 +32,7 @@ interface EventRemoteRepository {
     suspend fun declineInvitation(invitation: EventInvitation)
     suspend fun revokeInvitation(invitation: EventInvitation)
     suspend fun joinEvent(membership: EventMembership)
-    suspend fun leaveEvent(eventId: String, userId: String, leftAt: Long)
+    suspend fun leaveEvent(event: CommunityEvent, membership: EventMembership, leftAt: Long)
     suspend fun listMembers(eventId: String): List<EventMembership>
     suspend fun promoteToCoAdmin(eventId: String, userId: String)
     suspend fun blockMember(eventId: String, userId: String, blockedAt: Long)
@@ -297,10 +297,24 @@ class FirebaseEventRemoteRepository(
         }.await()
     }
 
-    override suspend fun leaveEvent(eventId: String, userId: String, leftAt: Long) {
-        val eventRef = firestore.collection(EVENTS).document(eventId)
+    override suspend fun leaveEvent(event: CommunityEvent, membership: EventMembership, leftAt: Long) {
+        require(event.id == membership.eventId && event.createdBy != membership.userId)
+        val userId = membership.userId
+        val eventRef = firestore.collection(EVENTS).document(event.id)
         firestore.runBatch { batch ->
-            batch.update(eventRef, "memberIds", FieldValue.arrayRemove(userId))
+            if (membership.isAdmin) {
+                batch.update(
+                    eventRef,
+                    mapOf(
+                        "memberIds" to FieldValue.arrayRemove(userId),
+                        "adminIds" to FieldValue.arrayRemove(userId),
+                        "adminPublicKeys.$userId" to FieldValue.delete(),
+                        "updatedAt" to maxOf(leftAt, event.updatedAt + 1),
+                    ),
+                )
+            } else {
+                batch.update(eventRef, "memberIds", FieldValue.arrayRemove(userId))
+            }
             batch.update(eventRef.collection(MEMBERS).document(userId), "leftAt", leftAt)
         }.await()
     }
@@ -331,6 +345,7 @@ class FirebaseEventRemoteRepository(
                 mapOf(
                     "adminIds" to FieldValue.arrayRemove(userId),
                     "memberIds" to FieldValue.arrayRemove(userId),
+                    "adminPublicKeys.$userId" to FieldValue.delete(),
                 ),
             )
             batch.update(eventRef.collection(MEMBERS).document(userId), "blockedAt", blockedAt)

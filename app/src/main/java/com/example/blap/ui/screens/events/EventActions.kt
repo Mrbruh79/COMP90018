@@ -18,7 +18,6 @@ data class EventActions(
     val onLeave: () -> Unit,
     val onPromoteMember: (String) -> Unit,
     val onRemoveMember: (String) -> Unit,
-    val onDeleteLocalData: () -> Unit,
     val onShowAnnouncements: () -> Unit,
     val onPublishAnnouncement: (String) -> Unit,
     val onShowDiscussion: () -> Unit,

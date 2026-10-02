@@ -19,6 +19,10 @@ internal class EventOnSiteCoordinator(
 ) {
     private var pendingAccessRequest: EventAccessRequest? = null
 
+    fun clearPendingAccess(eventId: String? = null) {
+        if (eventId == null || pendingAccessRequest?.eventId == eventId) pendingAccessRequest = null
+    }
+
     fun enterWithGps(latitude: Double, longitude: Double, accuracyMetres: Double) {
         val event = currentState().selectedEvent ?: return
         val membership = currentState().membership
@@ -310,6 +314,7 @@ internal class EventOnSiteCoordinator(
         val existing = eventStore.getEvent(mutation.event.id) ?: return
         val updated = EventOnSitePolicy.verifiedMutationEvent(existing, mutation) ?: return
         if (updated.isDeleted) {
+            clearPendingAccess(updated.id)
             closeEventObservers()
             eventStore.purgeEvent(updated.id)
             meshGateway.setActiveEvent(null)

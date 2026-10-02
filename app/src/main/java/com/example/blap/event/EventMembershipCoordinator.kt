@@ -15,8 +15,12 @@ internal class EventMembershipCoordinator(
     private val currentState: () -> EventUiState,
     private val updateState: (((EventUiState) -> EventUiState) -> Unit),
     private val deletePrimaryAdminEvent: () -> Unit,
+    private val closeEventObservers: () -> Unit,
+    private val clearPendingOnSiteAccess: (String?) -> Unit,
     private val clock: () -> Long,
 ) {
+    private var leaveRequestInFlight = false
+
     fun joinSelectedEvent() {
         val event = currentState().selectedEvent ?: return
         EventMembershipPolicy.joinError(event, remoteRepository.hasSignedInAccount())?.let { error ->
@@ -206,6 +210,7 @@ internal class EventMembershipCoordinator(
     }
 
     fun leaveSelectedEvent() {
+        if (leaveRequestInFlight) return
         val event = currentState().selectedEvent ?: return
         val membership = currentState().membership ?: return
         if (membership.role == EventRole.PRIMARY_ADMIN && event.createdBy == membership.userId) {
@@ -213,17 +218,38 @@ internal class EventMembershipCoordinator(
             return
         }
         val leftAt = clock()
-        val updated = membership.copy(leftAt = leftAt, checkedInAt = null, accessMethod = null)
-        eventStore.saveMembership(updated)
-        meshGateway.setActiveEvent(null)
-        updateState {
-            it.copy(membership = updated, activeEventId = null, page = EventPage.DETAIL, notice = "You left the event.")
-        }
+        leaveRequestInFlight = true
+        updateState { it.copy(loading = true, error = null) }
         scope.launch {
-            runCatching { remoteRepository.leaveEvent(event.id, membership.userId, leftAt) }
-                .onFailure { failure ->
-                    updateState { it.copy(error = failure.readableEventMessage("Leaving could not be synced")) }
-                }
+            try {
+                runCatching { remoteRepository.leaveEvent(event, membership, leftAt) }
+                    .onSuccess {
+                        closeEventObservers()
+                        clearPendingOnSiteAccess(event.id)
+                        meshGateway.setActiveEvent(null)
+                        eventStore.purgeEvent(event.id)
+                        EventMembershipPolicy.eventVisibleAfterDeparture(event, membership.userId)
+                            ?.let(eventStore::saveEvent)
+                        updateState { state ->
+                            EventUiState(
+                                events = eventStore.getEvents(),
+                                invitations = state.invitations,
+                                currentUserId = state.currentUserId,
+                                notice = "You left the event. All local event data was deleted.",
+                            )
+                        }
+                    }
+                    .onFailure { failure ->
+                        updateState {
+                            it.copy(
+                                loading = false,
+                                error = failure.readableEventMessage("The event could not be left"),
+                            )
+                        }
+                    }
+            } finally {
+                leaveRequestInFlight = false
+            }
         }
     }
 
@@ -277,6 +303,7 @@ internal class EventMembershipCoordinator(
                         event.copy(
                             adminIds = event.adminIds - userId,
                             memberIds = event.memberIds - userId,
+                            adminPublicKeys = event.adminPublicKeys - userId,
                         ),
                     )
                     updateState {
@@ -301,6 +328,15 @@ internal class EventMembershipCoordinator(
 
 /** Pure membership rules and model construction shared by membership operations. */
 internal object EventMembershipPolicy {
+    fun eventVisibleAfterDeparture(event: CommunityEvent, userId: String): CommunityEvent? {
+        if (event.visibility != EventVisibility.PUBLIC || event.createdBy == userId) return null
+        return event.copy(
+            adminIds = event.adminIds - userId,
+            memberIds = event.memberIds - userId,
+            adminPublicKeys = event.adminPublicKeys - userId,
+        )
+    }
+
     fun joinError(event: CommunityEvent, hasSignedInAccount: Boolean): String? = when {
         event.visibility == EventVisibility.PRIVATE ->
             "Private events can only be joined by accepting an invitation."
