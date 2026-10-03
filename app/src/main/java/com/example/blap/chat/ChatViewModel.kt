@@ -26,6 +26,7 @@ class ChatViewModel(private val session: MessagingSession, private val ownsSessi
     fun showConversationList() {
         session.navigation.showConversationList()
     }
+    fun showNotificationSettings() = session.navigation.showNotificationSettings()
     fun showError(message: String) = session.showError(message)
     fun showNotice(message: String) = session.showNotice(message)
     fun accountChanged(accountId: String) = session.cloudSync.accountChanged(accountId)

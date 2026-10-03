@@ -56,10 +56,17 @@ internal fun WelcomeScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            AccountAccess(
-                authAccount = authAccount,
-                actions = actions,
-            )
+            Card(
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(18.dp),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    AccountAccess(
+                        authAccount = authAccount,
+                        actions = actions,
+                    )
+                }
+            }
             Text("Your nearby profile", style = MaterialTheme.typography.titleMedium)
             OutlinedTextField(
                 value = name,

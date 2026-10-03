@@ -62,6 +62,7 @@ import com.example.blap.ui.screens.contacts.ContactEditorScreen
 import com.example.blap.ui.screens.contacts.ChatContactProfileScreen
 import com.example.blap.ui.screens.auth.AccountGate
 import com.example.blap.ui.screens.auth.WelcomeScreen
+import com.example.blap.ui.screens.settings.NotificationSettingsScreen
 import com.example.blap.ui.screens.settings.SettingsScreen
 import com.example.blap.ui.screens.settings.DiscoverySettingsScreen
 import com.example.blap.ui.screens.messages.ConversationListScreen
@@ -97,6 +98,7 @@ fun NearbyChatApp(
     notificationPermissionGranted: Boolean,
     onNotificationSettingsChanged: (ChatNotificationSettings) -> Unit,
     onRequestNotificationPermission: () -> Unit,
+    onShowNotificationSettings: () -> Unit,
     onShowEvents: () -> Unit,
     getCurrentLocation: suspend () -> LocationFix?,
     searchPlaces: suspend (String) -> List<PlaceSearchResult>,
@@ -338,20 +340,25 @@ fun NearbyChatApp(
                         nearbyActive = chatUiState.nearbyActive,
                         onStartNearby = chatActions.onStartChat,
                         onStopNearby = chatActions.onStopChat,
-                        notificationSettings = notificationSettings,
-                        notificationPermissionGranted = notificationPermissionGranted,
-                        onNotificationSettingsChanged = onNotificationSettingsChanged,
-                        onRequestNotificationPermission = onRequestNotificationPermission,
+                        onShowNotificationSettings = onShowNotificationSettings,
+                    )
+
+                    ChatScreen.NOTIFICATION_SETTINGS -> NotificationSettingsScreen(
+                        settings = notificationSettings,
+                        permissionGranted = notificationPermissionGranted,
+                        onSettingsChanged = onNotificationSettingsChanged,
+                        onRequestPermission = onRequestNotificationPermission,
+                        onBack = onSystemBack,
                     )
 
                     ChatScreen.DISCOVERY_SETTINGS -> DiscoverySettingsScreen(
                         authAccount = authAccount,
                         accountProfile = visibleAccountProfile,
+                        authActions = authActions,
                         lookupPhoneNumber = (chatUiState.profileDraft ?: chatUiState.profile()).lookupPhoneNumber,
                         enabled = (chatUiState.profileDraft ?: chatUiState.profile()).discoverableByPhone,
                         savedLookupPhoneNumber = chatUiState.profileLookupPhoneNumber,
                         savedEnabled = chatUiState.profileDiscoverableByPhone,
-                        onlineLookupStatus = chatUiState.onlineLookupStatus,
                         onPhoneChanged = profileActions.onDiscoveryPhoneChanged,
                         onEnabledChanged = profileActions.onDiscoveryEnabledChanged,
                         onSave = profileActions.onSaveDiscoverySettings,
