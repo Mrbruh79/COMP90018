@@ -6,5 +6,6 @@ data class AuthActions(
     val onRegisterEmail: (String, String, String, String) -> Unit,
     val onCompleteAccountProfile: (String, String) -> Unit,
     val onRetryAccountProfile: () -> Unit,
+    val onSendVerificationEmail: ((Boolean) -> Unit) -> Unit,
     val onSignOut: () -> Unit,
 )

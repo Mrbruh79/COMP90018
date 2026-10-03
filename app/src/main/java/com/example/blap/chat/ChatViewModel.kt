@@ -12,6 +12,7 @@ class ChatViewModel(private val session: MessagingSession, private val ownsSessi
 
     fun openConversation(peerId: String) = session.navigation.openConversation(peerId)
     fun showConversationList() { session.requestedEndpointId = null; session.navigation.showConversationList() }
+    fun showNotificationSettings() = session.navigation.showNotificationSettings()
     fun showError(message: String) = session.showError(message)
     fun showNotice(message: String) = session.showNotice(message)
     fun accountChanged(accountId: String) = session.cloudSync.accountChanged(accountId)
