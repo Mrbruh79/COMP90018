@@ -144,7 +144,7 @@ class MeshRouter {
                     senderId = packet.senderId,
                     senderName = packet.senderName.take(24),
                     senderPhoneHash = packet.senderPhoneHash,
-                    text = packet.text.take(1_000),
+                    text = packet.text.take(ChatLimits.MAX_VOICE_ENCODED_LENGTH),
                     sentAt = packet.sentAt,
                 ),
             )
@@ -169,7 +169,7 @@ class MeshRouter {
                         senderId = packet.senderId,
                         senderName = peer.name,
                         senderPhoneHash = peer.phoneHash,
-                        text = packet.text.take(1_000),
+                        text = packet.text.take(ChatLimits.MAX_VOICE_ENCODED_LENGTH),
                         sentAt = packet.sentAt,
                     ),
                 ),
