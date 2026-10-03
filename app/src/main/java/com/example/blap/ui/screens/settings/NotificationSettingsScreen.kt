@@ -82,6 +82,11 @@ internal fun NotificationSettingsScreen(
                     else MaterialTheme.colorScheme.error,
                 )
             }
+            item {
+                InfoCard(
+                    "Alerts only appear while CommonGround is running. Notifications for messages that arrive when the app is closed will only appear when the app is opened again.",
+                )
+            }
         }
     }
 }

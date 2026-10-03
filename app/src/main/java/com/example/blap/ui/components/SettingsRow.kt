@@ -7,7 +7,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -32,11 +31,7 @@ internal fun SettingsRow(
         supportingTextColor = supportingTextColor,
         modifier = Modifier.clickable(onClick = onClick),
     ) {
-        Icon(
-            painterResource(R.drawable.ic_chevron_right),
-            contentDescription = null,
-            tint = LocalContentColor.current,
-        )
+        Icon(painterResource(R.drawable.ic_chevron_right), contentDescription = null)
     }
 }
 
