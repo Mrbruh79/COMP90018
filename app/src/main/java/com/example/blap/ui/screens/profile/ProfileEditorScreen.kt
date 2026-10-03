@@ -14,7 +14,7 @@ internal fun ProfileEditorScreen(
 ) {
     ProfileForm(
         title = "Edit Profile Card",
-        subtitle = "These details appear on the QR card you choose to share. Online lookup is managed separately in Settings > Find me.",
+        subtitle = "These details appear on the QR card you choose to share. Online lookup is managed separately in Settings > Online Account Discovery.",
         profile = profile,
         onChanged = onChanged,
         onSave = onSave,

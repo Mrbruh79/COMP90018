@@ -342,11 +342,11 @@ fun NearbyChatApp(
                     ChatScreen.DISCOVERY_SETTINGS -> DiscoverySettingsScreen(
                         authAccount = authAccount,
                         accountProfile = visibleAccountProfile,
+                        authActions = authActions,
                         lookupPhoneNumber = (chatUiState.profileDraft ?: chatUiState.profile()).lookupPhoneNumber,
                         enabled = (chatUiState.profileDraft ?: chatUiState.profile()).discoverableByPhone,
                         savedLookupPhoneNumber = chatUiState.profileLookupPhoneNumber,
                         savedEnabled = chatUiState.profileDiscoverableByPhone,
-                        onlineLookupStatus = chatUiState.onlineLookupStatus,
                         onPhoneChanged = profileActions.onDiscoveryPhoneChanged,
                         onEnabledChanged = profileActions.onDiscoveryEnabledChanged,
                         onSave = profileActions.onSaveDiscoverySettings,

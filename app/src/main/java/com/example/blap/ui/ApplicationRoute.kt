@@ -159,6 +159,7 @@ fun ApplicationRoute(models: ApplicationViewModels) {
             onRegisterEmail = authViewModel::registerEmail,
             onCompleteAccountProfile = authViewModel::completeAccountProfile,
             onRetryAccountProfile = authViewModel::loadAccountProfile,
+            onSendVerificationEmail = authViewModel::sendVerificationEmail,
             onSignOut = authViewModel::signOut,
         ),
         nearbyPlacesOn = applicationState.nearbyPlacesOn,
