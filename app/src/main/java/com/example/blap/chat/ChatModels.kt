@@ -14,6 +14,7 @@ enum class ChatScreen {
     GROUP_SETTINGS,
     DISCOVERY_SETTINGS,
     SETTINGS,
+    NOTIFICATION_SETTINGS,
     EVENTS,
     ERROR,
 }

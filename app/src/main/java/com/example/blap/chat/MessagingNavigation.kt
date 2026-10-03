@@ -40,6 +40,10 @@ class MessagingNavigation(private val session: MessagingSession) {
         session.persistence.reloadSavedContactsNow()
     }
 
+    fun showNotificationSettings() {
+        session.state.update { it.copy(screen = ChatScreen.NOTIFICATION_SETTINGS, error = null) }
+    }
+
     fun handleBack() {
         when (session.state.value.screen) {
             ChatScreen.CONVERSATION, ChatScreen.CONNECTING -> showConversationList()
@@ -54,6 +58,8 @@ class MessagingNavigation(private val session: MessagingSession) {
                 session.state.update { it.copy(screen = session.profileReturnScreen, profileDraft = null, error = null) }
             ChatScreen.DISCOVERY_SETTINGS ->
                 session.state.update { it.copy(screen = ChatScreen.SETTINGS, profileDraft = null, error = null) }
+            ChatScreen.NOTIFICATION_SETTINGS ->
+                session.state.update { it.copy(screen = ChatScreen.SETTINGS, error = null) }
             else -> Unit
         }
     }

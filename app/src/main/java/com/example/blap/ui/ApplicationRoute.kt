@@ -168,6 +168,7 @@ fun ApplicationRoute(models: ApplicationViewModels) {
         notificationPermissionGranted = applicationState.permissions.notifications,
         onNotificationSettingsChanged = applicationViewModel::updateNotificationSettings,
         onRequestNotificationPermission = applicationViewModel::requestNotifications,
+        onShowNotificationSettings = viewModel::showNotificationSettings,
         onShowEvents = eventViewModel::showEvents,
         getCurrentLocation = applicationViewModel::currentLocation,
         searchPlaces = applicationViewModel::searchPlaces,

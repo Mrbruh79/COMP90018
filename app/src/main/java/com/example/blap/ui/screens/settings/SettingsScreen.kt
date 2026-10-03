@@ -1,7 +1,5 @@
 package com.example.blap.ui.screens.settings
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -18,7 +16,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -27,7 +24,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.PublicAccountProfile
-import com.example.blap.chat.ChatNotificationSettings
 import com.example.blap.ui.screens.auth.AccountAccess
 import com.example.blap.ui.screens.auth.AuthActions
 
@@ -47,10 +43,7 @@ internal fun SettingsScreen(
     venueStatus: String,
     checkingVenue: Boolean,
     onCheckVenue: () -> Unit,
-    notificationSettings: ChatNotificationSettings,
-    notificationPermissionGranted: Boolean,
-    onNotificationSettingsChanged: (ChatNotificationSettings) -> Unit,
-    onRequestNotificationPermission: () -> Unit,
+    onShowNotificationSettings: () -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -85,43 +78,12 @@ internal fun SettingsScreen(
             )
         }
         item {
-            Card(modifier = Modifier.fillMaxWidth(), border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)) {
-                Column(Modifier.animateContentSize().padding(16.dp)) {
-                    Text("Notifications", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "Choose which chat messages alert you on this phone.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    NotificationSettingRow("Allow chat alerts", notificationSettings.enabled) {
-                        onNotificationSettingsChanged(notificationSettings.copy(enabled = it))
-                    }
-                    AnimatedVisibility(notificationSettings.enabled) {
-                        Column {
-                        NotificationSettingRow("Direct messages", notificationSettings.direct) {
-                            onNotificationSettingsChanged(notificationSettings.copy(direct = it))
-                        }
-                        NotificationSettingRow("Private groups", notificationSettings.privateGroups) {
-                            onNotificationSettingsChanged(notificationSettings.copy(privateGroups = it))
-                        }
-                        NotificationSettingRow("Open mesh chat", notificationSettings.openMesh) {
-                            onNotificationSettingsChanged(notificationSettings.copy(openMesh = it))
-                        }
-                        NotificationSettingRow("Show message previews", notificationSettings.showPreview) {
-                            onNotificationSettingsChanged(notificationSettings.copy(showPreview = it))
-                        }
-                        if (!notificationPermissionGranted) {
-                            Text("Android notifications are off for this app.", color = MaterialTheme.colorScheme.error)
-                            TextButton(onClick = onRequestNotificationPermission) { Text("Allow in Android") }
-                        }
-                        }
-                    }
-                    Text(
-                        "Alerts appear while CommonGround is running. Messages received while it is closed appear when you open the app, without a background alert.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
+            SettingsCard(
+                title = "Manage Notifications",
+                detail = "Choose when you want to be notified by the app",
+                action = "Open",
+                onClick = onShowNotificationSettings,
+            )
         }
         item {
             Card(modifier = Modifier.fillMaxWidth(),
@@ -182,14 +144,6 @@ internal fun SettingsScreen(
                 modifier = Modifier.padding(top = 8.dp),
             )
         }
-    }
-}
-
-@Composable
-private fun NotificationSettingRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 
