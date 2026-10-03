@@ -186,7 +186,7 @@ data class ChatUiState(
     val canEditGroup: Boolean = false,
     val messageDrafts: Map<String, String> = emptyMap(),
     val notice: String? = null,
-    val venueStatus: String = "Find a nearby place using your location. Internet access is required.",
+    val venueStatus: String = "",
     val checkingVenue: Boolean = false,
     val discoveredDevices: List<NearbyDevice> = emptyList(),
     val conversations: List<ConversationSummary> = emptyList(),

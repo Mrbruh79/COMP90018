@@ -1,13 +1,9 @@
 package com.example.blap.ui.screens.settings
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -19,11 +15,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.PublicAccountProfile
+import com.example.blap.ui.components.SettingsRow
+import com.example.blap.ui.components.SettingsToggleRow
 import com.example.blap.ui.screens.auth.AccountAccess
 import com.example.blap.ui.screens.auth.AuthActions
 
@@ -41,8 +38,9 @@ internal fun SettingsScreen(
     onStartNearby: () -> Unit,
     onStopNearby: () -> Unit,
     venueStatus: String,
-    checkingVenue: Boolean,
+    nearbyPlacesOn: Boolean,
     onCheckVenue: () -> Unit,
+    onClearVenue: () -> Unit,
     onShowNotificationSettings: () -> Unit,
 ) {
     LazyColumn(
@@ -70,57 +68,49 @@ internal fun SettingsScreen(
             )
         }
         item {
-            SettingsCard(
-                title = "Nearby messaging",
-                detail = if (nearbyActive) "On. Other phones can find and connect to you." else "Off. Your saved chats are still available.",
-                action = if (nearbyActive) "Turn off" else "Turn on",
-                onClick = if (nearbyActive) onStopNearby else onStartNearby,
+            SettingsToggleRow(
+                title = "Discover Nearby Devices",
+                supportingText = if (nearbyActive) "You are now visible to nearby users."
+                else "Make yourself visible to nearby users",
+                checked = nearbyActive,
+                onCheckedChange = { if (it) onStartNearby() else onStopNearby() },
             )
         }
         item {
-            SettingsCard(
-                title = "Manage Notifications",
-                detail = "Choose when you want to be notified by the app",
-                action = "Open",
-                onClick = onShowNotificationSettings,
-            )
-        }
-        item {
-            Card(modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(18.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Nearby places", style = MaterialTheme.typography.titleMedium)
-                    Text(venueStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-                    TextButton(onClick = onCheckVenue, enabled = !checkingVenue) {
-                        Text(if (checkingVenue) "Checking..." else "Find a place")
-                    }
-                }
-            }
-        }
-        item {
-            SettingsCard(
-                title = "My profile and QR",
-                detail = "Choose what appears when someone scans your card",
-                action = "Edit",
+            SettingsRow(
+                title = "Edit Profile Card",
+                supportingText = "Choose what you share on your contact card",
                 onClick = onEditProfile,
             )
         }
         if (!authAccount.isAnonymous) {
             item {
-                SettingsCard(
-                    title = "Find me",
-                    detail = "Username, sign-in email and optional phone lookup",
-                    action = "Open",
+                SettingsRow(
+                    title = "Online Account Discovery",
+                    supportingText = "Manage your online account information",
                     onClick = onShowDiscoverySettings,
                 )
             }
         }
         item {
-            SettingsCard(
-                title = "Android permissions",
-                detail = "Nearby devices, contacts, and location access",
-                action = "Open",
+            SettingsToggleRow(
+                title = "Nearby Places",
+                supportingText = venueStatus.ifBlank { "Find nearby places using your location" },
+                checked = nearbyPlacesOn,
+                onCheckedChange = { if (it) onCheckVenue() else onClearVenue() },
+            )
+        }
+        item {
+            SettingsRow(
+                title = "Manage Notifications",
+                supportingText = "Choose when you want to be notified by the app",
+                onClick = onShowNotificationSettings,
+            )
+        }
+        item {
+            SettingsRow(
+                title = "Manage Android Permissions",
+                supportingText = "Nearby devices, contacts, and location access",
                 onClick = onOpenAppSettings,
             )
         }
@@ -130,8 +120,8 @@ internal fun SettingsScreen(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                 shape = RoundedCornerShape(18.dp),
             ) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("On this phone", style = MaterialTheme.typography.titleMedium)
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Saved data information", style = MaterialTheme.typography.titleMedium)
                     Text("$contactCount saved contact card${if (contactCount == 1) "" else "s"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text("$connectionCount active mesh link${if (connectionCount == 1) "" else "s"}", color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -139,35 +129,10 @@ internal fun SettingsScreen(
         }
         item {
             Text(
-                "Open public events and nearby messaging work as a guest. Sign in for protected or private events and online chat sync.",
+                "CommonGround exchanges chat data over nearby mesh links. Contact cards are shared only when you display or scan their QR code.",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 8.dp),
             )
-        }
-    }
-}
-
-@Composable
-private fun SettingsCard(
-    title: String,
-    detail: String,
-    action: String,
-    onClick: () -> Unit,
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
-    ) {
-        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium)
-                Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Text(action, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.labelLarge)
         }
     }
 }

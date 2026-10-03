@@ -92,7 +92,9 @@ fun NearbyChatApp(
     authAccount: AuthAccount,
     accountProfile: PublicAccountProfile?,
     accountProfileLoading: Boolean,
+    nearbyPlacesOn: Boolean,
     onCheckVenue: () -> Unit,
+    onClearVenue: () -> Unit,
     microphonePermissionGranted: Boolean,
     onRequestMicrophonePermission: () -> Unit,
     notificationSettings: ChatNotificationSettings,
@@ -323,8 +325,9 @@ fun NearbyChatApp(
                         onStartNearby = chatActions.onStartChat,
                         onStopNearby = chatActions.onStopChat,
                         venueStatus = chatUiState.venueStatus,
-                        checkingVenue = chatUiState.checkingVenue,
+                        nearbyPlacesOn = nearbyPlacesOn,
                         onCheckVenue = onCheckVenue,
+                        onClearVenue = onClearVenue,
                         onShowNotificationSettings = onShowNotificationSettings,
                     )
 

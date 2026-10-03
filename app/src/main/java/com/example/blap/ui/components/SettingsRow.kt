@@ -64,7 +64,7 @@ private fun SettingsRowLayout(
 ) {
     val alpha = if (enabled) 1f else DISABLED_ALPHA
     Row(
-        modifier = modifier.fillMaxWidth().padding(vertical = 14.dp),
+        modifier = modifier.fillMaxWidth().padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {

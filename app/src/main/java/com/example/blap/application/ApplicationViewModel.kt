@@ -58,6 +58,7 @@ data class ApplicationUiState(
     val pendingRequest: PlatformRequest? = null,
     val working: Boolean = false,
     val switchingAccount: Boolean = false,
+    val nearbyPlacesOn: Boolean = false,
 )
 
 /** Owns application decisions. Android only launches requests and reports their results. */
@@ -162,6 +163,7 @@ class ApplicationViewModel(
             PlatformAction.LOCATION_PERMISSION -> if (missing.isEmpty()) {
                 if (request.operation == AppOperation.VENUE) findVenue() else checkEventLocation(request.eventId)
             } else if (request.operation == AppOperation.VENUE) {
+                state.update { it.copy(nearbyPlacesOn = false) }
                 commands.venueStatus("Allow location access to find nearby places.", false)
             } else commands.showError("Allow location access, or use the venue QR.")
             PlatformAction.CONTACTS_PERMISSION -> if (missing.isEmpty()) importContacts()
@@ -207,14 +209,21 @@ class ApplicationViewModel(
     fun requestVenue() {
         if (!scope.isActive || state.value.working || state.value.pendingRequest != null) return
         val version = workVersions.incrementAndGet()
-        state.update { it.copy(working = true) }
+        state.update { it.copy(working = true, nearbyPlacesOn = true) }
         commands.venueStatus("Connecting to nearby places...", true)
         commands.ensureSignedIn { success ->
             if (!scope.isActive || version != workVersions.get()) return@ensureSignedIn
-            state.update { it.copy(working = false) }
+            state.update { it.copy(working = false, nearbyPlacesOn = success) }
             if (success) enqueue(AppOperation.VENUE, PlatformAction.LOCATION_PERMISSION)
             else commands.venueStatus("Could not connect. Check your internet and try again.", false)
         }
+    }
+
+    fun clearVenue() {
+        if (!scope.isActive) return
+        cancelPendingWork()
+        state.update { it.copy(nearbyPlacesOn = false) }
+        commands.venueStatus("", false)
     }
 
     private fun importContacts() = runWork {
@@ -229,11 +238,13 @@ class ApplicationViewModel(
 
     private fun findVenue() = runWork {
         commands.venueStatus("Looking for a nearby place...", true)
+        var found = false
         val message = try {
-            services.venues.findNearbyVenue()?.let { "Nearby: ${it.name}" } ?: "No places found nearby."
+            services.venues.findNearbyVenue()?.let { found = true; "Nearby: ${it.name}" } ?: "No places found nearby."
         } catch (error: CancellationException) { throw error }
         catch (_: Exception) { "Could not find nearby places. Check your internet and location settings." }
         currentCoroutineContext().ensureActive()
+        state.update { it.copy(nearbyPlacesOn = found) }
         commands.venueStatus(message, false)
     }
 

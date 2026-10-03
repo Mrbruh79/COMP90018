@@ -1,5 +1,6 @@
 package com.example.blap.ui.screens.settings
 
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,7 +24,10 @@ internal fun NotificationSettingsScreen(
 ) {
     Column(Modifier.fillMaxSize()) {
         SubScreenHeader("Notifications", onBack)
-        LazyColumn(contentPadding = PaddingValues(top = 8.dp, bottom = 18.dp)) {
+        LazyColumn(
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 18.dp),
+        ) {
             item {
                 SettingsToggleRow(
                     title = "Chat Alerts",
