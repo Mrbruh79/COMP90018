@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.blap.event.EventUiState
+import com.example.blap.event.EventCheckInState
 import com.example.blap.ui.components.MessageComposer
 import com.example.blap.ui.screens.events.formatEventTime
 
@@ -36,6 +37,13 @@ internal fun EventAnnouncementsScreen(
     Column(Modifier.fillMaxSize()) {
         TextButton(onClick = onBack) { Text("‹ Event") }
         Text("Announcements", style = MaterialTheme.typography.headlineMedium)
+        Text(
+            if (state.selectedEvent?.let { EventCheckInState.isCheckedIn(it, state.membership, System.currentTimeMillis()) } == true)
+                "Checked in · keep Nearby on for event mesh sync"
+            else "Not checked in · online updates only",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         LazyColumn(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(10.dp),

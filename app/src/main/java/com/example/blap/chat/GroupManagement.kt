@@ -105,6 +105,7 @@ class GroupManagement(private val session: MessagingSession) {
     }
 
     fun onGroupReceived(group: PrivateGroup) {
+        if (group.id == MeshGroup.ID) return
         if (group.members.none {
                 it.peerId == session.localPeerId || (session.localPhoneHash.isNotBlank() && it.phoneHash == session.localPhoneHash)
             }
@@ -143,7 +144,7 @@ class GroupManagement(private val session: MessagingSession) {
 
     fun synchronizeGroupsWith(peerId: String) {
         val groups = session.store.getGroups()
-        val conversationIds = listOf(MeshGroup.ID) + groups.map(PrivateGroup::id)
+        val conversationIds = groups.filter { it.id != MeshGroup.ID }.map(PrivateGroup::id)
         val messages = conversationIds.flatMap { conversationId ->
             session.store.getMessages(conversationId).map { message ->
                 StoredGroupMessage(
@@ -165,10 +166,12 @@ class GroupManagement(private val session: MessagingSession) {
         session.connectedPeers.values.forEach { peer ->
             knownContacts[peer.peerId] = GroupMember(peer.peerId, peer.name, peer.phoneHash)
         }
-        val contactsByHash = linkedMapOf<String, GroupContact>()
+        val contactsByIdentity = linkedMapOf<String, GroupContact>()
         knownContacts.values.forEach { contact ->
-            val key = contact.phoneHash.ifBlank { "peer:${contact.peerId}" }
-            contactsByHash[key] = GroupContact(
+            if (contact.peerId.startsWith("account:") || contact.peerId.startsWith("phone:") ||
+                contact.peerId.startsWith("email:")) return@forEach
+            val key = "peer:${contact.peerId}"
+            contactsByIdentity[key] = GroupContact(
                 peerId = contact.peerId,
                 name = contact.name,
                 connected = session.connectedPeers.containsKey(contact.peerId),
@@ -181,8 +184,9 @@ class GroupManagement(private val session: MessagingSession) {
                 ?: knownContacts.values.firstOrNull {
                     contact.phoneHash.isNotBlank() && it.phoneHash == contact.phoneHash
                 }?.peerId
-            val contactKey = contact.phoneHash.ifBlank { "contact:${contact.id}" }
-            contactsByHash[contactKey] = GroupContact(
+            linkedPeerId?.let { contactsByIdentity.remove("peer:$it") }
+            val contactKey = contact.cloudUserId.takeIf(String::isNotBlank)?.let { "account:$it" } ?: "contact:${contact.id}"
+            contactsByIdentity[contactKey] = GroupContact(
                 peerId = linkedPeerId ?: if (contact.phoneHash.isNotBlank()) "phone:${contact.phoneHash}"
                     else contact.cloudUserId.takeIf(String::isNotBlank)?.let { "account:$it" }
                         ?: "contact:${contact.id}",
@@ -195,7 +199,7 @@ class GroupManagement(private val session: MessagingSession) {
                 username = contact.username,
             )
         }
-        val contacts = contactsByHash.values.map { contact ->
+        val contacts = contactsByIdentity.values.map { contact ->
             GroupContact(
                 peerId = contact.peerId,
                 name = contact.name,

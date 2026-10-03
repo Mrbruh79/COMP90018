@@ -71,7 +71,7 @@ object ChatNotificationPolicy {
         return when (type) {
             ConversationType.DIRECT -> settings.direct
             ConversationType.PRIVATE_GROUP -> settings.privateGroups
-            ConversationType.OPEN_MESH -> settings.openMesh
+            ConversationType.OPEN_MESH -> false
         }
     }
 }

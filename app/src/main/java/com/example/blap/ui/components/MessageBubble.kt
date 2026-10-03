@@ -94,7 +94,8 @@ internal fun MessageBubble(
             if (showActions && !item.deleted) {
                 Text(
                     "↩",
-                    modifier = Modifier.align(Alignment.CenterStart).padding(start = 12.dp),
+                    modifier = Modifier.align(if (mine) Alignment.CenterEnd else Alignment.CenterStart)
+                        .padding(horizontal = 12.dp),
                     color = MaterialTheme.colorScheme.primary,
                     style = MaterialTheme.typography.titleLarge,
                 )
@@ -103,15 +104,15 @@ internal fun MessageBubble(
             modifier = Modifier
                 .widthIn(max = 310.dp)
                 .offset { IntOffset(visibleSwipeOffset.roundToInt(), 0) }
-                .pointerInput(message.id, showActions, item.deleted) {
+                .pointerInput(message.id, mine, showActions, item.deleted) {
                     if (showActions && !item.deleted) {
                         detectHorizontalDragGestures(
                             onHorizontalDrag = { change, amount ->
-                                swipeOffset = (swipeOffset + amount).coerceIn(0f, swipeLimit)
+                                swipeOffset = ReplySwipe.offset(swipeOffset, amount, mine, swipeLimit)
                                 change.consume()
                             },
                             onDragEnd = {
-                                if (swipeOffset >= replyThreshold) onReply()
+                                if (ReplySwipe.shouldReply(swipeOffset, mine, replyThreshold)) onReply()
                                 swipeOffset = 0f
                             },
                             onDragCancel = { swipeOffset = 0f },

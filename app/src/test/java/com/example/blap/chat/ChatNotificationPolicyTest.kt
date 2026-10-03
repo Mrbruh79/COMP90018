@@ -33,4 +33,9 @@ class ChatNotificationPolicyTest {
         assertFalse(ChatNotificationPolicy.shouldAlert(ChatNotificationSettings(), vote,
             ConversationType.DIRECT, false, 1_000_100L))
     }
+
+    @Test fun legacyPublicRoomSettingCannotEnablePublicAlerts() {
+        assertFalse(ChatNotificationPolicy.shouldAlert(ChatNotificationSettings(openMesh = true), incoming,
+            ConversationType.OPEN_MESH, false, 1_000_100L))
+    }
 }

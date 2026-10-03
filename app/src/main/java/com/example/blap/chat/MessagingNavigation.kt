@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.update
 /** Screen navigation does not start discovery or own any repository. */
 class MessagingNavigation(private val session: MessagingSession) {
     fun openConversation(peerId: String) {
+        if (peerId == MeshGroup.ID) return
         if (session.state.value.conversations.none { it.peerId == peerId }) return
         session.state.update {
             it.copy(
@@ -18,6 +19,7 @@ class MessagingNavigation(private val session: MessagingSession) {
     }
 
     fun showConversationList() {
+        session.requestedEndpointId?.let { session.nearbyTransport.rejectConnection(it) }
         session.requestedEndpointId = null
         session.state.update {
             it.copy(

@@ -32,6 +32,251 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ChatViewModelTest {
+    private companion object { const val TEST_GROUP = "private-test-group" }
+
+    private fun prepareTestGroup(store: FakeChatStore) {
+        store.saveGroup(PrivateGroup(TEST_GROUP, "Test friends", "local-peer", 0L,
+            listOf(GroupMember("local-peer", "Alice"), GroupMember("bob", "Bob"),
+                GroupMember("bob-id", "Bob"), GroupMember("carol-id", "Carol"))))
+    }
+
+    @Test fun anOutgoingCloudEchoKeepsTheOtherPersonsNameAndLocalIdentitySeparate() {
+        val store = FakeChatStore().apply {
+            savePeer("account:bob-uid", "Bob")
+            savePeer("local-peer", "Local identity")
+            saveMessage(ChatMessage("local-history", "local-peer", "Keep separate", MessageAuthor.ME, 1L,
+                MessageStatus.SENT))
+        }
+        val vm = makeViewModel(FakeNearbyChatController(), store)
+        vm.accountChanged("alice-uid")
+        vm.onDirectMessage("bob-uid", CloudChatMessage("own-echo", "alice-uid", "local-peer", "Alice", "Hi", 2L))
+        assertEquals("Bob", store.getConversations().single { it.peerId == "account:bob-uid" }.name)
+        assertEquals(listOf("local-history"), store.getMessages("local-peer").map { it.id })
+        assertEquals(listOf("own-echo"), store.getMessages("account:bob-uid").map { it.id })
+    }
+
+    @Test fun anOutgoingCloudEchoDoesNotInventASelfNamedContact() {
+        val vm = makeViewModel(FakeNearbyChatController())
+        vm.accountChanged("alice-uid")
+        vm.onDirectMessage("bob-uid", CloudChatMessage("own-echo", "alice-uid", "local-peer", "Alice", "Hi", 2L))
+        assertEquals("Online contact", vm.uiState.value.conversations.single().name)
+    }
+
+    @Test fun verifiedNearbyIdentityMatchesSavedAccountBeforeAStaleUsernameOrPeerAlias() {
+        val store = FakeChatStore().apply {
+            saveContact(SavedContact("bob", "Bob saved", "", "", linkedPeerId = "old-bob-peer",
+                cloudUserId = "bob-uid", username = "old_bob"))
+            saveContact(SavedContact("carol", "Carol saved", "", "", linkedPeerId = "bob-peer",
+                cloudUserId = "carol-uid", username = "carol"))
+            savePeer("account:carol-uid", "Carol saved")
+            savePeer("old-bob-peer", "Bob nearby")
+            saveMessage(ChatMessage("nearby-history", "old-bob-peer", "Old", MessageAuthor.PEER, 1L,
+                MessageStatus.DELIVERED))
+        }
+        val vm = makeViewModel(FakeNearbyChatController(), store)
+        vm.onConnected(ConnectedPeer("bob-peer", "endpoint", "Bob", username = "bob", accountUid = "bob-uid",
+            publicKey = "verified-key", accountVerified = true))
+        assertEquals("carol-uid", store.getSavedContacts().single { it.id == "carol" }.cloudUserId)
+        assertEquals("bob", store.getSavedContacts().single { it.id == "bob" }.username)
+        assertEquals("bob-peer", store.getSavedContacts().single { it.id == "bob" }.linkedPeerId)
+        assertEquals(listOf("nearby-history"), store.getMessages("account:bob-uid").map { it.id })
+        assertFalse(vm.uiState.value.conversations.single { it.peerId == "account:carol-uid" }.connected)
+    }
+
+    @Test fun aCloudMessageCannotMergeAnotherSavedAccountsNearbyHistory() {
+        val store = FakeChatStore().apply {
+            saveContact(SavedContact("carol", "Carol", "", "", linkedPeerId = "carol-peer", cloudUserId = "carol-uid"))
+            savePeer("carol-peer", "Carol")
+            saveMessage(ChatMessage("carol-history", "carol-peer", "Separate", MessageAuthor.PEER, 1L,
+                MessageStatus.DELIVERED))
+        }
+        val vm = makeViewModel(FakeNearbyChatController(), store)
+        vm.accountChanged("alice-uid")
+        vm.onDirectMessage("bob-uid", CloudChatMessage("bob-message", "bob-uid", "carol-peer", "Bob", "Hi", 2L))
+        assertEquals(listOf("carol-history"), store.getMessages("account:carol-uid").map { it.id })
+        assertEquals(listOf("bob-message"), store.getMessages("account:bob-uid").map { it.id })
+    }
+
+    @Test fun failingDeviceKeyPublicationDoesNotReportAccountLookupAsFailed() {
+        val cloud = FakeCloudChatController().apply { failKeyPublication = true }
+        val identity = SnapshotIdentityStore(ContactProfile("Alice", username = "alice_user"), 0)
+        val vm = MessagingTestHarness(FakeNearbyChatController(), FakeChatStore(), identity,
+            cloudChatController = cloud, initialAccountId = "alice-uid")
+        vm.applyAccountProfile("alice_user", "Alice")
+        assertEquals("Phone lookup is off", vm.uiState.value.onlineLookupStatus)
+        assertTrue(vm.uiState.value.notice.orEmpty().contains("Nearby identity"))
+    }
+
+    @Test fun startingNearbyRetriesDeviceKeyPublicationWithoutWaitingForIt() {
+        val cloud = FakeCloudChatController()
+        val identity = SnapshotIdentityStore(ContactProfile("Alice", username = "alice_user"), 0)
+        val vm = MessagingTestHarness(FakeNearbyChatController(), FakeChatStore(), identity,
+            cloudChatController = cloud, initialAccountId = "alice-uid")
+        vm.startChat()
+        assertTrue(vm.uiState.value.nearbyActive)
+        assertEquals(1, cloud.keyPublications)
+    }
+
+    @Test
+    fun unknownNearbyRequestsNeedApprovalWithoutLeavingTheCurrentScreen() {
+        val controller = FakeNearbyChatController()
+        val vm = makeViewModel(controller)
+        vm.updateDisplayName("Alice")
+        vm.startChat()
+        vm.beginAddContact()
+        vm.updateContactName("Draft")
+        vm.onConnectionInitiated(NearbyDevice("bob-endpoint", "Bob"), "1234")
+        assertEquals(ChatScreen.EDITING_CONTACT, vm.uiState.value.screen)
+        assertEquals("Draft", vm.uiState.value.contactNameDraft)
+        assertEquals("1234", vm.uiState.value.connectionRequests.single().authenticationDigits)
+        assertTrue(controller.accepted.isEmpty())
+        vm.chat.acceptConnection("bob-endpoint")
+        assertEquals(listOf("bob-endpoint"), controller.accepted)
+        assertTrue(vm.uiState.value.connectionRequests.isEmpty())
+    }
+
+    @Test
+    fun rememberedDevicesReconnectOfflineWithoutAPrompt() {
+        val controller = FakeNearbyChatController().apply { identityProofAvailable = true }
+        val vm = makeViewModel(controller)
+        vm.updateDisplayName("Alice")
+        vm.startChat()
+        val trusted = TrustedNearbyIdentity("bob-peer", "bob", "bob-uid", "remembered-key")
+        vm.session.dependencies.nearbyIdentities.remember(trusted)
+        vm.onConnectionInitiated(NearbyDevice("new-endpoint", "Bob", "bob-peer", "bob"), "1234")
+        assertEquals(listOf("new-endpoint" to trusted), controller.knownAccepted)
+        assertTrue(vm.uiState.value.connectionRequests.isEmpty())
+    }
+
+    @Test
+    fun savedOnlineAccountsCanConnectUsingTheirPublishedKeyWithoutAPrompt() {
+        val controller = FakeNearbyChatController().apply { identityProofAvailable = true }
+        val store = FakeChatStore().apply {
+            saveContact(SavedContact("bob-contact", "Bob", "", "", username = "bob", cloudUserId = "bob-uid"))
+            saveContact(SavedContact("old-bob-duplicate", "Bob", "", "", username = "bob", cloudUserId = "bob-uid"))
+        }
+        val cloud = FakeCloudChatController().apply {
+            addAccount("bob-uid", "Bob", "bob-peer", username = "bob", nearbyPublicKey = "published-key")
+        }
+        val vm = makeViewModel(controller, store, cloud = cloud)
+        vm.updateDisplayName("Alice")
+        vm.accountChanged("alice-uid")
+        vm.startChat()
+        vm.onConnectionInitiated(NearbyDevice("new-endpoint", "Bob", "bob-peer", "bob"), "1234")
+        assertEquals("published-key", controller.knownAccepted.single().second.publicKey)
+        assertTrue(vm.uiState.value.connectionRequests.isEmpty())
+    }
+
+    @Test
+    fun nearbyAndOnlineEntriesForTheSameUsernameMergeIntoOneContactAndChat() {
+        val controller = FakeNearbyChatController()
+        val store = FakeChatStore().apply {
+            saveContact(SavedContact("online-bob", "Bob", "+12025550198", requireNotNull(PhoneIdentity.hash("+12025550198")),
+                cloudUserId = "bob-uid", username = "bob", email = "bob@example.com"))
+            saveContact(SavedContact("nearby-bob", "Bob nearby", "", "", linkedPeerId = "bob-peer", bio = "From the shared card"))
+            saveContact(SavedContact("duplicate-online-bob", "Bob", "", "", cloudUserId = "bob-uid", username = "bob"))
+            savePeer("account:bob-uid", "Bob")
+            savePeer("bob-peer", "Bob nearby")
+            saveMessage(ChatMessage("old-dm", "bob-peer", "Earlier Nearby message", MessageAuthor.PEER, 1L,
+                MessageStatus.DELIVERED, senderId = "bob-peer"))
+        }
+        val vm = makeViewModel(controller, store)
+        vm.onConnected(ConnectedPeer("bob-peer", "endpoint", "Bob", username = "bob", accountUid = "bob-uid",
+            publicKey = "verified-key", accountVerified = true))
+        assertEquals(1, store.getSavedContacts().size)
+        assertEquals("bob", store.getSavedContacts().single().username)
+        assertEquals("bob-peer", store.getSavedContacts().single().linkedPeerId)
+        assertEquals("+12025550198", store.getSavedContacts().single().phoneNumber)
+        assertEquals("bob@example.com", store.getSavedContacts().single().email)
+        assertEquals("From the shared card", store.getSavedContacts().single().bio)
+        assertEquals(listOf("account:bob-uid"), vm.uiState.value.conversations.map { it.peerId })
+        assertEquals("old-dm", store.getMessages("account:bob-uid").single().id)
+        vm.openConversation("account:bob-uid")
+        vm.sendMessage("Nearby reply")
+        assertEquals("bob-peer", controller.sentMessages.single().peerId)
+    }
+
+    @Test
+    fun aUsernameClaimWithoutVerifiedAccountBindingDoesNotMergeIntoAnOnlineChat() {
+        val store = FakeChatStore().apply {
+            saveContact(SavedContact("bob-contact", "Bob", "", "", cloudUserId = "bob-uid", username = "bob"))
+            savePeer("account:bob-uid", "Bob")
+        }
+        val vm = makeViewModel(FakeNearbyChatController(), store)
+        vm.onConnected(ConnectedPeer("fake-peer", "endpoint", "Bob", username = "bob", accountUid = "bob-uid",
+            publicKey = "unverified-key"))
+        assertNull(store.getSavedContacts().single().linkedPeerId)
+        assertEquals(2, vm.uiState.value.conversations.size)
+    }
+
+    @Test fun messagesReceivedWhileTheAccountIsBeingMatchedStayInOneChat() = runBlocking {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        val matched = CompletableDeferred<Unit>()
+        cloud.beforeLookup = { matched.await() }
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", username = "bob", nearbyPublicKey = "verified-key")
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        vm.onConnected(ConnectedPeer("bob-peer", "endpoint", "Bob", username = "bob", accountUid = "bob-uid",
+            publicKey = "verified-key"))
+        vm.onMessageReceived(IncomingNearbyMessage("before-match", "bob-peer", "bob-peer", "Bob", "", "First", 1L))
+        matched.complete(Unit)
+        vm.openConversation("account:bob-uid")
+        vm.onMessageReceived(IncomingNearbyMessage("after-match", "bob-peer", "bob-peer", "Bob", "", "Second", 2L))
+        assertEquals(listOf("account:bob-uid"), store.getConversations().map { it.peerId })
+        assertEquals(setOf("before-match", "after-match"), vm.uiState.value.messages.map { it.id }.toSet())
+        vm.onDisconnected("bob-peer")
+        assertFalse(vm.uiState.value.conversations.single().connected)
+    }
+
+    @Test fun anApprovedNearbyChatCanOpenAndSendWhileCloudIdentityLookupIsWaiting() {
+        val nearby = FakeNearbyChatController()
+        val cloud = FakeCloudChatController()
+        val gate = CompletableDeferred<Unit>()
+        cloud.beforeLookup = { gate.await() }
+        val vm = makeViewModel(nearby, cloud = cloud)
+        vm.updateDisplayName("Alice")
+        vm.accountChanged("alice-uid")
+        vm.startChat()
+        vm.onDeviceFound(NearbyDevice("bob-endpoint", "Bob", "bob-peer", "bob"))
+        vm.connectToDevice("bob-endpoint")
+        vm.onConnected(ConnectedPeer("bob-peer", "bob-endpoint", "Bob", username = "bob", accountUid = "bob-uid",
+            publicKey = "approved-device-key"))
+        assertEquals(ChatScreen.CONVERSATION, vm.uiState.value.screen)
+        assertEquals(1, vm.uiState.value.directConnectionCount)
+        vm.sendMessage("Works without waiting for the cloud")
+        assertEquals("bob-peer", nearby.sentMessages.single().peerId)
+    }
+
+    @Test
+    fun decliningOneRequestKeepsOtherRequestsAndStoppingClearsThem() {
+        val controller = FakeNearbyChatController()
+        val vm = makeViewModel(controller)
+        vm.updateDisplayName("Alice")
+        vm.startChat()
+        vm.onConnectionInitiated(NearbyDevice("bob-endpoint", "Bob"), "1234")
+        vm.onConnectionInitiated(NearbyDevice("carol-endpoint", "Carol"), "5678")
+        vm.chat.rejectConnection("bob-endpoint")
+        assertEquals(listOf("bob-endpoint"), controller.rejected)
+        assertEquals("carol-endpoint", vm.uiState.value.connectionRequests.single().device.endpointId)
+        vm.stopChat()
+        assertTrue(vm.uiState.value.connectionRequests.isEmpty())
+        vm.chat.acceptConnection("carol-endpoint")
+        assertTrue(controller.accepted.isEmpty())
+    }
+
+    @Test
+    fun retiredPublicChatIsHiddenAndIncomingPublicMessagesAreDropped() {
+        val store = FakeChatStore().apply { savePeer(MeshGroup.ID, "Legacy public room") }
+        val controller = FakeNearbyChatController()
+        val vm = makeViewModel(controller, store)
+        assertTrue(vm.uiState.value.conversations.isEmpty())
+        vm.openConversation(MeshGroup.ID)
+        assertNull(vm.uiState.value.selectedPeerId)
+        vm.onMessageReceived(IncomingNearbyMessage("old", MeshGroup.ID, "bob", "Bob", "", "public", 1L))
+        assertTrue(store.getMessages(MeshGroup.ID).isEmpty())
+        assertTrue(controller.acknowledgements.isEmpty())
+    }
     @Test
     fun activityGraphReusesModelsWithoutCreatingAnotherAccountSession() {
         val scopes = mutableListOf<String>()
@@ -213,7 +458,9 @@ class ChatViewModelTest {
         val features = ViewModelStore()
         val chat = ChatViewModel(session).also { features.put("chat", it) }
         val auth = AuthViewModel(session).also { features.put("auth", it) }
-        chat.openConversation(MeshGroup.ID)
+        store.savePeer(TEST_GROUP, "Test chat")
+        session.persistence.reloadConversationsNow()
+        chat.openConversation(TEST_GROUP)
         chat.sendMessage("A local message")
         assertEquals(1, session.uiState.value.messages.size)
 
@@ -299,7 +546,7 @@ class ChatViewModelTest {
             assertEquals("alice-account", cloud.startedAccountId)
             assertSame(viewModel, nearby.listener)
             assertTrue(cloud.listener is CloudChatSynchronizer)
-            assertEquals(MeshGroup.ID, store.getConversations().single().peerId)
+            assertTrue(store.getConversations().isEmpty())
         } finally {
             owner.clear()
         }
@@ -629,13 +876,13 @@ class ChatViewModelTest {
         val store = FakeChatStore()
         val viewModel = makeViewModel(controller, store)
         controller.listener?.onConnected(ConnectedPeer("bob-id", "endpoint-bob", "Bob"))
-        viewModel.openConversation(MeshGroup.ID)
+        viewModel.openConversation(TEST_GROUP)
 
         viewModel.sendMessage("Hello mesh")
         controller.listener?.onMessageReceived(
             IncomingNearbyMessage(
                 messageId = "remote-group-message",
-                conversationId = MeshGroup.ID,
+                conversationId = TEST_GROUP,
                 senderId = "carol-id",
                 senderName = "Carol",
                 senderPhoneHash = "",
@@ -644,8 +891,8 @@ class ChatViewModelTest {
             ),
         )
 
-        assertEquals(MeshGroup.ID, controller.sentMessages.single().peerId)
-        val received = store.getMessages(MeshGroup.ID).last { it.id == "remote-group-message" }
+        assertEquals(TEST_GROUP, controller.sentMessages.single().peerId)
+        val received = store.getMessages(TEST_GROUP).last { it.id == "remote-group-message" }
         assertEquals("Carol", received.senderName)
         assertEquals(MessageAuthor.PEER, received.author)
     }
@@ -657,7 +904,7 @@ class ChatViewModelTest {
         store.saveMessage(
             ChatMessage(
                 id = "old-group-message",
-                peerId = MeshGroup.ID,
+                peerId = TEST_GROUP,
                 text = "Earlier message",
                 author = MessageAuthor.PEER,
                 sentAt = 100L,
@@ -757,7 +1004,7 @@ class ChatViewModelTest {
         val viewModel = makeViewModel(controller)
         viewModel.updateDisplayName("Alice")
         viewModel.startChat()
-        viewModel.openConversation(MeshGroup.ID)
+        viewModel.openConversation(TEST_GROUP)
 
         viewModel.handleBack()
         assertEquals(ChatScreen.CHATS, viewModel.uiState.value.screen)
@@ -811,7 +1058,10 @@ class ChatViewModelTest {
     @Test
     fun scannedCardIsReviewedThenSavedWithItsSocialDetails() {
         val store = FakeChatStore()
-        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("maya-uid", "Maya", "maya-peer", email = "maya@example.com", username = "maya_user")
+        val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.accountChanged("alice-uid")
         val card = ContactProfile(
             displayName = "Maya",
             phoneNumber = "+61 412 345 678",
@@ -947,11 +1197,11 @@ class ChatViewModelTest {
         viewModel.openConversation("bob")
         viewModel.updateMessageDraft("For Bob")
         viewModel.showConversationList()
-        viewModel.openConversation(MeshGroup.ID)
+        viewModel.openConversation(TEST_GROUP)
         viewModel.updateMessageDraft("For everyone")
         viewModel.sendMessage("For everyone")
         assertEquals("For Bob", viewModel.uiState.value.messageDrafts["bob"])
-        assertFalse(viewModel.uiState.value.messageDrafts.containsKey(MeshGroup.ID))
+        assertFalse(viewModel.uiState.value.messageDrafts.containsKey(TEST_GROUP))
         viewModel.openConversation("bob")
         assertEquals("For Bob", viewModel.uiState.value.messageDrafts["bob"])
     }
@@ -974,7 +1224,7 @@ class ChatViewModelTest {
     }
 
     @Test
-    fun changingContactPhoneRemovesTheOldPeerLink() {
+    fun changingContactPhoneWithoutLookupDoesNotOverwriteTheSavedContact() {
         val store = FakeChatStore()
         val controller = FakeNearbyChatController()
         val viewModel = makeViewModel(controller, store)
@@ -983,7 +1233,9 @@ class ChatViewModelTest {
         viewModel.openContact(viewModel.uiState.value.savedContacts.single().id)
         viewModel.updateContactPhone("+61400111222")
         viewModel.saveContact()
-        assertEquals(null, store.getSavedContacts().single().linkedPeerId)
+        assertEquals("bob", store.getSavedContacts().single().linkedPeerId)
+        assertEquals("+12025550198", store.getSavedContacts().single().phoneNumber)
+        assertNotNull(viewModel.uiState.value.error)
     }
 
     @Test
@@ -1044,11 +1296,11 @@ class ChatViewModelTest {
         val viewModel = makeViewModel(FakeNearbyChatController())
         viewModel.updateDisplayName("Alice")
         viewModel.startChat()
-        viewModel.openConversation(MeshGroup.ID)
+        viewModel.openConversation(TEST_GROUP)
         viewModel.updateMessageDraft("Still writing")
         viewModel.stopChat()
         assertEquals(ChatScreen.CONVERSATION, viewModel.uiState.value.screen)
-        assertEquals("Still writing", viewModel.uiState.value.messageDrafts[MeshGroup.ID])
+        assertEquals("Still writing", viewModel.uiState.value.messageDrafts[TEST_GROUP])
         assertFalse(viewModel.uiState.value.nearbyActive)
     }
 
@@ -1077,6 +1329,7 @@ class ChatViewModelTest {
         val cloud = FakeCloudChatController()
         cloud.addAccount("bob-uid", "Bob", "bob-id", phone = "+61412345678")
         val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.accountChanged("alice-uid")
         viewModel.beginAddContact()
         viewModel.updateContactDraft(ContactProfile(displayName = "Bob", phoneNumber = "+61 0412 345 678"))
         viewModel.saveContact()
@@ -1115,6 +1368,7 @@ class ChatViewModelTest {
         val cloud = FakeCloudChatController()
         cloud.addAccount("bob-uid", "Bob", "bob-id", phone = "+12025550198")
         val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.accountChanged("alice-uid")
         viewModel.beginAddContact()
         viewModel.updateContactDraft(ContactProfile(
             displayName = "Bob", email = "old@example.com", phoneNumber = "+12025550198",
@@ -1127,7 +1381,7 @@ class ChatViewModelTest {
 
         assertEquals("bob-uid", cloud.directMessages.single().first)
         assertEquals("bob-uid", store.getSavedContacts().single().cloudUserId)
-        assertTrue(viewModel.uiState.value.notice.orEmpty().contains("not verified"))
+        assertEquals("bob_uid", store.getSavedContacts().single().username)
     }
 
     @Test
@@ -1146,8 +1400,8 @@ class ChatViewModelTest {
             IncomingNearbyMessage("same-id", "bob-id", "bob-id", "Bob", requireNotNull(PhoneIdentity.hash("+12025550198")), "Hi", 100L),
         )
 
-        assertEquals(1, store.getMessages("bob-id").size)
-        assertEquals("Hi", store.getMessages("bob-id").single().text)
+        assertEquals(1, store.getMessages("account:bob-uid").size)
+        assertEquals("Hi", store.getMessages("account:bob-uid").single().text)
     }
 
     @Test
@@ -1262,7 +1516,7 @@ class ChatViewModelTest {
         viewModel.sendMessage("Hello from the QR card")
 
         assertEquals("bob-uid", cloud.directMessages.single().first)
-        assertEquals(peerId, viewModel.uiState.value.selectedPeerId)
+        assertEquals("account:bob-uid", viewModel.uiState.value.selectedPeerId)
     }
 
     @Test
@@ -1275,7 +1529,7 @@ class ChatViewModelTest {
         cloud.listener?.onDirectMessage("bob-uid", CloudChatMessage(
             "incoming-id", "bob-uid", "bob-other-device", "Bob", "Hi Alice", 100L))
 
-        viewModel.openConversation("bob-other-device")
+        viewModel.openConversation("account:bob-uid")
         viewModel.sendMessage("Hi Bob")
 
         assertEquals("bob-uid", cloud.directMessages.single().first)
@@ -1327,7 +1581,11 @@ class ChatViewModelTest {
     @Test
     fun multipleEmailOnlyContactsCanBeSavedAndSelectedForGroups() {
         val store = FakeChatStore()
-        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("alex-uid", "Alex", "alex-peer", email = "alex@example.com", username = "alex_user")
+        cloud.addAccount("sam-uid", "Sam", "sam-peer", email = "sam@example.com", username = "sam_user")
+        val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.accountChanged("alice-uid")
         listOf("alex@example.com", "sam@example.com").forEach { email ->
             viewModel.beginAddContact()
             viewModel.updateContactDraft(ContactProfile(displayName = email.substringBefore('@'), email = email))
@@ -1343,7 +1601,10 @@ class ChatViewModelTest {
     @Test
     fun googleAccountEmailCanBeSavedWithoutPhone() {
         val store = FakeChatStore()
-        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("ari-uid", "Ari", "ari-peer", email = "ari@example.com", username = "ari_user")
+        val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.accountChanged("alice-uid")
         viewModel.beginAddContact()
         viewModel.updateContactDraft(ContactProfile(displayName = "Ari", googleAccountEmail = "Ari@Example.com"))
         viewModel.saveContact()
@@ -1373,24 +1634,24 @@ class ChatViewModelTest {
     fun replyPollVoteEditAndDeleteUseTheSameOutbox() {
         val store = FakeChatStore()
         val viewModel = makeViewModel(FakeNearbyChatController(), store)
-        viewModel.openConversation(MeshGroup.ID)
+        viewModel.openConversation(TEST_GROUP)
         viewModel.sendMessage("Original")
-        val original = store.getMessages(MeshGroup.ID).single()
+        val original = store.getMessages(TEST_GROUP).single()
 
         viewModel.sendReply(original.id, "Answer")
         viewModel.createPoll("Choose a place", listOf("Park", "Library"))
-        val poll = store.getMessages(MeshGroup.ID).first {
+        val poll = store.getMessages(TEST_GROUP).first {
             ChatFeatures.decode(it.text) is ChatContent.Poll
         }
         viewModel.voteInPoll(poll.id, 1)
         viewModel.editMessage(original.id, "Updated")
-        var shown = ChatTimeline.present(store.getMessages(MeshGroup.ID))
+        var shown = ChatTimeline.present(store.getMessages(TEST_GROUP))
         assertEquals(ChatContent.Text("Updated"), shown.first { it.message.id == original.id }.content)
         assertEquals(listOf(0, 1), shown.first { it.message.id == poll.id }.votes)
         assertTrue(shown.any { it.content is ChatContent.Reply })
 
         viewModel.deleteMessage(original.id)
-        shown = ChatTimeline.present(store.getMessages(MeshGroup.ID))
+        shown = ChatTimeline.present(store.getMessages(TEST_GROUP))
         assertTrue(shown.first { it.message.id == original.id }.deleted)
     }
 
@@ -1398,28 +1659,28 @@ class ChatViewModelTest {
     fun sendVoiceStoresAVoiceMessage() {
         val store = FakeChatStore()
         val viewModel = makeViewModel(FakeNearbyChatController(), store)
-        viewModel.openConversation(MeshGroup.ID)
+        viewModel.openConversation(TEST_GROUP)
 
         viewModel.sendVoice(1_200, byteArrayOf(1, 2, 3, 4))
 
-        val stored = store.getMessages(MeshGroup.ID).single()
+        val stored = store.getMessages(TEST_GROUP).single()
         val content = ChatFeatures.decode(stored.text)
         assertTrue(content is ChatContent.Voice)
         assertEquals(1_200, (content as ChatContent.Voice).durationMs)
         assertEquals("Voice message", ChatFeatures.preview(stored.text))
         assertEquals("Voice message", viewModel.uiState.value.conversations
-            .first { it.peerId == MeshGroup.ID }.lastMessage)
+            .first { it.peerId == TEST_GROUP }.lastMessage)
     }
 
     @Test
     fun oversizedVoiceNoteIsRejected() {
         val store = FakeChatStore()
         val viewModel = makeViewModel(FakeNearbyChatController(), store)
-        viewModel.openConversation(MeshGroup.ID)
+        viewModel.openConversation(TEST_GROUP)
 
         viewModel.sendVoice(1_000, ByteArray(ChatViewModel.MAX_VOICE_ENCODED_LENGTH))
 
-        assertTrue(store.getMessages(MeshGroup.ID).isEmpty())
+        assertTrue(store.getMessages(TEST_GROUP).isEmpty())
         assertEquals("This message is too long.", viewModel.uiState.value.error)
     }
 
@@ -1427,11 +1688,11 @@ class ChatViewModelTest {
     fun shortVoiceNoteIsRejected() {
         val store = FakeChatStore()
         val viewModel = makeViewModel(FakeNearbyChatController(), store)
-        viewModel.openConversation(MeshGroup.ID)
+        viewModel.openConversation(TEST_GROUP)
 
         viewModel.sendVoice(200, byteArrayOf(1, 2, 3))
 
-        assertTrue(store.getMessages(MeshGroup.ID).isEmpty())
+        assertTrue(store.getMessages(TEST_GROUP).isEmpty())
         assertNull(viewModel.uiState.value.error)
     }
 
@@ -1439,13 +1700,13 @@ class ChatViewModelTest {
     fun replyToVoiceUsesVoiceMessageExcerpt() {
         val store = FakeChatStore()
         val viewModel = makeViewModel(FakeNearbyChatController(), store)
-        viewModel.openConversation(MeshGroup.ID)
+        viewModel.openConversation(TEST_GROUP)
         viewModel.sendVoice(800, byteArrayOf(9, 8, 7))
-        val voice = store.getMessages(MeshGroup.ID).single()
+        val voice = store.getMessages(TEST_GROUP).single()
 
         viewModel.sendReply(voice.id, "Got it")
 
-        val reply = ChatTimeline.present(store.getMessages(MeshGroup.ID))
+        val reply = ChatTimeline.present(store.getMessages(TEST_GROUP))
             .first { it.content is ChatContent.Reply }.content as ChatContent.Reply
         assertEquals("Voice message", reply.excerpt)
     }
@@ -1473,28 +1734,31 @@ class ChatViewModelTest {
         val store = FakeChatStore()
         val notifier = RecordingNotifier()
         val viewModel = makeViewModel(FakeNearbyChatController(), store, notifier = notifier)
-        viewModel.openConversation(MeshGroup.ID)
+        viewModel.openConversation(TEST_GROUP)
         val incoming = IncomingNearbyMessage(
-            "incoming", MeshGroup.ID, "bob", "Bob", "", "Hello", System.currentTimeMillis(),
+            "incoming", TEST_GROUP, "bob", "Bob", "", "Hello", System.currentTimeMillis(),
         )
         viewModel.onMessageReceived(incoming)
         viewModel.editMessage("incoming", "Wrong")
 
-        assertEquals(1, store.getMessages(MeshGroup.ID).size)
+        assertEquals(1, store.getMessages(TEST_GROUP).size)
         assertEquals(1, notifier.incoming.size)
-        assertEquals(ConversationType.OPEN_MESH, notifier.incoming.single().second)
+        assertEquals(ConversationType.PRIVATE_GROUP, notifier.incoming.single().second)
     }
 
     @Test
     fun chatHeaderProfileReturnsToTheOpenConversation() {
         val store = FakeChatStore()
-        val viewModel = makeViewModel(FakeNearbyChatController(), store)
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", email = "bob@example.com", username = "bob_user")
+        val viewModel = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        viewModel.accountChanged("alice-uid")
         viewModel.beginAddContact()
         viewModel.updateContactDraft(ContactProfile(displayName = "Bob", email = "bob@example.com"))
         viewModel.saveContact()
         val contact = store.getSavedContacts().single()
-        val peerId = requireNotNull(ContactIdentity.localPeerId("", contact.email, ""))
-        viewModel.onConnected(ConnectedPeer(peerId, "endpoint", "Bob"))
+        val peerId = requireNotNull(ContactIdentity.conversationId(contact))
+        viewModel.onConnected(ConnectedPeer("bob-peer", "endpoint", "Bob"))
         viewModel.showConversationList()
         viewModel.openConversation(peerId)
 
@@ -1523,7 +1787,319 @@ class ChatViewModelTest {
         assertEquals(store.getSavedContacts().single().id, viewModel.uiState.value.selectedContactId)
     }
 
+    @Test
+    fun incomingOnlineChatShowsAndSavesTheSendersUniqueUsername() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController().apply {
+            addAccount("bob-uid", "Bob", "bob-peer", username = "bob_user")
+        }
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        cloud.listener?.onDirectMessage("bob-uid",
+            CloudChatMessage("incoming", "bob-uid", "bob-peer", "Bob", "Hello", 100L))
+
+        assertEquals("bob_user", vm.uiState.value.conversations.single().username)
+        vm.openConversation("account:bob-uid")
+        vm.openCurrentChatProfile()
+        assertNull(vm.uiState.value.selectedContactId)
+        vm.saveCurrentChatContact()
+        assertEquals("bob_user", vm.uiState.value.contactUsernameDraft)
+        cloud.failAccountFetch = true
+        vm.saveContact()
+
+        assertEquals("bob_user", store.getSavedContacts().single().username)
+        assertEquals("bob-uid", store.getSavedContacts().single().cloudUserId)
+        assertEquals("bob-peer", store.getSavedContacts().single().linkedPeerId)
+        vm.messageContact(store.getSavedContacts().single().id)
+        vm.sendMessage("Reply")
+        assertEquals("bob-uid", cloud.directMessages.single().first)
+        assertEquals(listOf("account:bob-uid"), store.getConversations().map { it.peerId })
+    }
+
+    @Test
+    fun sentMessageEchoLoadsTheRecipientsUsernameNotTheSenders() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController().apply {
+            addAccount("alice-uid", "Alice", "local-peer", username = "alice_user")
+            addAccount("bob-uid", "Bob", "bob-peer", username = "bob_user")
+        }
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        cloud.listener?.onDirectMessage("bob-uid",
+            CloudChatMessage("echo", "alice-uid", "local-peer", "Alice", "Hello", 100L))
+
+        assertEquals("bob_user", vm.uiState.value.conversations.single().username)
+        assertEquals(listOf("bob-uid"), cloud.accountFetches)
+    }
+
+    @Test
+    fun offlineNearbyChatKeepsUsernameAfterDisconnectingAndReopening() {
+        val store = FakeChatStore()
+        val vm = makeViewModel(FakeNearbyChatController(), store)
+        vm.onConnected(ConnectedPeer("bob-peer", "endpoint", "Bob", username = "bob_user"))
+        vm.onDisconnected("bob-peer")
+        val reopened = makeViewModel(FakeNearbyChatController(), store)
+        reopened.openConversation("bob-peer")
+        reopened.openCurrentChatProfile()
+        assertEquals("bob_user", reopened.uiState.value.conversations.single().username)
+        reopened.saveCurrentChatContact()
+        assertEquals("bob_user", reopened.uiState.value.contactUsernameDraft)
+        reopened.saveContact()
+        assertEquals("bob_user", store.getSavedContacts().single().username)
+    }
+
+    @Test
+    fun failedPublicCardLookupDoesNotBlockMessagesOrEraseCachedUsername() {
+        val store = FakeChatStore().apply {
+            savePeer("account:bob-uid", "Bob")
+            savePeerUsername("account:bob-uid", "bob_user")
+        }
+        val cloud = FakeCloudChatController().apply { failAccountFetch = true }
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        cloud.listener?.onDirectMessage("bob-uid",
+            CloudChatMessage("incoming", "bob-uid", "bob-peer", "Bob", "Hello", 100L))
+
+        assertEquals("Hello", store.getMessages("account:bob-uid").single().text)
+        assertEquals("bob_user", vm.uiState.value.conversations.single().username)
+        assertNull(vm.uiState.value.error)
+    }
+
+    @Test
+    fun delayedPublicCardCannotPopulateADifferentContactDraft() {
+        val store = FakeChatStore().apply { savePeer("account:bob-uid", "Bob") }
+        val ready = CompletableDeferred<Unit>()
+        val cloud = FakeCloudChatController().apply {
+            addAccount("bob-uid", "Bob", "bob-peer", username = "bob_user")
+            beforeAccountFetch = { ready.await() }
+        }
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        vm.openConversation("account:bob-uid")
+        vm.saveCurrentChatContact()
+        vm.beginAddContact()
+        vm.updateContactDraft(ContactProfile(displayName = "Carol", username = "carol_user"))
+        ready.complete(Unit)
+
+        assertEquals("Carol", vm.uiState.value.contactNameDraft)
+        assertEquals("carol_user", vm.uiState.value.contactUsernameDraft)
+        assertTrue(store.getSavedContacts().isEmpty())
+    }
+
     private val testSessions = mutableListOf<MessagingSession>()
+
+    @Test
+    fun conflictingPhoneAndEmailMatchesRequireChoosingAnAccount() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", email = "bob@example.com", username = "bob_user")
+        cloud.addAccount("sam-uid", "Sam", "sam-peer", phone = "+12025550198", username = "sam_user")
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        vm.beginAddContact()
+        vm.updateContactDraft(ContactProfile("Friend", phoneNumber = "+12025550198", email = "bob@example.com"))
+        vm.saveContact()
+        assertTrue(store.getSavedContacts().isEmpty())
+        assertEquals(setOf("bob_user", "sam_user"), vm.uiState.value.accountCandidates.map { it.username }.toSet())
+        vm.cancelAccountSelection()
+        assertTrue(store.getSavedContacts().isEmpty())
+    }
+
+    @Test
+    fun sharedPhoneAccountsRemainSeparateContactsChatsAndGroupChoices() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", phone = "+12025550198", username = "bob_user")
+        cloud.addAccount("sam-uid", "Sam", "sam-peer", phone = "+12025550198", username = "sam_user")
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        listOf("bob_user", "sam_user").forEach { username ->
+            vm.beginAddContact()
+            vm.updateContactDraft(ContactProfile(username, phoneNumber = "+12025550198", username = username))
+            vm.saveContact()
+            vm.messageContact(store.getSavedContacts().single { it.username == username }.id)
+            vm.sendMessage(username)
+        }
+        assertEquals(2, store.getSavedContacts().size)
+        assertEquals(listOf("bob_user"), store.getMessages("account:bob-uid").map { it.text })
+        assertEquals(listOf("sam_user"), store.getMessages("account:sam-uid").map { it.text })
+        vm.beginCreateGroup()
+        assertEquals(setOf("bob_user", "sam_user"), vm.uiState.value.groupContacts.map { it.username }.toSet())
+    }
+
+    @Test
+    fun manualContactWaitsForLookupBeforeBeingSaved() = runBlocking {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        val ready = CompletableDeferred<Unit>()
+        cloud.beforeLookup = { ready.await() }
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", email = "bob@example.com", username = "bob_user")
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        vm.beginAddContact()
+        vm.updateContactDraft(ContactProfile(displayName = "Bob", email = "bob@example.com"))
+        vm.saveContact()
+        vm.saveContact()
+        assertTrue(store.getSavedContacts().isEmpty())
+        assertTrue(vm.uiState.value.savingContact)
+        ready.complete(Unit)
+        assertEquals("bob_user", store.getSavedContacts().single().username)
+        assertEquals("bob-uid", store.getSavedContacts().single().cloudUserId)
+        assertFalse(vm.uiState.value.savingContact)
+    }
+
+    @Test
+    fun failedManualLookupDoesNotSaveAnUnlinkedContact() {
+        val store = FakeChatStore()
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = FakeCloudChatController())
+        vm.accountChanged("alice-uid")
+        vm.beginAddContact()
+        vm.updateContactDraft(ContactProfile(displayName = "Nobody", username = "missing_user"))
+        vm.saveContact()
+        assertTrue(store.getSavedContacts().isEmpty())
+        assertEquals(ChatScreen.EDITING_CONTACT, vm.uiState.value.screen)
+        assertTrue(vm.uiState.value.error.orEmpty().contains("Contact not saved"))
+    }
+
+    @Test
+    fun ambiguousManualLookupSavesOnlyTheChosenUsername() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", phone = "+12025550198", username = "bob_user")
+        cloud.addAccount("sam-uid", "Sam", "sam-peer", phone = "+12025550198", username = "sam_user")
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        vm.beginAddContact()
+        vm.updateContactDraft(ContactProfile(displayName = "Friend", phoneNumber = "+12025550198"))
+        vm.saveContact()
+        assertTrue(store.getSavedContacts().isEmpty())
+        assertEquals(2, vm.uiState.value.accountCandidates.size)
+        vm.selectOnlineAccount("sam-uid")
+        assertEquals("sam_user", store.getSavedContacts().single().username)
+        assertEquals("sam-uid", store.getSavedContacts().single().cloudUserId)
+    }
+
+    @Test
+    fun emailPhoneAndUsernameConvergeOnOneContactAndConversation() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", phone = "+12025550198", email = "bob@example.com", username = "bob_user")
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        listOf(ContactProfile("Bob", email = "bob@example.com"),
+            ContactProfile("Bob", phoneNumber = "+12025550198"),
+            ContactProfile("Bob", username = "bob_user")).forEachIndexed { index, profile ->
+            vm.beginAddContact()
+            vm.updateContactDraft(profile)
+            vm.saveContact()
+            vm.messageContact(store.getSavedContacts().single().id)
+            vm.sendMessage("Message $index")
+        }
+        assertEquals(1, store.getSavedContacts().size)
+        assertEquals(listOf("account:bob-uid"), store.getConversations().filter {
+            it.type == ConversationType.DIRECT }.map { it.peerId })
+        assertEquals(3, store.getMessages("account:bob-uid").size)
+    }
+
+    @Test
+    fun lookupMergesLegacyEmailAndPhoneChatsWithoutLosingMessages() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", phone = "+12025550198", email = "bob@example.com", username = "bob_user")
+        val hash = requireNotNull(PhoneIdentity.hash("+12025550198"))
+        val emailId = requireNotNull(ContactIdentity.localPeerId("", "bob@example.com", ""))
+        listOf("phone:$hash", emailId, "bob-peer").forEachIndexed { index, id ->
+            store.savePeer(id, "Bob")
+            store.saveMessage(ChatMessage("old-$index", id, "Old $index", MessageAuthor.PEER, index.toLong(), MessageStatus.DELIVERED))
+        }
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        vm.beginAddContact()
+        vm.updateContactDraft(ContactProfile("Bob", phoneNumber = "+12025550198", email = "bob@example.com"))
+        vm.saveContact()
+        assertEquals(3, store.getMessages("account:bob-uid").size)
+        assertEquals(1, store.getConversations().count { it.type == ConversationType.DIRECT })
+    }
+
+    @Test
+    fun savedAccountCanSendWhenAnotherProfileFetchWouldFail() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", username = "bob_user")
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        vm.beginAddContact()
+        vm.updateContactDraft(ContactProfile("Bob", username = "bob_user"))
+        vm.saveContact()
+        cloud.failAccountFetch = true
+        vm.messageContact(store.getSavedContacts().single().id)
+        vm.sendMessage("Still linked")
+        assertEquals("bob-uid", cloud.directMessages.single().first)
+        assertFalse(vm.uiState.value.notice.orEmpty().contains("No online account matched"))
+    }
+
+    @Test
+    fun accountConversationRoutesNearbyMessagesToThePairedDevice() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        val nearby = FakeNearbyChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", username = "bob_user")
+        val vm = makeViewModel(nearby, store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        vm.beginAddContact()
+        vm.updateContactDraft(ContactProfile("Bob", username = "bob_user"))
+        vm.saveContact()
+        vm.onConnected(ConnectedPeer("bob-peer", "endpoint", "Bob"))
+        vm.messageContact(store.getSavedContacts().single().id)
+        vm.sendMessage("One chat, both routes")
+        assertEquals("bob-peer", nearby.sentMessages.single().peerId)
+        assertEquals("account:bob-uid", vm.uiState.value.selectedPeerId)
+        vm.onMessageReceived(IncomingNearbyMessage("nearby-reply", "bob-peer", "bob-peer", "Bob", "", "Reply", 100L))
+        assertEquals(2, store.getMessages("account:bob-uid").size)
+    }
+
+    @Test
+    fun deleteChatKeepsTheContactAndSuppressesCloudReplay() {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", username = "bob_user")
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        vm.beginAddContact()
+        vm.updateContactDraft(ContactProfile("Bob", username = "bob_user"))
+        vm.saveContact()
+        vm.messageContact(store.getSavedContacts().single().id)
+        vm.sendMessage("Old")
+        vm.updateMessageDraft("Discard this")
+        vm.deleteChat()
+        assertEquals(ChatScreen.CHATS, vm.uiState.value.screen)
+        assertEquals(1, store.getSavedContacts().size)
+        assertTrue(vm.uiState.value.messageDrafts.isEmpty())
+        cloud.listener!!.onDirectMessage("bob-uid", CloudChatMessage("old-replay", "bob-uid", "bob-peer", "Bob", "Old", 1L))
+        assertTrue(store.getMessages("account:bob-uid").isEmpty())
+        assertTrue(store.getConversations().none { it.peerId == "account:bob-uid" })
+        cloud.listener!!.onDirectMessage("bob-uid", CloudChatMessage("new", "bob-uid", "bob-peer", "Bob", "New", System.currentTimeMillis() + 1_000))
+        assertEquals("New", store.getMessages("account:bob-uid").single().text)
+        assertTrue(store.getConversations().any { it.peerId == "account:bob-uid" })
+    }
+
+    @Test
+    fun closingTheEditorDiscardsAnInFlightLookup() = runBlocking {
+        val store = FakeChatStore()
+        val cloud = FakeCloudChatController()
+        val ready = CompletableDeferred<Unit>()
+        cloud.beforeLookup = { ready.await() }
+        cloud.addAccount("bob-uid", "Bob", "bob-peer", username = "bob_user")
+        val vm = makeViewModel(FakeNearbyChatController(), store, cloud = cloud)
+        vm.accountChanged("alice-uid")
+        vm.beginAddContact()
+        vm.updateContactDraft(ContactProfile("Bob", username = "bob_user"))
+        vm.saveContact()
+        vm.closeContactEditor()
+        ready.complete(Unit)
+        assertTrue(store.getSavedContacts().isEmpty())
+        assertEquals(ChatScreen.MANAGING_CONTACTS, vm.uiState.value.screen)
+    }
 
     @org.junit.After
     fun closeTestSessions() { testSessions.forEach(MessagingSession::close) }
@@ -1558,6 +2134,7 @@ class ChatViewModelTest {
         fun voteInPoll(pollId: String, option: Int) = chat.voteInPoll(pollId, option)
         fun editMessage(messageId: String, text: String) = chat.editMessage(messageId, text)
         fun deleteMessage(messageId: String) = chat.deleteMessage(messageId)
+        fun deleteChat() = chat.deleteChat()
         fun sendVoice(durationMs: Int, audio: ByteArray) = chat.sendVoice(durationMs, audio)
         fun disconnect(peerId: String) = chat.disconnect(peerId)
         fun dismissError() = chat.dismissError()
@@ -1621,7 +2198,13 @@ class ChatViewModelTest {
         fun onPrivateGroup(group: CloudPrivateGroup) = session.cloudSync.onPrivateGroup(group)
         fun onGroupMessage(groupId: String, message: CloudChatMessage) = session.cloudSync.onGroupMessage(groupId, message)
         fun onCloudError(message: String) = session.cloudSync.onCloudError(message)
-        fun openConversation(peerId: String) = session.navigation.openConversation(peerId)
+        fun openConversation(peerId: String) {
+            if (peerId == TEST_GROUP && session.store.getGroups().none { it.id == TEST_GROUP }) {
+                prepareTestGroup(session.store as FakeChatStore)
+                session.persistence.reloadConversationsNow()
+            }
+            session.navigation.openConversation(peerId)
+        }
         fun showConversationList() = session.navigation.showConversationList()
         fun handleBack() = session.navigation.handleBack()
         fun showError(message: String) = session.showError(message)
@@ -1635,8 +2218,11 @@ class ChatViewModelTest {
         identityStore: FakeIdentityStore = FakeIdentityStore(),
         cloud: FakeCloudChatController? = null,
         notifier: ChatNotifier = NoopChatNotifier,
-    ) = MessagingTestHarness(controller, store, identityStore, Dispatchers.Unconfined,
-        cloudChatController = cloud, chatNotifier = notifier)
+    ): MessagingTestHarness {
+        if (store.getMessages(TEST_GROUP).isNotEmpty()) prepareTestGroup(store)
+        return MessagingTestHarness(controller, store, identityStore, Dispatchers.Unconfined,
+            cloudChatController = cloud, chatNotifier = notifier)
+    }
 
     private class RecordingNotifier : ChatNotifier {
         val incoming = mutableListOf<Pair<String, ConversationType>>()
@@ -1671,6 +2257,10 @@ class ChatViewModelTest {
         private val groups = linkedMapOf<String, PrivateGroup>()
         private val contacts = linkedMapOf<String, SavedContact>()
         private val phoneHashes = linkedMapOf<String, String>()
+        private val usernames = linkedMapOf<String, String>()
+        private val deletions = mutableMapOf<String, Long>()
+        private val hiddenChats = mutableSetOf<String>()
+        private val deletedMessageIds = mutableSetOf<String>()
 
         override fun savePeer(peerId: String, name: String, phoneHash: String) {
             peers[peerId] = name
@@ -1682,10 +2272,9 @@ class ChatViewModelTest {
             phoneHashes[peerId] = phoneHash
         }
 
+        override fun savePeerUsername(peerId: String, username: String) { usernames[peerId] = username }
+
         override fun saveContact(contact: SavedContact) {
-            if (contact.phoneHash.isNotBlank()) {
-                contacts.entries.removeAll { it.key != contact.id && it.value.phoneHash == contact.phoneHash }
-            }
             contacts[contact.id] = contact
         }
 
@@ -1723,8 +2312,10 @@ class ChatViewModelTest {
             } == true
 
         override fun saveMessage(message: ChatMessage): Boolean {
+            if (message.id in deletedMessageIds || message.sentAt <= (deletions[message.peerId] ?: Long.MIN_VALUE)) return false
             if (messages.containsKey(message.id)) return false
             messages[message.id] = message
+            hiddenChats.remove(message.peerId)
             return true
         }
 
@@ -1741,6 +2332,7 @@ class ChatViewModelTest {
                     name = name,
                     lastMessage = last?.text.orEmpty(),
                     lastMessageAt = last?.sentAt ?: 0L,
+                    username = usernames[peerId].orEmpty(),
                     type = if (peerId == MeshGroup.ID) ConversationType.OPEN_MESH else ConversationType.DIRECT,
                 )
             }
@@ -1755,7 +2347,7 @@ class ChatViewModelTest {
                     memberCount = group.members.size,
                 )
             }
-            return direct + privateGroups
+            return (direct + privateGroups).filterNot { it.peerId in hiddenChats }
         }
 
         override fun getMessages(peerId: String): List<ChatMessage> =
@@ -1780,7 +2372,18 @@ class ChatViewModelTest {
                 if (message.peerId == fromPeerId) message.copy(peerId = toPeerId) else message
             }
             peers.remove(fromPeerId)
+            if (usernames[toPeerId].isNullOrBlank()) usernames[fromPeerId]?.let { usernames[toPeerId] = it }
+            usernames.remove(fromPeerId)
         }
+
+        override fun deleteConversation(peerId: String) {
+            deletedMessageIds += getMessages(peerId).map { it.id }
+            messages.entries.removeAll { it.value.peerId == peerId }
+            deletions[peerId] = System.currentTimeMillis()
+            hiddenChats += peerId
+        }
+
+        override fun reopenConversation(peerId: String) { hiddenChats.remove(peerId) }
 
         override fun close() { closed = true; closeCalls++ }
     }
@@ -1810,6 +2413,14 @@ class ChatViewModelTest {
         }
 
         override fun connectToDevice(endpointId: String) = Unit
+        val accepted = mutableListOf<String>()
+        val knownAccepted = mutableListOf<Pair<String, TrustedNearbyIdentity>>()
+        var identityProofAvailable = false
+        override fun canVerifyIdentity(endpointId: String) = identityProofAvailable
+        override fun acceptKnownConnection(endpointId: String, identity: TrustedNearbyIdentity) { knownAccepted += endpointId to identity }
+        val rejected = mutableListOf<String>()
+        override fun acceptConnection(endpointId: String) { accepted += endpointId }
+        override fun rejectConnection(endpointId: String) { rejected += endpointId }
         override fun sendMessage(message: OutgoingNearbyMessage) {
             sentMessages += message
         }
@@ -1860,6 +2471,10 @@ class ChatViewModelTest {
         var listener: CloudChatController.Listener? = null
         var startedAccountId: String? = null
         var failAccountFetch = false
+        var failKeyPublication = false
+        var beforeLookup: (suspend () -> Unit)? = null
+        var beforeAccountFetch: (suspend () -> Unit)? = null
+        val accountFetches = mutableListOf<String>()
         val directMessages = mutableListOf<Pair<String, CloudChatMessage>>()
         val groups = mutableListOf<CloudPrivateGroup>()
         val groupMessages = mutableListOf<Pair<String, CloudChatMessage>>()
@@ -1868,8 +2483,8 @@ class ChatViewModelTest {
         private val emails = mutableMapOf<String, String>()
 
         fun addAccount(uid: String, name: String, peerId: String, phone: String = "", email: String = "",
-                       username: String = "") {
-            accounts[uid] = CloudAccount(uid, name, peerId, username)
+                       username: String = uid.replace('-', '_'), nearbyPublicKey: String = "") {
+            accounts[uid] = CloudAccount(uid, name, peerId, username, nearbyPublicKey)
             if (phone.isNotBlank()) phones.getOrPut(phone) { mutableSetOf() }.add(uid)
             if (email.isNotBlank()) emails[email.lowercase()] = uid
         }
@@ -1884,18 +2499,28 @@ class ChatViewModelTest {
         }
 
         override suspend fun publishAccount(profile: ContactProfile, peerId: String) = Unit
+        var keyPublications = 0
+        override suspend fun publishNearbyKey(peerId: String, publicKey: String) {
+            check(!failKeyPublication) { "Device-key publication unavailable" }
+            keyPublications++
+        }
 
-        override suspend fun getAccount(uid: String): CloudAccount? =
-            if (failAccountFetch) error("Firestore profile fetch unavailable") else accounts[uid]
+        override suspend fun getAccount(uid: String): CloudAccount? {
+            accountFetches += uid
+            beforeAccountFetch?.invoke()
+            return if (failAccountFetch) error("Firestore profile fetch unavailable") else accounts[uid]
+        }
 
         override suspend fun findAccounts(phoneNumber: String, email: String, peerId: String,
-                                          username: String): List<CloudAccount> =
-            accounts.values.filter { account ->
+                                          username: String): List<CloudAccount> {
+            beforeLookup?.invoke()
+            return accounts.values.filter { account ->
                 (phoneNumber.isNotBlank() && account.uid in phones[phoneNumber].orEmpty()) ||
                     (email.isNotBlank() && emails[email.lowercase()] == account.uid) ||
                     (peerId.isNotBlank() && account.peerId == peerId) ||
                     (username.isNotBlank() && account.username == username)
             }
+        }
 
         override suspend fun sendDirect(otherUid: String, message: CloudChatMessage) {
             directMessages += otherUid to message

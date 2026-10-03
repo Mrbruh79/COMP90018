@@ -6,7 +6,9 @@ import java.io.DataInputStream
 import java.io.DataOutputStream
 
 sealed interface NearbyPacket {
-    data class Hello(val peerId: String, val name: String, val phoneHash: String) : NearbyPacket
+    data class Hello(val peerId: String, val name: String, val phoneHash: String,
+        val username: String = "", val accountUid: String = "", val publicKey: String = "",
+        val signature: String = "") : NearbyPacket
 
     data class Message(
         val messageId: String,
@@ -126,6 +128,12 @@ object NearbyProtocol {
                     output.writeUTF(packet.peerId)
                     output.writeUTF(packet.name)
                     output.writeUTF(packet.phoneHash)
+                    if (packet.username.isNotBlank()) {
+                        output.writeUTF(packet.username)
+                        output.writeUTF(packet.accountUid)
+                        output.writeUTF(packet.publicKey)
+                        output.writeUTF(packet.signature)
+                    }
                 }
 
                 is NearbyPacket.Message -> {
@@ -248,7 +256,11 @@ object NearbyProtocol {
         DataInputStream(ByteArrayInputStream(bytes)).use { input ->
             if (input.readInt() != MAGIC || input.readInt() != VERSION) return null
             when (input.readInt()) {
-                HELLO -> NearbyPacket.Hello(input.readUTF(), input.readUTF(), input.readUTF())
+                HELLO -> {
+                    val hello = NearbyPacket.Hello(input.readUTF(), input.readUTF(), input.readUTF())
+                    if (input.available() == 0) hello else hello.copy(username = input.readUTF(),
+                        accountUid = input.readUTF(), publicKey = input.readUTF(), signature = input.readUTF())
+                }
                 MESSAGE -> NearbyPacket.Message(
                     messageId = input.readUTF(),
                     senderId = input.readUTF(),

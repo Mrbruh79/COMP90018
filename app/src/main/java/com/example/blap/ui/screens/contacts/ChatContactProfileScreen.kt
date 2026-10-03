@@ -29,6 +29,11 @@ internal fun ChatContactProfileScreen(
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
         TextButton(onClick = onBack) { Text("Back to chat") }
         Text(contact?.name ?: conversation?.name.orEmpty(), style = MaterialTheme.typography.headlineSmall)
+        val username = conversation?.username.orEmpty().ifBlank { contact?.username.orEmpty() }
+        if (username.isNotBlank()) {
+            Text("@$username", style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+        }
         if (contact == null) {
             Text("This person is not in your saved contacts yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             Button(onClick = onSaveContact, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
@@ -44,7 +49,6 @@ internal fun ChatContactProfileScreen(
             }, color = MaterialTheme.colorScheme.primary,
         )
         listOf(
-            "BLAP username" to contact.username.takeIf(String::isNotBlank)?.let { "@$it" }.orEmpty(),
             "Phone" to contact.phoneNumber,
             "Email" to contact.email,
             "Google account" to contact.googleAccountEmail,

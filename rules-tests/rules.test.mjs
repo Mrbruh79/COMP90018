@@ -92,6 +92,30 @@ test('account cards and exact lookups require an email account, settings stay pr
   }));
 });
 
+test('nearby public keys are owner-published identity data, not private account fields', async () => {
+  await publishAccount('alice');
+  const alice = client('alice');
+  const bob = client('bob');
+  const path = 'accountCards/alice';
+  const key = 'A'.repeat(124);
+  await assertSucceeds(updateDoc(doc(alice, path), { nearbyPublicKey: key }));
+  await assertSucceeds(getDoc(doc(bob, path)));
+  await assertFails(updateDoc(doc(bob, path), { nearbyPublicKey: key }));
+  await assertFails(updateDoc(doc(alice, path), { nearbyPublicKey: 123 }));
+  await assertFails(updateDoc(doc(alice, path), { nearbyPublicKey: '' }));
+  await assertFails(updateDoc(doc(alice, path), { nearbyPublicKey: 'A'.repeat(1_000_000) }));
+  await assertFails(updateDoc(doc(alice, path), { nearbyPublicKey: '!'.repeat(124) }));
+  await assertFails(updateDoc(doc(alice, path), { privateKey: key }));
+  await assertFails(updateDoc(doc(alice, path), { phoneNumber: '+61412345678' }));
+  await assertFails(updateDoc(doc(alice, path), { uid: 'bob' }));
+  await assertFails(updateDoc(doc(alice, path), { username: 'bob' }));
+  const missing = { uid: 'alice', name: 'Alice', username: 'alice', nearbyPublicKey: key };
+  await assertFails(setDoc(doc(alice, path), missing));
+  await assertFails(getDocs(collection(bob, 'accountCards')));
+  await assertFails(getDoc(doc(environment.unauthenticatedContext().firestore(), path)));
+  await assertFails(getDoc(doc(environment.authenticatedContext('guest').firestore(), path)));
+});
+
 test('account owner cannot claim a different verified email or another uid', async () => {
   const alice = client('alice');
   await assertFails(setDoc(doc(alice, 'accountSettings/alice'), {

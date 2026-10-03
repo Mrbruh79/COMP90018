@@ -6,6 +6,12 @@ import com.example.blap.chat.ChatScreen
 import com.example.blap.chat.DeviceContact
 import com.example.blap.chat.NotificationSettingsRepository
 import com.example.blap.event.EventPage
+import com.example.blap.event.EventUiState
+import com.example.blap.event.CommunityEvent
+import com.example.blap.event.EventMembership
+import com.example.blap.event.EventAccessMethod
+import com.example.blap.event.EventRole
+import kotlinx.coroutines.flow.MutableStateFlow
 import com.example.blap.location.LocationFix
 import com.example.blap.location.LocationProvider
 import com.example.blap.location.PlaceSearchRepository
@@ -86,6 +92,62 @@ class ApplicationViewModelTest {
         assertTrue(f.errors.single().startsWith("Allow location"))
     }
 
+    @Test fun openingAnEventStartsGpsCheckInWithoutOpeningOnSiteChat() {
+        val f = Fixture()
+        f.screen = ChatScreen.EVENTS
+        f.events = MutableStateFlow(EventUiState())
+        val model = f.model()
+        model.openEvent("event-1")
+        assertEquals(AppOperation.EVENT_GPS, model.uiState.value.pendingRequest!!.operation)
+        assertEquals(EventPage.DETAIL, f.events!!.value.page)
+        model.permissionResult(model.uiState.value.pendingRequest!!.id, emptyList())
+        model.permissionResult(model.uiState.value.pendingRequest!!.id, emptyList())
+        assertEquals(f.fix, f.enteredFix)
+        assertEquals(EventPage.DETAIL, f.events!!.value.page)
+    }
+
+    @Test fun reopeningACheckedInEventRestoresNearbyWithoutAnotherGpsRequest() {
+        val f = Fixture()
+        f.screen = ChatScreen.EVENTS
+        f.events = MutableStateFlow(f.eventDetail(checkedIn = true))
+        f.checkedIn = true
+        val model = f.model()
+        model.openEvent("event-1")
+        assertEquals(AppOperation.NEARBY, model.uiState.value.pendingRequest!!.operation)
+        model.permissionResult(model.uiState.value.pendingRequest!!.id, emptyList())
+        assertNull(model.uiState.value.pendingRequest)
+        assertNull(f.enteredFix)
+    }
+
+    @Test fun eventUpdatesDoNotRepeatADeniedAutomaticCheckIn() {
+        val f = Fixture()
+        f.screen = ChatScreen.EVENTS
+        f.events = MutableStateFlow(EventUiState())
+        val model = f.model()
+        model.openEvent("event-1")
+        model.permissionResult(model.uiState.value.pendingRequest!!.id, listOf("nearby"))
+        f.events!!.value = f.events!!.value.copy(notice = "Refreshed")
+        assertNull(model.uiState.value.pendingRequest)
+        model.requestEventGps()
+        assertNotNull(model.uiState.value.pendingRequest)
+    }
+
+    @Test fun aCachedCheckInLoadedAfterOpeningTheEventRestoresNearbyWithoutGps() {
+        val f = Fixture()
+        f.screen = ChatScreen.EVENTS
+        f.events = MutableStateFlow(EventUiState())
+        val model = f.model()
+        f.events!!.value = f.eventDetail(checkedIn = true).copy(membership = null)
+        assertNull(model.uiState.value.pendingRequest)
+        f.events!!.value = f.eventDetail(checkedIn = true)
+        val request = model.uiState.value.pendingRequest!!
+        assertEquals(AppOperation.NEARBY, request.operation)
+        model.permissionResult(request.id, emptyList())
+        assertEquals(1, f.nearbyStarts)
+        assertNull(model.uiState.value.pendingRequest)
+        assertNull(f.enteredFix)
+    }
+
     @Test fun eventQrUsesItsOwnScanPurpose() {
         val f = Fixture()
         val model = f.model()
@@ -96,6 +158,91 @@ class ApplicationViewModelTest {
         model.qrResult(scan.id, "venue-token")
         assertEquals("venue-token", f.eventQr)
         assertNull(f.contactQr)
+    }
+
+    @Test fun membershipLoadedOnAnnouncementsStartsNearbyWithoutOpeningOnSiteChat() {
+        val f = Fixture()
+        f.screen = ChatScreen.EVENTS
+        f.events = MutableStateFlow(EventUiState())
+        val model = f.model()
+        val announcements = f.eventDetail(checkedIn = true).copy(page = EventPage.ANNOUNCEMENTS)
+        f.events!!.value = announcements.copy(membership = null)
+        assertNull(model.uiState.value.pendingRequest)
+        f.events!!.value = announcements
+
+        val request = requireNotNull(model.uiState.value.pendingRequest)
+        assertEquals(AppOperation.NEARBY, request.operation)
+        model.permissionResult(request.id, emptyList())
+        assertEquals(1, f.nearbyStarts)
+        assertEquals(EventPage.ANNOUNCEMENTS, f.events!!.value.page)
+        assertNull(f.enteredFix)
+    }
+
+    @Test fun membershipLoadedOnAnnouncementsCanCompleteInitialGpsCheckIn() {
+        val f = Fixture()
+        f.screen = ChatScreen.EVENTS
+        f.events = MutableStateFlow(EventUiState())
+        val model = f.model()
+        f.events!!.value = f.eventDetail(checkedIn = false).copy(page = EventPage.ANNOUNCEMENTS)
+
+        val request = requireNotNull(model.uiState.value.pendingRequest)
+        assertEquals(AppOperation.EVENT_GPS, request.operation)
+        model.permissionResult(request.id, emptyList())
+        model.permissionResult(requireNotNull(model.uiState.value.pendingRequest).id, emptyList())
+        assertEquals(1, f.nearbyStarts)
+        assertEquals(f.fix, f.enteredFix)
+        assertEquals(EventPage.ANNOUNCEMENTS, f.events!!.value.page)
+    }
+
+    @Test fun restoredOnSiteChatStartsItsCheckedInEventMesh() {
+        val f = Fixture()
+        f.screen = ChatScreen.EVENTS
+        f.events = MutableStateFlow(f.eventDetail(checkedIn = true).copy(page = EventPage.ON_SITE_CHAT))
+        val model = f.model()
+
+        val request = requireNotNull(model.uiState.value.pendingRequest)
+        assertEquals(AppOperation.NEARBY, request.operation)
+        model.permissionResult(request.id, emptyList())
+        assertEquals(1, f.nearbyStarts)
+        assertNull(f.enteredFix)
+    }
+
+    @Test fun announcementStartupWaitsForAnotherPlatformRequestToFinish() {
+        val f = Fixture()
+        f.screen = ChatScreen.EVENTS
+        f.events = MutableStateFlow(EventUiState())
+        val model = f.model()
+        model.requestContactQr()
+        val scanner = requireNotNull(model.uiState.value.pendingRequest)
+        f.events!!.value = f.eventDetail(checkedIn = true).copy(page = EventPage.ANNOUNCEMENTS)
+        assertEquals(scanner, model.uiState.value.pendingRequest)
+        model.qrResult(scanner.id, null, cancelled = true)
+
+        assertEquals(AppOperation.NEARBY, requireNotNull(model.uiState.value.pendingRequest).operation)
+    }
+
+    @Test fun deniedAnnouncementStartupDoesNotRepeatWhenSwitchingEventPages() {
+        val f = Fixture()
+        f.screen = ChatScreen.EVENTS
+        f.events = MutableStateFlow(f.eventDetail(checkedIn = true).copy(page = EventPage.ANNOUNCEMENTS))
+        val model = f.model()
+        model.permissionResult(requireNotNull(model.uiState.value.pendingRequest).id, listOf("nearby"))
+        f.events!!.value = f.events!!.value.copy(page = EventPage.ON_SITE_CHAT)
+        f.events!!.value = f.events!!.value.copy(page = EventPage.ANNOUNCEMENTS)
+
+        assertNull(model.uiState.value.pendingRequest)
+        assertEquals(0, f.nearbyStarts)
+        assertEquals(listOf("nearby"), model.uiState.value.deniedNearby)
+    }
+
+    @Test fun checkedInAnnouncementsDoNotStartAnEventMeshOutsideTheEventsTab() {
+        val f = Fixture()
+        f.screen = ChatScreen.CHATS
+        f.events = MutableStateFlow(f.eventDetail(checkedIn = true).copy(page = EventPage.ANNOUNCEMENTS))
+        val model = f.model()
+
+        assertNull(model.uiState.value.pendingRequest)
+        assertEquals(0, f.nearbyStarts)
     }
 
     @Test fun contactQrDoesNotStartNearbyOrCheckIntoAnEvent() {
@@ -304,6 +451,8 @@ class ApplicationViewModelTest {
         var screen = ChatScreen.CHATS
         var page = EventPage.LIST
         var eventId: String? = "event-1"
+        var events: MutableStateFlow<EventUiState>? = null
+        var checkedIn = false
         var showChatsCalls = 0
         var chatBackCalls = 0
         var eventBackCalls = 0
@@ -315,6 +464,16 @@ class ApplicationViewModelTest {
         var locationRead: suspend () -> LocationFix? = { fix }
         var contactsRead: suspend () -> List<DeviceContact> = { listOf(DeviceContact("Alice", "+61412345678")) }
         var venueRead: suspend () -> Venue? = { Venue("library", "Library", -37.8, 144.9, 100.0) }
+
+        fun eventDetail(checkedIn: Boolean): EventUiState {
+            val now = System.currentTimeMillis()
+            val event = CommunityEvent("event-1", "Meetup", "", latitude = -37.8, longitude = 144.9,
+                startsAt = now - 60_000L, endsAt = now + 60_000L, createdBy = "alice")
+            val membership = EventMembership(event.id, "alice", "Alice", EventRole.PRIMARY_ADMIN, now - 60_000L,
+                accessMethod = if (checkedIn) EventAccessMethod.GPS else null, checkedInAt = if (checkedIn) now - 1000L else null)
+            return EventUiState(page = EventPage.DETAIL, events = listOf(event), selectedEventId = event.id,
+                membership = membership, activeEventId = event.id.takeIf { checkedIn })
+        }
 
         fun model(): ApplicationViewModel = ApplicationViewModel(
             ApplicationServices(notifications, object : OnboardingStore {
@@ -336,6 +495,7 @@ class ApplicationViewModelTest {
                 showNotice = { notices.add(it) }, venueStatus = { text, _ -> venueMessages.add(text) },
                 chatScreen = { screen }, eventPage = { page }, selectedEventId = { eventId },
                 chatBack = { chatBackCalls++ }, eventBack = { eventBackCalls++ }, showChats = { showChatsCalls++ },
+                openEvent = { eventId = it; events?.value = eventDetail(checkedIn) }, eventState = events,
             ), Dispatchers.Unconfined,
         ).also(models::add)
     }

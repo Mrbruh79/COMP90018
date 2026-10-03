@@ -10,6 +10,7 @@ internal fun ContactEditorScreen(
     profile: ContactProfile,
     source: ContactSource,
     isExisting: Boolean,
+    saving: Boolean,
     onChanged: (ContactProfile) -> Unit,
     onSave: () -> Unit,
     onDelete: () -> Unit,
@@ -20,13 +21,14 @@ internal fun ContactEditorScreen(
         subtitle = if (source == ContactSource.QR) {
             "Check the username before saving. It links this card to their online account."
         } else {
-            "Add contact details and any social profiles you want to keep together."
+            "Enter their username, phone or email. BLAP finds their account before saving."
         },
         profile = profile,
-        onChanged = onChanged,
+        onChanged = { if (!saving) onChanged(it) },
         onSave = onSave,
         onBack = onBack,
-        saveLabel = if (isExisting) "Save changes" else "Save contact",
+        saveLabel = if (saving) "Finding account..." else if (isExisting) "Save changes" else "Find account and save",
+        saving = saving,
         onDelete = if (isExisting) onDelete else null,
         isContact = true,
         allowQrOnly = source == ContactSource.QR,

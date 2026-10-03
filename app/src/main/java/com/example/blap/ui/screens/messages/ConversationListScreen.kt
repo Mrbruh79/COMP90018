@@ -66,12 +66,11 @@ internal fun ConversationListScreen(
     onOpenAccount: () -> Unit,
 ) {
     val searching = search.isNotBlank()
-    val searchResults = conversations.filter {
+    val recentChats = conversations.filter { it.type != ConversationType.OPEN_MESH }
+    val searchResults = recentChats.filter {
         it.name.contains(search, ignoreCase = true) ||
             it.lastMessage.contains(search, ignoreCase = true)
     }
-    val nearbyChat = conversations.firstOrNull { it.type == ConversationType.OPEN_MESH }
-    val recentChats = conversations.filter { it.type != ConversationType.OPEN_MESH }
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -139,25 +138,10 @@ internal fun ConversationListScreen(
                     ConversationCard(conversation) { onOpenConversation(conversation.peerId) }
                 }
             }
-            if (nearbyChat != null) {
-                item {
-                    SectionHeader("Nearby Chat", "Chat with nearby CommonGround users.")
-                }
-                item {
-                    ConversationCard(nearbyChat) { onOpenConversation(nearbyChat.peerId) }
-                }
-                item {
-                    Text(
-                        "Your information will not be shared until you connect with someone.",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
             item {
                 SectionHeader(
                     "Discover Nearby Contacts",
-                    "Discover and connect with other CommonGround users.",
+                    "Saved devices reconnect without prompts. New devices need approval.",
                 )
                 if (nearbyActive) {
                     Card(
@@ -277,13 +261,11 @@ private fun DeviceRow(device: NearbyDevice, onConnect: () -> Unit) {
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Avatar(device.name, connected = true)
-        Text(
-            device.name,
-            modifier = Modifier.weight(1f).padding(horizontal = 16.dp),
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
+        Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
+            Text(device.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (device.username.isNotBlank()) Text("@${device.username}",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         Button(
             onClick = onConnect,
             modifier = Modifier.semantics {
@@ -295,19 +277,16 @@ private fun DeviceRow(device: NearbyDevice, onConnect: () -> Unit) {
 
 /**
  * A conversation is reachable when a message sent now can actually arrive: over the nearby mesh,
- * or via a linked online account. Mesh chat has no cloud path, so it reduces to [connected].
+ * or via a linked online account.
  */
 
 internal fun ConversationSummary.reachable() = connected || onlineAccountLinked
 
-private fun ConversationSummary.emptyPreview() = when (type) {
-    ConversationType.OPEN_MESH -> "Discover connections with public nearby chat."
-    else -> "Say hello"
-}
+private fun ConversationSummary.emptyPreview() = "Say hello"
 
 @DrawableRes
 private fun ConversationSummary.avatarIcon(): Int? = when (type) {
-    ConversationType.OPEN_MESH -> R.drawable.ic_nearby_chat
+    ConversationType.OPEN_MESH -> null
     ConversationType.PRIVATE_GROUP -> R.drawable.ic_contacts
     ConversationType.DIRECT -> null
 }

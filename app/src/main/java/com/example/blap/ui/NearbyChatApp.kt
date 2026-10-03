@@ -91,7 +91,6 @@ fun NearbyChatApp(
     authAccount: AuthAccount,
     accountProfile: PublicAccountProfile?,
     accountProfileLoading: Boolean,
-    onCheckVenue: () -> Unit,
     microphonePermissionGranted: Boolean,
     onRequestMicrophonePermission: () -> Unit,
     notificationSettings: ChatNotificationSettings,
@@ -132,6 +131,23 @@ fun NearbyChatApp(
     }
     val visibleAccountProfile = accountProfile
         ?: PublicAccountProfile(username = "", displayName = chatUiState.displayName)
+
+    chatUiState.connectionRequests.firstOrNull()?.let { request ->
+        val endpointId = request.device.endpointId
+        AlertDialog(
+            onDismissRequest = { chatActions.onRejectConnection(endpointId) },
+            title = { Text("Connect to ${request.device.name}?") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("Check that both phones show the same code before accepting.")
+                    Text(request.authenticationDigits, style = MaterialTheme.typography.headlineMedium)
+                    Text("This allows private Nearby messaging and mesh relay over this link. The advertised name is not a verified account identity.")
+                }
+            },
+            confirmButton = { TextButton(onClick = { chatActions.onAcceptConnection(endpointId) }) { Text("Accept") } },
+            dismissButton = { TextButton(onClick = { chatActions.onRejectConnection(endpointId) }) { Text("Decline") } },
+        )
+    }
 
     Box(
         Modifier
@@ -239,6 +255,7 @@ fun NearbyChatApp(
                                 onVote = chatActions.onVoteInPoll,
                                 onEdit = chatActions.onEditMessage,
                                 onDelete = chatActions.onDeleteMessage,
+                                onDeleteChat = chatActions.onDeleteChat,
                                 onSendVoice = chatActions.onSendVoice,
                                 microphonePermissionGranted = microphonePermissionGranted,
                                 onRequestMicrophonePermission = onRequestMicrophonePermission,
@@ -281,6 +298,7 @@ fun NearbyChatApp(
                         profile = chatUiState.contactDraftProfile(),
                         source = chatUiState.contactSourceDraft,
                         isExisting = chatUiState.selectedContactId != null,
+                        saving = chatUiState.savingContact,
                         onChanged = contactsActions.onContactDraftChanged,
                         onSave = contactsActions.onSaveContact,
                         onDelete = contactsActions.onDeleteContact,
@@ -320,9 +338,6 @@ fun NearbyChatApp(
                         nearbyActive = chatUiState.nearbyActive,
                         onStartNearby = chatActions.onStartChat,
                         onStopNearby = chatActions.onStopChat,
-                        venueStatus = chatUiState.venueStatus,
-                        checkingVenue = chatUiState.checkingVenue,
-                        onCheckVenue = onCheckVenue,
                         notificationSettings = notificationSettings,
                         notificationPermissionGranted = notificationPermissionGranted,
                         onNotificationSettingsChanged = onNotificationSettingsChanged,

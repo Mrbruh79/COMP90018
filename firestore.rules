@@ -4,6 +4,7 @@ rules_version = '2';
 // accountSettings/{uid}: private uid, verified email, optional opted-in phone hash,
 // peerId and discoverableByPhone flag. Only the owner reads this document.
 // accountCards/{uid}: uid, unique username, short display name and app peerId.
+// Optional nearbyPublicKey: Base64 P-256 public key for that peer, 120-180 characters.
 // privateProfiles/{uid}: owner-only card fields and discovery choice, with
 // a client update time for reconciling local and account copies.
 // usernames/{username}: one immutable UID reservation for each lowercase username.
@@ -69,7 +70,10 @@ service cloud.firestore {
 
     function validAccountCard(data, uid) {
       return data.keys().hasAll(['uid', 'name', 'peerId', 'username'])
-        && data.keys().hasOnly(['uid', 'name', 'peerId', 'username'])
+        && data.keys().hasOnly(['uid', 'name', 'peerId', 'username', 'nearbyPublicKey'])
+        && (!('nearbyPublicKey' in data) || (data.nearbyPublicKey is string
+          && data.nearbyPublicKey.size() >= 120 && data.nearbyPublicKey.size() <= 180
+          && data.nearbyPublicKey.matches('^[A-Za-z0-9+/]+={0,2}$')))
         && data.uid == uid && validUid(data.uid)
         && data.name is string && data.name.size() > 0 && data.name.size() <= 24
         && validUsername(data.username)

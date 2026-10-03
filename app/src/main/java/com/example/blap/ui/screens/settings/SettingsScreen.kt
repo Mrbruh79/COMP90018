@@ -44,9 +44,6 @@ internal fun SettingsScreen(
     nearbyActive: Boolean,
     onStartNearby: () -> Unit,
     onStopNearby: () -> Unit,
-    venueStatus: String,
-    checkingVenue: Boolean,
-    onCheckVenue: () -> Unit,
     notificationSettings: ChatNotificationSettings,
     notificationPermissionGranted: Boolean,
     onNotificationSettingsChanged: (ChatNotificationSettings) -> Unit,
@@ -103,9 +100,6 @@ internal fun SettingsScreen(
                         NotificationSettingRow("Private groups", notificationSettings.privateGroups) {
                             onNotificationSettingsChanged(notificationSettings.copy(privateGroups = it))
                         }
-                        NotificationSettingRow("Open mesh chat", notificationSettings.openMesh) {
-                            onNotificationSettingsChanged(notificationSettings.copy(openMesh = it))
-                        }
                         NotificationSettingRow("Show message previews", notificationSettings.showPreview) {
                             onNotificationSettingsChanged(notificationSettings.copy(showPreview = it))
                         }
@@ -120,19 +114,6 @@ internal fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-            }
-        }
-        item {
-            Card(modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(18.dp)) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Nearby places", style = MaterialTheme.typography.titleMedium)
-                    Text(venueStatus, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 4.dp))
-                    TextButton(onClick = onCheckVenue, enabled = !checkingVenue) {
-                        Text(if (checkingVenue) "Checking..." else "Find a place")
-                    }
                 }
             }
         }

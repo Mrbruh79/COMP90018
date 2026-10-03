@@ -36,6 +36,7 @@ import com.example.blap.event.CommunityEvent
 import com.example.blap.event.EventInvitationStatus
 import com.example.blap.event.EventUiState
 import com.example.blap.event.EventVisibility
+import com.example.blap.event.EventCheckInState
 import com.example.blap.location.GeoCoordinates
 import com.example.blap.ui.screens.events.formatEventTime
 
@@ -63,6 +64,7 @@ internal fun EventDetailScreen(
     val event = state.selectedEvent ?: return
     val membership = state.membership
     val now = System.currentTimeMillis()
+    val checkedIn = EventCheckInState.isCheckedIn(event, membership, now)
     var showDeleteConfirmation by remember(event.id) { mutableStateOf(false) }
     var showLeaveConfirmation by remember(event.id) { mutableStateOf(false) }
     var inviteIdentifier by remember(event.id) { mutableStateOf("") }
@@ -160,6 +162,14 @@ internal fun EventDetailScreen(
                 )
             }
             Text(event.description, modifier = Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                if (checkedIn) "Checked in · Nearby event sync available"
+                else if (membership?.canParticipate == true) "Not checked in to the venue"
+                else "Not joined",
+                modifier = Modifier.padding(top = 8.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = if (checkedIn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            )
             if (event.venueName.isNotBlank()) {
                 Text(
                     event.venueName,
@@ -216,8 +226,12 @@ internal fun EventDetailScreen(
                 }
             }
             if (event.isActive(now)) {
-                item { Button(onClick = onRequestGpsEntry, modifier = Modifier.fillMaxWidth()) { Text("Enter on-site chat") } }
-                item { OutlinedButton(onClick = onScanCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Check in with venue QR") } }
+                if (checkedIn) {
+                    item { Button(onClick = onShowSavedChat, modifier = Modifier.fillMaxWidth()) { Text("On-site chat") } }
+                } else {
+                    item { OutlinedButton(onClick = onRequestGpsEntry, modifier = Modifier.fillMaxWidth()) { Text("Retry GPS check-in") } }
+                    item { OutlinedButton(onClick = onScanCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Check in with venue QR") } }
+                }
                 if (membership.isAdmin) {
                     item { OutlinedButton(onClick = onShowCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Display venue check-in QR") } }
                 }

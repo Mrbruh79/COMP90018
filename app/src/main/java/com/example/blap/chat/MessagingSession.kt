@@ -66,7 +66,6 @@ class MessagingSession(val dependencies: ChatDependencies) : AutoCloseable {
 
     init {
         workScope.launch {
-            store.savePeer(MeshGroup.ID, MeshGroup.NAME)
             persistence.reloadConversationsNow()
             persistence.reloadSavedContactsNow()
             cloudSync.start()

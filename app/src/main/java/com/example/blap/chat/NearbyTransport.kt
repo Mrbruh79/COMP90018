@@ -8,6 +8,11 @@ interface NearbyTransport {
     fun startAdvertising(displayName: String, peerId: String, phoneHash: String)
     fun startDiscovery()
     fun connectToDevice(endpointId: String)
+    fun acceptConnection(endpointId: String)
+    fun configureAccount(username: String, accountUid: String) = Unit
+    fun canVerifyIdentity(endpointId: String): Boolean = false
+    fun acceptKnownConnection(endpointId: String, identity: TrustedNearbyIdentity) = acceptConnection(endpointId)
+    fun rejectConnection(endpointId: String)
     fun sendMessage(message: OutgoingNearbyMessage)
     fun publishGroup(group: PrivateGroup)
     fun synchronizeGroups(peerId: String, groups: List<PrivateGroup>, messages: List<StoredGroupMessage>)
@@ -20,6 +25,7 @@ interface NearbyTransport {
         fun onDeviceFound(device: NearbyDevice)
         fun onDeviceLost(endpointId: String)
         fun onConnectionInitiated(device: NearbyDevice, authenticationDigits: String)
+        fun onConnectionClosed(endpointId: String) = Unit
         fun onConnected(peer: ConnectedPeer)
         fun onMeshPeerFound(peer: GroupMember)
         fun onGroupReceived(group: PrivateGroup)

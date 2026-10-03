@@ -67,6 +67,7 @@ class MeshRouter {
     }
 
     fun noteOutgoingGroup(packet: NearbyPacket.GroupDefinition) {
+        if (packet.groupId == MeshGroup.ID) return
         rememberId(seenGroupDefinitions, groupDefinitionId(packet))
         cachedGroupDefinitions[packet.groupId] = packet.copy(hopsRemaining = MAX_HOPS)
     }
@@ -84,6 +85,7 @@ class MeshRouter {
     }
 
     fun rememberGroupMessage(packet: NearbyPacket.Message) {
+        if (packet.recipientId == MeshGroup.ID) return
         cachedGroupMessages[packet.messageId] = packet.copy(hopsRemaining = MAX_HOPS)
         if (cachedGroupMessages.size > MAX_CACHED_GROUP_MESSAGES) {
             cachedGroupMessages.remove(cachedGroupMessages.keys.first())
@@ -129,6 +131,7 @@ class MeshRouter {
     }
 
     private fun handleMessage(packet: NearbyPacket.Message, context: MeshContext): MeshDecision {
+        if (packet.recipientId == MeshGroup.ID) return MeshDecision.Drop
         if (context.isEventEndpoint) return MeshDecision.Drop
         val peer = context.fromPeer ?: return MeshDecision.Drop
         if (packet.messageId.isBlank() || packet.text.isBlank()) return MeshDecision.Drop
@@ -181,6 +184,7 @@ class MeshRouter {
         packet: NearbyPacket.Acknowledgement,
         context: MeshContext,
     ): MeshDecision {
+        if (packet.conversationId == MeshGroup.ID || packet.recipientId == MeshGroup.ID) return MeshDecision.Drop
         if (context.isEventEndpoint) return MeshDecision.Drop
         val peer = context.fromPeer ?: return MeshDecision.Drop
         if (packet.isGroup) {
@@ -212,6 +216,7 @@ class MeshRouter {
         packet: NearbyPacket.GroupDefinition,
         context: MeshContext,
     ): MeshDecision {
+        if (packet.groupId == MeshGroup.ID) return MeshDecision.Drop
         if (context.isEventEndpoint) return MeshDecision.Drop
         if (context.fromPeer == null) return MeshDecision.Drop
         if (packet.groupId.isBlank() || packet.name.isBlank() || packet.ownerId.isBlank()) return MeshDecision.Drop
@@ -246,7 +251,7 @@ class MeshRouter {
     ): MeshDecision {
         if (context.isEventEndpoint) return MeshDecision.Drop
         if (context.fromPeer == null) return MeshDecision.Drop
-        if (packet.peerId.isBlank() || packet.name.isBlank() || packet.peerId == context.localPeerId) {
+        if (packet.peerId.isBlank() || packet.name.isBlank() || packet.peerId == context.localPeerId || packet.peerId == MeshGroup.ID) {
             return MeshDecision.Drop
         }
         if (packet.hopsRemaining !in 0..MAX_HOPS) return MeshDecision.Drop

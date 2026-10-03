@@ -51,6 +51,8 @@ data class ApplicationViewModels(
                 chatBack = root.session.navigation::handleBack,
                 eventBack = events::eventBack,
                 showChats = chat::showConversationList,
+                openEvent = events::openEvent,
+                eventState = events.uiState,
             )
             val application = ViewModelProvider(owner, ApplicationViewModelFactory {
                 ApplicationViewModel(container.applicationServicesFor(root.session.dependencies.accountId), commands,

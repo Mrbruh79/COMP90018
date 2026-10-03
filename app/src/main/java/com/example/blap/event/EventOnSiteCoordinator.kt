@@ -227,11 +227,11 @@ internal class EventOnSiteCoordinator(
         )
         updateState {
             it.copy(
-                page = EventPage.ON_SITE_CHAT,
                 membership = checkedIn,
                 activeEventId = event.id,
                 chatMessages = eventStore.getChatMessages(event.id),
                 error = null,
+                notice = "Checked in to this event. Announcements and on-site chat can sync through Nearby.",
             )
         }
     }

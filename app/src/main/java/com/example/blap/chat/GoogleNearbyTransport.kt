@@ -2,6 +2,8 @@ package com.example.blap.chat
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
@@ -23,9 +25,14 @@ class GoogleNearbyTransport(context: Context) : NearbyConnectionTransport {
     private val connectionsClient: ConnectionsClient = Nearby.getConnectionsClient(context)
 
     override var listener: NearbyConnectionTransport.Listener? = null
+    @Volatile private var sessionGeneration = 0L
+    private val handler = Handler(Looper.getMainLooper())
+    private val advertisingRetry = NearbyStartRetry { delay, action -> handler.postDelayed({ action() }, delay) }
+    private val discoveryRetry = NearbyStartRetry { delay, action -> handler.postDelayed({ action() }, delay) }
 
-    private val payloadCallback = object : PayloadCallback() {
+    private fun payloadCallback(generation: Long) = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
+            if (generation != sessionGeneration) return
             if (payload.type != Payload.Type.BYTES) return
             val bytes = payload.asBytes() ?: return
             listener?.onBytesReceived(endpointId, bytes)
@@ -34,12 +41,14 @@ class GoogleNearbyTransport(context: Context) : NearbyConnectionTransport {
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) = Unit
     }
 
-    private val connectionLifecycleCallback = object : ConnectionLifecycleCallback() {
+    private fun connectionLifecycleCallback(generation: Long) = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
-            listener?.onConnectionInitiated(endpointId, info.endpointName, info.authenticationDigits)
+            if (generation != sessionGeneration) return
+            listener?.onConnectionInitiated(endpointId, info.endpointName, info.authenticationDigits, info.rawAuthenticationToken)
         }
 
         override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
+            if (generation != sessionGeneration) return
             when (result.status.statusCode) {
                 ConnectionsStatusCodes.STATUS_OK -> listener?.onConnectionSucceeded(endpointId)
                 ConnectionsStatusCodes.STATUS_CONNECTION_REJECTED ->
@@ -49,30 +58,47 @@ class GoogleNearbyTransport(context: Context) : NearbyConnectionTransport {
         }
 
         override fun onDisconnected(endpointId: String) {
+            if (generation != sessionGeneration) return
             listener?.onDisconnected(endpointId)
         }
     }
 
-    private val endpointDiscoveryCallback = object : EndpointDiscoveryCallback() {
+    private fun endpointDiscoveryCallback(generation: Long) = object : EndpointDiscoveryCallback() {
         override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
+            if (!discoveryRetry.isCurrent(generation)) return
             listener?.onEndpointFound(endpointId, info.endpointName)
         }
 
         override fun onEndpointLost(endpointId: String) {
+            if (!discoveryRetry.isCurrent(generation)) return
             listener?.onEndpointLost(endpointId)
         }
     }
 
     @SuppressLint("MissingPermission")
     override fun startAdvertising(endpointName: String, serviceId: String) {
+        startAdvertising(endpointName, serviceId, advertisingRetry.begin(), 0)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startAdvertising(endpointName: String, serviceId: String, ticket: Long, attempt: Int) {
+        if (!advertisingRetry.isCurrent(ticket)) return
+        val generation = sessionGeneration
         val options = AdvertisingOptions.Builder().setStrategy(STRATEGY).build()
         try {
             connectionsClient.startAdvertising(
                 endpointName,
                 serviceId,
-                connectionLifecycleCallback,
+                connectionLifecycleCallback(generation),
                 options,
             ).addOnFailureListener { exception ->
+                if (generation != sessionGeneration || !advertisingRetry.isCurrent(ticket)) return@addOnFailureListener
+                if (exception.isRetryableStart()) {
+                    connectionsClient.stopAdvertising()
+                    if (advertisingRetry.retry(ticket, attempt) {
+                            startAdvertising(endpointName, serviceId, ticket, attempt + 1)
+                        }) return@addOnFailureListener
+                }
                 listener?.onUnavailable("Could not turn on nearby messaging: ${exception.readableMessage()}")
             }
         } catch (_: SecurityException) {
@@ -82,10 +108,23 @@ class GoogleNearbyTransport(context: Context) : NearbyConnectionTransport {
 
     @SuppressLint("MissingPermission")
     override fun startDiscovery(serviceId: String) {
+        startDiscovery(serviceId, discoveryRetry.begin(), 0)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun startDiscovery(serviceId: String, ticket: Long, attempt: Int) {
+        if (!discoveryRetry.isCurrent(ticket)) return
         val options = DiscoveryOptions.Builder().setStrategy(STRATEGY).build()
         try {
-            connectionsClient.startDiscovery(serviceId, endpointDiscoveryCallback, options)
+            connectionsClient.startDiscovery(serviceId, endpointDiscoveryCallback(ticket), options)
                 .addOnFailureListener { exception ->
+                    if (!discoveryRetry.isCurrent(ticket)) return@addOnFailureListener
+                    if (exception.isRetryableStart()) {
+                        connectionsClient.stopDiscovery()
+                        if (discoveryRetry.retry(ticket, attempt) {
+                                startDiscovery(serviceId, ticket, attempt + 1)
+                            }) return@addOnFailureListener
+                    }
                     listener?.onUnavailable("Could not find nearby phones: ${exception.readableMessage()}")
                 }
         } catch (_: SecurityException) {
@@ -95,12 +134,14 @@ class GoogleNearbyTransport(context: Context) : NearbyConnectionTransport {
 
     @SuppressLint("MissingPermission")
     override fun requestConnection(localEndpointName: String, endpointId: String) {
+        val generation = sessionGeneration
         try {
             connectionsClient.requestConnection(
                 localEndpointName,
                 endpointId,
-                connectionLifecycleCallback,
+                connectionLifecycleCallback(generation),
             ).addOnFailureListener { exception ->
+                if (generation != sessionGeneration) return@addOnFailureListener
                 listener?.onConnectionFailed(endpointId, exception.connectionFailureMessage("Connection request"))
             }
         } catch (_: SecurityException) {
@@ -110,9 +151,11 @@ class GoogleNearbyTransport(context: Context) : NearbyConnectionTransport {
 
     @SuppressLint("MissingPermission")
     override fun acceptConnection(endpointId: String) {
+        val generation = sessionGeneration
         try {
-            connectionsClient.acceptConnection(endpointId, payloadCallback)
+            connectionsClient.acceptConnection(endpointId, payloadCallback(generation))
                 .addOnFailureListener { exception ->
+                    if (generation != sessionGeneration) return@addOnFailureListener
                     listener?.onConnectionFailed(
                         endpointId,
                         exception.connectionFailureMessage("Accepting the connection"),
@@ -128,19 +171,21 @@ class GoogleNearbyTransport(context: Context) : NearbyConnectionTransport {
     }
 
     override fun send(endpointId: String, bytes: ByteArray) {
-        try {
-            connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes))
-        } catch (_: SecurityException) {
-            listener?.onError("Nearby permissions are required to use this connection.")
-        }
+        send(endpointId, bytes) {}
     }
 
     override fun send(endpointId: String, bytes: ByteArray, onSuccess: () -> Unit) {
+        val generation = sessionGeneration
         try {
             connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes))
-                .addOnSuccessListener { onSuccess() }
+                .addOnSuccessListener { if (generation == sessionGeneration) onSuccess() }
                 .addOnFailureListener { exception ->
-                    listener?.onError(exception.connectionFailureMessage("Message"))
+                    if (generation != sessionGeneration) return@addOnFailureListener
+                    val status = (exception as? ApiException)?.statusCode
+                    val message = exception.connectionFailureMessage("Message")
+                    if (status == ConnectionsStatusCodes.STATUS_ENDPOINT_IO_ERROR || status == ConnectionsStatusCodes.STATUS_RADIO_ERROR)
+                        listener?.onConnectionFailed(endpointId, message)
+                    else listener?.onError(message)
                 }
         } catch (_: SecurityException) {
             listener?.onError("Nearby permissions are required to send messages.")
@@ -152,19 +197,31 @@ class GoogleNearbyTransport(context: Context) : NearbyConnectionTransport {
     }
 
     override fun stopAdvertising() {
+        advertisingRetry.cancel()
         connectionsClient.stopAdvertising()
     }
 
     override fun stopDiscovery() {
+        discoveryRetry.cancel()
         connectionsClient.stopDiscovery()
     }
 
     override fun disconnectAll() {
+        sessionGeneration++
+        advertisingRetry.cancel()
+        discoveryRetry.cancel()
         connectionsClient.stopAllEndpoints()
     }
 
     private fun Exception.readableMessage(): String =
         localizedMessage?.takeIf { it.isNotBlank() } ?: "unknown Nearby error"
+
+    private fun Exception.isRetryableStart(): Boolean = (this as? ApiException)?.statusCode in setOf(
+        ConnectionsStatusCodes.STATUS_ALREADY_ADVERTISING,
+        ConnectionsStatusCodes.STATUS_ALREADY_DISCOVERING,
+        ConnectionsStatusCodes.STATUS_OUT_OF_ORDER_API_CALL,
+        ConnectionsStatusCodes.STATUS_RADIO_ERROR,
+    )
 
     private fun Exception.connectionFailureMessage(action: String): String {
         val statusCode = (this as? ApiException)?.statusCode

@@ -24,6 +24,7 @@ data class ChatDependencies(
     val authRepository: AuthRepository? = null,
     val accountProfileRepository: AccountProfileRepository? = null,
     val identityFor: ((String) -> IdentityStore)? = null,
+    val nearbyIdentities: NearbyIdentityStore = InMemoryNearbyIdentityStore(),
 )
 
 class ChatViewModelFactory(

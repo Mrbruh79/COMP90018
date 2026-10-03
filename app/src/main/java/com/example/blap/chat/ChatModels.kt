@@ -42,6 +42,7 @@ data class ContactProfile(
 
 enum class ConversationType {
     DIRECT,
+    // Legacy storage value only. Public-room traffic and navigation are disabled.
     OPEN_MESH,
     PRIVATE_GROUP,
 }
@@ -49,13 +50,21 @@ enum class ConversationType {
 data class NearbyDevice(
     val endpointId: String,
     val name: String,
+    val peerId: String = "",
+    val username: String = "",
 )
+
+data class NearbyConnectionRequest(val device: NearbyDevice, val authenticationDigits: String)
 
 data class ConnectedPeer(
     val peerId: String,
     val endpointId: String,
     val name: String,
     val phoneHash: String = "",
+    val username: String = "",
+    val accountUid: String = "",
+    val publicKey: String = "",
+    val accountVerified: Boolean = false,
 )
 
 enum class MessageAuthor {
@@ -92,6 +101,7 @@ data class ConversationSummary(
     val onlineAccountLinked: Boolean = false,
     val type: ConversationType = ConversationType.DIRECT,
     val memberCount: Int = 0,
+    val username: String = "",
 )
 
 data class GroupMember(
@@ -188,6 +198,7 @@ data class ChatUiState(
     val venueStatus: String = "Find a nearby place using your location. Internet access is required.",
     val checkingVenue: Boolean = false,
     val discoveredDevices: List<NearbyDevice> = emptyList(),
+    val connectionRequests: List<NearbyConnectionRequest> = emptyList(),
     val conversations: List<ConversationSummary> = emptyList(),
     val selectedPeerId: String? = null,
     val authenticationDigits: String? = null,
@@ -203,6 +214,7 @@ data class ChatUiState(
     val contactEmailDraft: String = "",
     val contactGoogleEmailDraft: String = "",
     val contactUsernameDraft: String = "",
+    val savingContact: Boolean = false,
     val accountCandidates: List<CloudAccount> = emptyList(),
     val accountCandidateContactId: String? = null,
     val openChatAfterAccountChoice: Boolean = false,

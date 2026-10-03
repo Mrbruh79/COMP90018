@@ -10,12 +10,18 @@ class NearbyChatManager internal constructor(
     private val connections: NearbyConnectionTransport,
     private val meshRouter: MeshRouter = MeshRouter(),
     private val eventSession: EventMeshSession = EventMeshSession(),
+    private val identities: NearbyIdentityStore = InMemoryNearbyIdentityStore(),
 ) : NearbyChatController, NearbyConnectionTransport.Listener {
     constructor(context: Context) : this(GoogleNearbyTransport(context))
+    constructor(context: Context, identities: NearbyIdentityStore) : this(GoogleNearbyTransport(context), identities = identities)
 
     private val knownDevices = mutableMapOf<String, NearbyDevice>()
     private val pendingDevices = mutableMapOf<String, NearbyDevice>()
     private val establishedEndpoints = mutableSetOf<String>()
+    private val approvedEndpoints = mutableSetOf<String>()
+    private val awaitingApproval = mutableSetOf<String>()
+    private val expectedIdentities = mutableMapOf<String, TrustedNearbyIdentity>()
+    private val authenticationTokens = mutableMapOf<String, ByteArray>()
     private val peerByEndpoint = mutableMapOf<String, ConnectedPeer>()
     private val endpointByPeer = mutableMapOf<String, String>()
     private val deferredEventEndpoints = mutableMapOf<String, String>()
@@ -23,6 +29,8 @@ class NearbyChatManager internal constructor(
     private var localDisplayName = ""
     private var localPeerId = ""
     private var localPhoneHash = ""
+    private var localUsername = ""
+    private var localAccountUid = ""
     private var advertisingRequested = false
     private var discoveryRequested = false
 
@@ -32,6 +40,24 @@ class NearbyChatManager internal constructor(
     init {
         connections.listener = this
     }
+
+    override fun configureAccount(username: String, accountUid: String) {
+        localUsername = username.trim().removePrefix("@").lowercase(java.util.Locale.ROOT)
+        localAccountUid = accountUid
+    }
+
+    override fun acceptKnownConnection(endpointId: String, identity: TrustedNearbyIdentity) {
+        // A claim in an advertisement is only a hint. The signed Hello must prove this key.
+        if (authenticationTokens[endpointId]?.isNotEmpty() != true) {
+            rejectConnection(endpointId)
+            listener?.onError("Nearby could not verify this saved device. Try connecting again.")
+            return
+        }
+        if (endpointId !in awaitingApproval) return
+        expectedIdentities[endpointId] = identity
+        acceptConnection(endpointId)
+    }
+    override fun canVerifyIdentity(endpointId: String): Boolean = authenticationTokens[endpointId]?.isNotEmpty() == true
 
     override fun startAdvertising(displayName: String, peerId: String, phoneHash: String) {
         localDisplayName = displayName
@@ -58,14 +84,50 @@ class NearbyChatManager internal constructor(
     }
 
     override fun connectToDevice(endpointId: String) {
+        if (!discoveryRequested || eventSession.isEventMode) {
+            listener?.onError("Private connections need Nearby discovery outside the event mesh.")
+            return
+        }
+        if (pendingDevices.size >= MAX_PENDING_CONNECTIONS) {
+            listener?.onError("Accept or decline the pending connections before starting another.")
+            return
+        }
         if (endpointId in establishedEndpoints || endpointId in pendingDevices) return
-        val device = knownDevices[endpointId] ?: return
+        val device = knownDevices[endpointId] ?: run {
+            listener?.onConnectionClosed(endpointId)
+            listener?.onError("This phone is no longer discoverable. Keep Nearby on on both phones and try again.")
+            return
+        }
         pendingDevices[endpointId] = device
-        connections.requestConnection(localDisplayName, endpointId)
+        connections.requestConnection(advertisedEndpointName(), endpointId)
+    }
+
+    override fun acceptConnection(endpointId: String) {
+        if (!awaitingApproval.remove(endpointId)) return
+        approvedEndpoints += endpointId
+        connections.acceptConnection(endpointId)
+    }
+
+    override fun rejectConnection(endpointId: String) {
+        if (endpointId !in pendingDevices && endpointId !in approvedEndpoints) return
+        val wasAwaiting = awaitingApproval.remove(endpointId)
+        val wasApproved = approvedEndpoints.remove(endpointId)
+        pendingDevices.remove(endpointId)
+        expectedIdentities.remove(endpointId)
+        authenticationTokens.remove(endpointId)
+        if (endpointId in establishedEndpoints) {
+            connections.disconnect(endpointId)
+            onDisconnected(endpointId)
+            return
+        }
+        if (wasAwaiting || wasApproved) connections.rejectConnection(endpointId)
+        else connections.disconnect(endpointId)
+        listener?.onConnectionClosed(endpointId)
+        knownDevices[endpointId]?.let { listener?.onDeviceFound(it) }
     }
 
     override fun sendMessage(message: OutgoingNearbyMessage) {
-        if (eventSession.isEventMode) return
+        if (eventSession.isEventMode || message.peerId == MeshGroup.ID) return
         val packet = NearbyPacket.Message(
             messageId = message.messageId,
             senderId = localPeerId,
@@ -93,7 +155,7 @@ class NearbyChatManager internal constructor(
     }
 
     override fun publishGroup(group: PrivateGroup) {
-        if (eventSession.isEventMode) return
+        if (eventSession.isEventMode || group.id == MeshGroup.ID) return
         val packet = group.toPacket()
         meshRouter.noteOutgoingGroup(packet)
         sendPacketToMany(establishedEndpoints, packet)
@@ -106,12 +168,12 @@ class NearbyChatManager internal constructor(
     ) {
         if (eventSession.isEventMode) return
         val endpointId = endpointByPeer[peerId] ?: return
-        groups.forEach { group ->
+        groups.filter { it.id != MeshGroup.ID }.forEach { group ->
             val packet = group.toPacket()
             meshRouter.noteOutgoingGroup(packet)
             sendPacket(endpointId, packet)
         }
-        messages.forEach { message ->
+        messages.filter { it.conversationId != MeshGroup.ID }.forEach { message ->
             meshRouter.noteOutgoingMessage(message.messageId)
             val packet = NearbyPacket.Message(
                 messageId = message.messageId,
@@ -132,7 +194,7 @@ class NearbyChatManager internal constructor(
     }
 
     override fun acknowledgeMessage(conversationId: String, senderId: String, messageId: String) {
-        if (eventSession.isEventMode) return
+        if (eventSession.isEventMode || conversationId == MeshGroup.ID) return
         val packet = NearbyPacket.Acknowledgement(
             messageId = messageId,
             senderId = localPeerId,
@@ -185,6 +247,17 @@ class NearbyChatManager internal constructor(
         }
     }
 
+    override fun refreshEventMesh(eventId: String) {
+        if (eventId != eventSession.eventId || !eventSession.accessGranted ||
+            !advertisingRequested || !discoveryRequested) return
+        // Keep live links and handshakes intact. Advertising cannot restart while connected.
+        if (pendingDevices.isEmpty() && establishedEndpoints.isEmpty()) {
+            startAdvertisingForCurrentMode()
+            startDiscoveryForCurrentMode()
+        }
+        broadcastEventPresence(eventId, establishedEndpoints.filter(eventSession::containsEndpoint))
+    }
+
     override fun sendEventAnnouncement(announcement: EventAnnouncement) {
         if (!eventSession.accessGranted || announcement.eventId != eventSession.eventId) return
         val packet = announcement.toPacket()
@@ -228,15 +301,23 @@ class NearbyChatManager internal constructor(
     override fun disconnect(peerId: String) {
         val endpointId = endpointByPeer[peerId] ?: return
         connections.disconnect(endpointId)
+        onDisconnected(endpointId)
     }
 
     override fun stop() {
+        advertisingRequested = false
+        discoveryRequested = false
         connections.stopAdvertising()
         connections.stopDiscovery()
+        listener?.let { target -> pendingDevices.keys.toList().forEach(target::onConnectionClosed) }
         connections.disconnectAll()
         knownDevices.clear()
         pendingDevices.clear()
         establishedEndpoints.clear()
+        approvedEndpoints.clear()
+        awaitingApproval.clear()
+        expectedIdentities.clear()
+        authenticationTokens.clear()
         peerByEndpoint.clear()
         endpointByPeer.clear()
         deferredEventEndpoints.clear()
@@ -244,8 +325,6 @@ class NearbyChatManager internal constructor(
         // Stopping Nearby pauses the transport; it does not leave the active event.
         // Retaining the identity lets a restart directly resume the same private mesh.
         eventSession.clearEndpoints()
-        advertisingRequested = false
-        discoveryRequested = false
     }
 
     override fun close() {
@@ -257,22 +336,22 @@ class NearbyChatManager internal constructor(
     }
 
     override fun onEndpointFound(endpointId: String, endpointName: String) {
+        if (!discoveryRequested) return
         if (endpointId in establishedEndpoints || endpointId in pendingDevices) {
-            if (eventSession.isEventMode) deferredEventEndpoints[endpointId] = endpointName
+            deferredEventEndpoints[endpointId] = endpointName
             return
         }
         deferredEventEndpoints.remove(endpointId)
         val eventPeerId = EventMeshSession.eventPeerIdOrNull(endpointName)
         val isEventDiscovery = eventSession.isEventMode
         if (isEventDiscovery && (eventPeerId == null || eventPeerId == localPeerId)) return
-        val device = NearbyDevice(
-            endpointId,
-            if (isEventDiscovery) EventMeshSession.EVENT_ATTENDEE_NAME else endpointName,
-        )
+        val device = if (isEventDiscovery) NearbyDevice(endpointId, EventMeshSession.EVENT_ATTENDEE_NAME)
+            else NearbyEndpointIdentity.device(endpointId, endpointName)
         knownDevices[endpointId] = device
         if (isEventDiscovery) {
             if (EventMeshSession.shouldInitiateEventConnection(localPeerId, requireNotNull(eventPeerId))) {
-                connectToDevice(endpointId)
+                pendingDevices[endpointId] = device
+                connections.requestConnection(advertisedEndpointName(), endpointId)
             }
         } else {
             listener?.onDeviceFound(device)
@@ -280,49 +359,116 @@ class NearbyChatManager internal constructor(
     }
 
     override fun onEndpointLost(endpointId: String) {
+        if (!discoveryRequested) return
         knownDevices.remove(endpointId)
-        if (endpointId !in establishedEndpoints) {
+        if (endpointId !in establishedEndpoints && endpointId !in awaitingApproval && endpointId !in approvedEndpoints) {
             deferredEventEndpoints.remove(endpointId)
-            pendingDevices.remove(endpointId)
+            val wasPending = pendingDevices.remove(endpointId) != null
+            awaitingApproval.remove(endpointId)
+            approvedEndpoints.remove(endpointId)
+            if (wasPending) {
+                connections.rejectConnection(endpointId)
+                listener?.onConnectionClosed(endpointId)
+            }
         }
         listener?.onDeviceLost(endpointId)
     }
 
     override fun onConnectionInitiated(endpointId: String, endpointName: String, authenticationDigits: String) {
-        if (endpointId in establishedEndpoints) {
+        if (!advertisingRequested || endpointId in establishedEndpoints ||
+            (endpointId !in pendingDevices && pendingDevices.size >= MAX_PENDING_CONNECTIONS)) {
+            if (endpointId !in establishedEndpoints) authenticationTokens.remove(endpointId)
             connections.rejectConnection(endpointId)
             return
         }
 
         val isEventConnection = eventSession.isEventMode
+        if (!isEventConnection && authenticationDigits.isBlank()) {
+            authenticationTokens.remove(endpointId)
+            pendingDevices.remove(endpointId)
+            connections.rejectConnection(endpointId)
+            listener?.onConnectionClosed(endpointId)
+            listener?.onError("Nearby could not provide a verification code. Try connecting again.")
+            return
+        }
+        if (isEventConnection && EventMeshSession.eventPeerIdOrNull(endpointName) == null) {
+            authenticationTokens.remove(endpointId)
+            connections.rejectConnection(endpointId)
+            return
+        }
         if (isEventConnection) eventSession.markEndpoint(endpointId)
-        val device = NearbyDevice(
-            endpointId,
-            if (isEventConnection) EventMeshSession.EVENT_ATTENDEE_NAME else endpointName,
-        )
+        val device = if (isEventConnection) NearbyDevice(endpointId, EventMeshSession.EVENT_ATTENDEE_NAME)
+            else NearbyEndpointIdentity.device(endpointId, endpointName)
         pendingDevices[endpointId] = device
-        if (!isEventConnection) {
+        knownDevices[endpointId] = device
+        if (isEventConnection) {
+            approvedEndpoints += endpointId
+            connections.acceptConnection(endpointId)
+        } else if (awaitingApproval.add(endpointId)) {
             listener?.onConnectionInitiated(device, authenticationDigits)
         }
-        connections.acceptConnection(endpointId)
+    }
+
+    override fun onConnectionInitiated(endpointId: String, endpointName: String, authenticationDigits: String,
+        rawToken: ByteArray) {
+        authenticationTokens[endpointId] = rawToken.copyOf()
+        onConnectionInitiated(endpointId, endpointName, authenticationDigits)
     }
 
     override fun onConnectionSucceeded(endpointId: String) {
+        if (!advertisingRequested || endpointId !in approvedEndpoints) {
+            expectedIdentities.remove(endpointId)
+            authenticationTokens.remove(endpointId)
+            val wasPending = pendingDevices.remove(endpointId) != null
+            awaitingApproval.remove(endpointId)
+            if (wasPending) listener?.onConnectionClosed(endpointId)
+            connections.disconnect(endpointId)
+            return
+        }
         establishedEndpoints += endpointId
         pendingDevices.remove(endpointId)
-        knownDevices.remove(endpointId)
-        sendPacket(endpointId, NearbyPacket.Hello(localPeerId, localDisplayName, localPhoneHash))
+        val token = authenticationTokens[endpointId]
+        val hello = if (!eventSession.isEventMode && token != null && token.isNotEmpty() && localUsername.isNotBlank() && localAccountUid.isNotBlank()) {
+            val keys = identities.keys()
+            val unsigned = NearbyPacket.Hello(localPeerId, localDisplayName, localPhoneHash, localUsername,
+                localAccountUid, NearbyIdentityProof.publicKey(keys))
+            unsigned.copy(signature = NearbyIdentityProof.sign(unsigned, token, keys))
+        } else NearbyPacket.Hello(localPeerId, localDisplayName, localPhoneHash)
+        sendPacket(endpointId, hello)
     }
 
     override fun onConnectionFailed(endpointId: String, message: String) {
+        if (!advertisingRequested) return
+        if (endpointId !in pendingDevices && endpointId !in approvedEndpoints) return
+        connections.disconnect(endpointId)
+        if (endpointId in establishedEndpoints || endpointId in peerByEndpoint) {
+            onDisconnected(endpointId)
+            listener?.onError(message)
+            return
+        }
         pendingDevices.remove(endpointId)
+        awaitingApproval.remove(endpointId)
+        approvedEndpoints.remove(endpointId)
+        expectedIdentities.remove(endpointId)
+        authenticationTokens.remove(endpointId)
+        eventSession.removeEndpoint(endpointId)
+        listener?.onConnectionClosed(endpointId)
+        if (!eventSession.isEventMode) knownDevices[endpointId]?.let { listener?.onDeviceFound(it) }
         listener?.onError(message)
         resumeDeferredEventEndpoint(endpointId)
+        recoverIdleTransport()
     }
 
     override fun onDisconnected(endpointId: String) {
+        if (!advertisingRequested) return
+        if (endpointId !in establishedEndpoints && endpointId !in pendingDevices && endpointId !in peerByEndpoint) return
         establishedEndpoints.remove(endpointId)
+        expectedIdentities.remove(endpointId)
+        authenticationTokens.remove(endpointId)
+        approvedEndpoints.remove(endpointId)
+        awaitingApproval.remove(endpointId)
         pendingDevices.remove(endpointId)
+        listener?.onConnectionClosed(endpointId)
         val wasEventConnection = eventSession.removeEndpoint(endpointId)
         peerByEndpoint.remove(endpointId)?.let { peer ->
             if (endpointByPeer[peer.peerId] == endpointId) {
@@ -331,6 +477,17 @@ class NearbyChatManager internal constructor(
             }
         }
         resumeDeferredEventEndpoint(endpointId)
+        if (!eventSession.isEventMode) {
+            knownDevices[endpointId]?.let { listener?.onDeviceFound(it) }
+        }
+        recoverIdleTransport()
+    }
+
+    private fun recoverIdleTransport() {
+        if (advertisingRequested && discoveryRequested && establishedEndpoints.isEmpty() && pendingDevices.isEmpty()) {
+            // Clear the SDK's old endpoint traces, not just the UI's connection flag.
+            restartForCurrentMode()
+        }
     }
 
     override fun onBytesReceived(endpointId: String, bytes: ByteArray) {
@@ -352,16 +509,29 @@ class NearbyChatManager internal constructor(
     }
 
     private fun handleHello(endpointId: String, packet: NearbyPacket.Hello) {
-        if (packet.peerId.isBlank() || packet.name.isBlank() || packet.peerId == localPeerId) return
+        if (packet.peerId.isBlank() || packet.name.isBlank() || packet.peerId == localPeerId || packet.peerId == MeshGroup.ID) return
+
+        val expected = expectedIdentities[endpointId]
+        val signed = packet.username.isNotBlank() && !eventSession.isEventMode
+        val validProof = signed && NearbyIdentityProof.verify(packet, authenticationTokens[endpointId] ?: byteArrayOf())
+        val pinned = expected ?: identities.trusted(packet.peerId)
+        if (!eventSession.isEventMode && ((signed && !validProof) ||
+                (pinned != null && (!validProof || !NearbyIdentityProof.matches(packet, pinned))))) {
+            connections.disconnect(endpointId)
+            onDisconnected(endpointId)
+            listener?.onError("Nearby device identity did not match the saved contact. The connection was closed.")
+            return
+        }
 
         val oldEndpoint = endpointByPeer.put(packet.peerId, endpointId)
         if (oldEndpoint != null && oldEndpoint != endpointId) {
             connections.disconnect(oldEndpoint)
         }
 
-        val peer = ConnectedPeer(packet.peerId, endpointId, packet.name.take(24), packet.phoneHash)
+        val peer = ConnectedPeer(packet.peerId, endpointId, packet.name.take(24), packet.phoneHash,
+            if (validProof) packet.username else "", if (validProof) packet.accountUid else "",
+            if (validProof) packet.publicKey else "", pinned?.accountVerified == true)
         peerByEndpoint[endpointId] = peer
-        knownDevices.remove(endpointId)
         if (endpointId in eventSession.eventEndpoints() || eventSession.isEventMode) {
             eventSession.markEndpoint(endpointId)
             broadcastEventPresence(eventSession.eventId, listOf(endpointId))
@@ -402,13 +572,20 @@ class NearbyChatManager internal constructor(
             .distinct()
         connections.stopAdvertising()
         connections.stopDiscovery()
+        listener?.let { target -> pendingDevices.keys.toList().forEach(target::onConnectionClosed) }
         connections.disconnectAll()
+        listener?.let { target -> knownDevices.keys.toList().forEach(target::onDeviceLost) }
         knownDevices.clear()
         pendingDevices.clear()
         establishedEndpoints.clear()
+        approvedEndpoints.clear()
+        awaitingApproval.clear()
+        expectedIdentities.clear()
+        authenticationTokens.clear()
         peerByEndpoint.clear()
         endpointByPeer.clear()
         deferredEventEndpoints.clear()
+        eventSession.clearEndpoints()
         meshRouter.resetKnownPeers()
         if (localPeerId.isNotBlank()) {
             meshRouter.rememberPeer(GroupMember(localPeerId, localDisplayName, localPhoneHash))
@@ -421,7 +598,7 @@ class NearbyChatManager internal constructor(
 
     private fun resumeDeferredEventEndpoint(endpointId: String) {
         val endpointName = deferredEventEndpoints.remove(endpointId) ?: return
-        if (!eventSession.isEventMode || !advertisingRequested || !discoveryRequested) return
+        if (!advertisingRequested || !discoveryRequested) return
         onEndpointFound(endpointId, endpointName)
     }
 
@@ -436,8 +613,10 @@ class NearbyChatManager internal constructor(
         )
     }
 
-    private fun advertisedEndpointName(): String =
-        eventSession.advertisedEndpointName(localPeerId, localDisplayName)
+    private fun advertisedEndpointName(): String = if (!eventSession.isEventMode &&
+        localUsername.matches(Regex("[a-z0-9_]{3,20}")))
+        NearbyEndpointIdentity.name(localPeerId, localUsername, localDisplayName)
+        else eventSession.advertisedEndpointName(localPeerId, localDisplayName)
 
     private fun meshContext(endpointId: String) = MeshContext(
         localPeerId = localPeerId,
@@ -550,6 +729,7 @@ class NearbyChatManager internal constructor(
     )
 
     internal companion object {
+        private const val MAX_PENDING_CONNECTIONS = 8
         const val SERVICE_ID = EventMeshSession.SERVICE_ID
         const val MAX_HOPS = MeshRouter.MAX_HOPS
         const val EVENT_ENDPOINT_PREFIX = EventMeshSession.EVENT_ENDPOINT_PREFIX

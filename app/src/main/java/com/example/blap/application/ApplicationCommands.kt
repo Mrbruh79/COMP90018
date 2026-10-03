@@ -3,6 +3,8 @@ package com.example.blap.application
 import com.example.blap.chat.ChatScreen
 import com.example.blap.chat.DeviceContact
 import com.example.blap.event.EventPage
+import com.example.blap.event.EventUiState
+import kotlinx.coroutines.flow.StateFlow
 import com.example.blap.location.LocationFix
 
 /** Cross-feature commands injected from the retained feature ViewModels. */
@@ -24,4 +26,6 @@ data class ApplicationCommands(
     val chatBack: () -> Unit,
     val eventBack: () -> Unit,
     val showChats: () -> Unit,
+    val openEvent: (String) -> Unit = {},
+    val eventState: StateFlow<EventUiState>? = null,
 )

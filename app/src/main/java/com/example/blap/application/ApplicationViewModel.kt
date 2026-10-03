@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import com.example.blap.chat.ChatNotificationSettings
 import com.example.blap.chat.ChatScreen
 import com.example.blap.event.EventPage
+import com.example.blap.event.EventCheckInState
 import com.example.blap.location.GeoCoordinates
 import com.example.blap.location.LocationFix
 import com.example.blap.location.PlaceSearchResult
@@ -17,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.filterNotNull
@@ -78,6 +80,40 @@ class ApplicationViewModel(
     val platformRequests = state.map { it.pendingRequest?.takeUnless { request -> request.launched || request.cancelled } }
         .filterNotNull()
 
+    private var attemptedEventId: String? = null
+
+    init {
+        commands.eventState?.let { events ->
+            scope.launch {
+                events.combine(state) { event, application -> event to application }.collect { (event, application) ->
+                    if (event.selectedEventId != attemptedEventId &&
+                        commands.chatScreen() == ChatScreen.EVENTS &&
+                        EventCheckInState.isSessionPage(event.page) &&
+                        !application.working && application.pendingRequest == null) {
+                        val selected = event.selectedEvent ?: return@collect
+                        val checkedIn = EventCheckInState.isCheckedIn(selected, event.membership, System.currentTimeMillis())
+                        if (!checkedIn && !EventCheckInState.needsGps(event, System.currentTimeMillis())) return@collect
+                        attemptedEventId = event.selectedEventId
+                        if (checkedIn) requestNearby() else requestEventGps()
+                    }
+                    if (event.selectedEventId == null) attemptedEventId = null
+                }
+            }
+        }
+    }
+
+    fun openEvent(eventId: String) {
+        cancelPendingWork()
+        attemptedEventId = null
+        commands.openEvent(eventId)
+        val event = commands.eventState?.value ?: return
+        if (event.selectedEventId == eventId && EventCheckInState.isCheckedIn(
+                event.selectedEvent ?: return, event.membership, System.currentTimeMillis())) {
+            attemptedEventId = eventId
+            requestNearby()
+        }
+    }
+
     fun completeOnboarding() {
         if (!scope.isActive) return
         services.onboarding.markSeen()
@@ -97,7 +133,7 @@ class ApplicationViewModel(
         services.notifications.save(value)
         state.update { it.copy(notifications = value) }
         if (value.enabled && (!old.enabled || (!old.direct && value.direct) ||
-            (!old.privateGroups && value.privateGroups) || (!old.openMesh && value.openMesh))) requestNotifications()
+            (!old.privateGroups && value.privateGroups))) requestNotifications()
     }
 
     fun requestNearby() = begin(AppOperation.NEARBY, PlatformAction.NEARBY_PERMISSION)

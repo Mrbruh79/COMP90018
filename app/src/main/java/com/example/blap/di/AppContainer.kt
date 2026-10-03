@@ -21,6 +21,7 @@ import com.example.blap.chat.IdentityStore
 import com.example.blap.chat.LocalDataScope
 import com.example.blap.chat.LocalIdentityStore
 import com.example.blap.chat.NearbyChatManager
+import com.example.blap.chat.LocalNearbyIdentityStore
 import com.example.blap.chat.NotificationSettingsRepository
 import com.example.blap.chat.PrivateProfileStore
 import com.example.blap.chat.SqliteChatStore
@@ -85,9 +86,11 @@ class DefaultAppContainer(context: Context) : AppContainer {
     private fun createDependencies(accountId: String): ChatDependencies {
         val scope = LocalDataScope.forAccount(appContext, accountId)
         // Both contracts use the same manager so events do not create a second Nearby session.
-        val nearby = NearbyChatManager(appContext)
+        val nearbyIdentities = LocalNearbyIdentityStore(appContext, scope)
+        val nearby = NearbyChatManager(appContext, nearbyIdentities)
         return ChatDependencies(
             nearbyTransport = nearby,
+            nearbyIdentities = nearbyIdentities,
             chatStore = SqliteChatStore(appContext, scope),
             identityStore = LocalIdentityStore(appContext, scope),
             accountId = accountId,

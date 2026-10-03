@@ -30,21 +30,35 @@ class CloudChatSynchronizer(private val session: MessagingSession) : CloudChatCo
 
     override fun onDirectMessage(otherUid: String, message: CloudChatMessage) {
         session.workScope.launch {
+            val localUid = session.state.value.onlineAccountId
+            if (otherUid == localUid || (message.senderUid != localUid && message.senderUid != otherUid)) return@launch
             val contact = session.store.getSavedContacts().firstOrNull { it.cloudUserId == otherUid }
-            val peerId = contact?.linkedPeerId ?: contact?.let {
-                ContactIdentity.localPeerId(it.phoneHash, it.email, it.googleAccountEmail)
-            } ?: message.senderPeerId.takeIf(String::isNotBlank) ?: "account:$otherUid"
-            session.store.savePeer(peerId, contact?.name ?: message.senderName.ifBlank { "Online contact" },
+            val peerId = "account:$otherUid"
+            if (contact != null) session.persistence.mergeContactConversations(contact)
+            // A sent-message echo identifies this phone, not the other participant.
+            val fromOtherAccount = message.senderUid == otherUid
+            val remoteAlias = message.senderPeerId.takeIf {
+                fromOtherAccount && it.isNotBlank() && it != session.localPeerId &&
+                    !it.startsWith("account:") && session.store.getSavedContacts().none { saved ->
+                        saved.cloudUserId.isNotBlank() && saved.cloudUserId != otherUid &&
+                            it in ContactIdentity.aliases(saved)
+                    }
+            }
+            if (remoteAlias != null) session.persistence.mergeConversationAlias(remoteAlias, peerId)
+            val existingName = session.store.getConversations().firstOrNull { it.peerId == peerId }?.name
+            val otherName = if (fromOtherAccount) message.senderName.takeIf(String::isNotBlank) else null
+            session.store.savePeer(peerId, contact?.name ?: otherName ?: existingName ?: "Online contact",
                 contact?.phoneHash.orEmpty())
             val inserted = session.store.saveMessage(
                 message.toLocalMessage(peerId, session.state.value.onlineAccountId),
             )
+            session.persistence.reloadSavedContactsNow()
+            session.persistence.reloadConversationsNow()
+            if (session.state.value.selectedPeerId == peerId) session.persistence.reloadMessagesNow(peerId)
             if (inserted) {
-                session.persistence.reloadSavedContactsNow()
-                session.persistence.reloadConversationsNow()
-                if (session.state.value.selectedPeerId == peerId) session.persistence.reloadMessagesNow(peerId)
                 session.persistence.notifyIncoming(message.toLocalMessage(peerId, session.state.value.onlineAccountId))
             }
+            session.workScope.launch { session.accountLookup.loadChatAccount(peerId) }
         }
     }
 
@@ -145,7 +159,7 @@ class CloudChatSynchronizer(private val session: MessagingSession) : CloudChatCo
                 controller.sendDirect(account.uid, cloudMessage)
             } else return
             session.store.markCloudSynced(message.id)
-            session.persistence.setMessageStatus(message.peerId, message.id, MessageStatus.SENT)
+            session.persistence.setMessageStatus(session.persistence.canonicalPeerId(message.peerId), message.id, MessageStatus.SENT)
         } catch (error: Exception) {
             onCloudError(error.localizedMessage ?: "A message will retry when online.")
         } finally {

@@ -79,6 +79,7 @@ internal fun ChatScreen(
     onVote: (String, Int) -> Unit,
     onEdit: (String, String) -> Unit,
     onDelete: (String) -> Unit,
+    onDeleteChat: () -> Unit,
     onSendVoice: (Int, ByteArray) -> Unit,
     microphonePermissionGranted: Boolean,
     onRequestMicrophonePermission: () -> Unit,
@@ -97,6 +98,7 @@ internal fun ChatScreen(
     var deletingId by rememberSaveable(conversation.peerId) { mutableStateOf<String?>(null) }
     var showPollDialog by rememberSaveable(conversation.peerId) { mutableStateOf(false) }
     var moreExpanded by remember { mutableStateOf(false) }
+    var confirmingChatDelete by rememberSaveable(conversation.peerId) { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var elapsedMs by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
@@ -159,9 +161,6 @@ internal fun ChatScreen(
                 }
                 Text(
                     when {
-                        conversation.type == ConversationType.OPEN_MESH && directConnectionCount > 0 ->
-                            "$directConnectionCount direct link${if (directConnectionCount == 1) "" else "s"} · relaying through mesh"
-                        conversation.type == ConversationType.OPEN_MESH -> "Public room · no direct links"
                         conversation.type == ConversationType.PRIVATE_GROUP && directConnectionCount > 0 ->
                             "${conversation.memberCount} members · relaying through mesh"
                         conversation.type == ConversationType.PRIVATE_GROUP ->
@@ -173,9 +172,13 @@ internal fun ChatScreen(
                     color = if (conversation.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            if (conversation.type != ConversationType.OPEN_MESH) Box {
+            Box {
                 TextButton(onClick = { moreExpanded = true }) { Text("More") }
                 DropdownMenu(expanded = moreExpanded, onDismissRequest = { moreExpanded = false }) {
+                    DropdownMenuItem(text = { Text("Delete chat", color = MaterialTheme.colorScheme.error) }, onClick = {
+                        moreExpanded = false
+                        confirmingChatDelete = true
+                    })
                     if (conversation.type == ConversationType.DIRECT) {
                         DropdownMenuItem(text = { Text("Contact profile") }, onClick = {
                             moreExpanded = false
@@ -301,6 +304,12 @@ internal fun ChatScreen(
         message = "It will disappear for people using the updated app when this change syncs.",
         onConfirm = { onDelete(requireNotNull(deletingId)); deletingId = null },
         onDismiss = { deletingId = null },
+    )
+    if (confirmingChatDelete) DeleteConfirmationDialog(
+        title = "Delete this chat?",
+        message = "Messages will be removed from this device. Your contact and the other person's history will stay. This does not leave a group.",
+        onConfirm = { confirmingChatDelete = false; onDeleteChat() },
+        onDismiss = { confirmingChatDelete = false },
     )
     if (showPollDialog) PollComposerDialog(
         onCreate = { question, options -> onCreatePoll(question, options); showPollDialog = false },

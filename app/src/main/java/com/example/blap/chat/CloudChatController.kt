@@ -4,15 +4,28 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Source
 import java.security.MessageDigest
 import java.util.Locale
 import kotlinx.coroutines.tasks.await
 
-data class CloudAccount(val uid: String, val name: String, val peerId: String, val username: String = "")
+data class CloudAccount(val uid: String, val name: String, val peerId: String, val username: String = "",
+    val nearbyPublicKey: String = "")
 
 internal object AccountLookup {
     fun phoneHash(profile: ContactProfile): String =
         if (profile.discoverableByPhone) PhoneIdentity.hash(profile.lookupPhoneNumber).orEmpty() else ""
+}
+
+internal object AccountCardPublication {
+    fun fields(uid: String, profile: ContactProfile, peerId: String, previousPeerId: String,
+        previousPublicKey: String): Map<String, String> = buildMap {
+        put("uid", uid)
+        put("name", profile.displayName.trim().take(24))
+        put("peerId", peerId)
+        put("username", profile.username)
+        if (previousPeerId == peerId && previousPublicKey.isNotBlank()) put("nearbyPublicKey", previousPublicKey)
+    }
 }
 data class CloudChatMessage(
     val id: String,
@@ -41,6 +54,7 @@ interface CloudChatController {
     fun start(accountUid: String, listener: Listener)
     fun stop()
     suspend fun publishAccount(profile: ContactProfile, peerId: String)
+    suspend fun publishNearbyKey(peerId: String, publicKey: String) = Unit
     suspend fun getAccount(uid: String): CloudAccount?
     suspend fun findAccounts(phoneNumber: String = "", email: String = "", peerId: String = "", username: String = ""): List<CloudAccount>
     suspend fun sendDirect(otherUid: String, message: CloudChatMessage)
@@ -144,36 +158,37 @@ class FirebaseCloudChatController(
         val email = if (user.isEmailVerified) user.email.orEmpty().trim().lowercase(Locale.ROOT) else ""
         val phoneHash = AccountLookup.phoneHash(profile)
         val settingsRef = firestore.collection("accountSettings").document(uid)
-        val previous = settingsRef.get().await()
-        val oldEmail = previous.getString("email").orEmpty()
-        val oldPhoneHash = previous.getString("phoneHash").orEmpty()
-        val oldPeerId = previous.getString("peerId").orEmpty()
-        val batch = firestore.batch()
-        if (oldEmail.isNotBlank() && oldEmail != email) {
-            batch.delete(firestore.collection("emailLookup").document(oldEmail).collection("accounts").document(uid))
-        }
-        if (oldPhoneHash.isNotBlank() && oldPhoneHash != phoneHash) {
-            batch.delete(firestore.collection("phoneLookup").document(oldPhoneHash).collection("accounts").document(uid))
-        }
-        if (oldPeerId.isNotBlank() && oldPeerId != peerId) {
-            batch.delete(firestore.collection("peerLookup").document(oldPeerId).collection("accounts").document(uid))
-        }
-        batch.set(settingsRef, mapOf(
-            "uid" to uid, "email" to email, "phoneHash" to phoneHash,
-            "peerId" to peerId, "discoverableByPhone" to profile.discoverableByPhone,
-        ))
-        batch.set(firestore.collection("accountCards").document(uid), mapOf(
-            "uid" to uid, "name" to profile.displayName.trim().take(24), "peerId" to peerId,
-            "username" to profile.username,
-        ))
-        if (email.isNotBlank()) {
-            batch.set(firestore.collection("emailLookup").document(email).collection("accounts").document(uid), mapOf("uid" to uid))
-        }
-        if (phoneHash.isNotBlank()) {
-            batch.set(firestore.collection("phoneLookup").document(phoneHash).collection("accounts").document(uid), mapOf("uid" to uid))
-        }
-        batch.set(firestore.collection("peerLookup").document(peerId).collection("accounts").document(uid), mapOf("uid" to uid))
-        batch.commit().await()
+        val cardRef = firestore.collection("accountCards").document(uid)
+        // A concurrent key publication causes a retry instead of being overwritten.
+        firestore.runTransaction { transaction ->
+            val previous = transaction.get(settingsRef)
+            val previousCard = transaction.get(cardRef)
+            val oldEmail = previous.getString("email").orEmpty()
+            val oldPhoneHash = previous.getString("phoneHash").orEmpty()
+            val oldPeerId = previous.getString("peerId").orEmpty()
+            if (oldEmail.isNotBlank() && oldEmail != email) {
+                transaction.delete(firestore.collection("emailLookup").document(oldEmail).collection("accounts").document(uid))
+            }
+            if (oldPhoneHash.isNotBlank() && oldPhoneHash != phoneHash) {
+                transaction.delete(firestore.collection("phoneLookup").document(oldPhoneHash).collection("accounts").document(uid))
+            }
+            if (oldPeerId.isNotBlank() && oldPeerId != peerId) {
+                transaction.delete(firestore.collection("peerLookup").document(oldPeerId).collection("accounts").document(uid))
+            }
+            transaction.set(settingsRef, mapOf(
+                "uid" to uid, "email" to email, "phoneHash" to phoneHash,
+                "peerId" to peerId, "discoverableByPhone" to profile.discoverableByPhone,
+            ))
+            transaction.set(cardRef, AccountCardPublication.fields(uid, profile, peerId,
+                previousCard.getString("peerId").orEmpty(), previousCard.getString("nearbyPublicKey").orEmpty()))
+            if (email.isNotBlank()) {
+                transaction.set(firestore.collection("emailLookup").document(email).collection("accounts").document(uid), mapOf("uid" to uid))
+            }
+            if (phoneHash.isNotBlank()) {
+                transaction.set(firestore.collection("phoneLookup").document(phoneHash).collection("accounts").document(uid), mapOf("uid" to uid))
+            }
+            transaction.set(firestore.collection("peerLookup").document(peerId).collection("accounts").document(uid), mapOf("uid" to uid))
+        }.await()
     }
 
     override suspend fun findAccounts(phoneNumber: String, email: String, peerId: String, username: String): List<CloudAccount> {
@@ -183,30 +198,39 @@ class FirebaseCloudChatController(
         val phoneHash = PhoneIdentity.hash(phoneNumber).orEmpty()
         val normalizedUsername = username.trim().removePrefix("@").lowercase(Locale.ROOT)
         if (normalizedUsername.matches(Regex("[a-z0-9_]{3,20}"))) {
-            firestore.collection("usernames").document(normalizedUsername).get().await()
+            firestore.collection("usernames").document(normalizedUsername).get(Source.SERVER).await()
                 .getString("uid")?.takeIf(String::isNotBlank)?.let(ids::add)
         }
         if (normalizedEmail.isNotBlank()) {
             firestore.collection("emailLookup").document(normalizedEmail).collection("accounts")
-                .get().await().documents.mapTo(ids, DocumentSnapshot::getId)
+                .get(Source.SERVER).await().documents.mapTo(ids, DocumentSnapshot::getId)
         }
         if (phoneHash.isNotBlank()) {
             firestore.collection("phoneLookup").document(phoneHash).collection("accounts")
-                .get().await().documents.mapTo(ids, DocumentSnapshot::getId)
+                .get(Source.SERVER).await().documents.mapTo(ids, DocumentSnapshot::getId)
         }
         if (peerId.isNotBlank() && '/' !in peerId) {
             firestore.collection("peerLookup").document(peerId).collection("accounts")
-                .get().await().documents.mapTo(ids, DocumentSnapshot::getId)
+                .get(Source.SERVER).await().documents.mapTo(ids, DocumentSnapshot::getId)
         }
         return ids.filter { it != accountUid }.mapNotNull { getAccount(it) }
     }
 
     override suspend fun getAccount(uid: String): CloudAccount? {
         requireAccountUid()
-        val card = firestore.collection("accountCards").document(uid).get().await()
+        val card = firestore.collection("accountCards").document(uid).get(Source.SERVER).await()
         if (!card.exists() || card.getString("uid") != uid) return null
         return CloudAccount(uid, card.getString("name").orEmpty(), card.getString("peerId").orEmpty(),
-            card.getString("username").orEmpty())
+            card.getString("username").orEmpty(), card.getString("nearbyPublicKey").orEmpty())
+    }
+
+    override suspend fun publishNearbyKey(peerId: String, publicKey: String) {
+        val uid = requireAccountUid()
+        val card = firestore.collection("accountCards").document(uid)
+        firestore.runTransaction { transaction ->
+            check(transaction.get(card).getString("peerId") == peerId) { "The current account device changed. Retry account sync." }
+            transaction.update(card, "nearbyPublicKey", publicKey)
+        }.await()
     }
 
     override suspend fun sendDirect(otherUid: String, message: CloudChatMessage) {

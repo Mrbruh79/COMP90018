@@ -11,6 +11,8 @@ interface EventMeshGateway {
         userId: String = "",
         accessGranted: Boolean = true,
     ) = Unit
+    /** Refreshes discovery and asks connected event peers to replay their stored history. */
+    fun refreshEventMesh(eventId: String) = Unit
     fun sendEventChatMessage(message: EventChatMessage) = Unit
     fun sendEventAnnouncement(announcement: EventAnnouncement) = Unit
     fun sendEventMutation(mutation: EventMutation) = Unit

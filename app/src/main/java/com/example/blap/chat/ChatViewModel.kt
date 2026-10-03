@@ -4,14 +4,28 @@ import java.util.Base64
 import java.util.UUID
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.withTimeoutOrNull
 
 class ChatViewModel(private val session: MessagingSession, private val ownsSession: Boolean = false) : androidx.lifecycle.ViewModel(), NearbyTransport.Listener {
     val uiState = session.uiState
+    private val checkingConnections = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     init { session.nearbyTransport.listener = this }
 
     fun openConversation(peerId: String) = session.navigation.openConversation(peerId)
-    fun showConversationList() { session.requestedEndpointId = null; session.navigation.showConversationList() }
+    fun deleteChat() {
+        val peerId = session.state.value.selectedPeerId ?: return
+        session.workScope.launch {
+            session.store.deleteConversation(peerId)
+            session.state.update { it.copy(messageDrafts = it.messageDrafts - peerId) }
+            session.navigation.showConversationList()
+            session.persistence.reloadConversationsNow()
+            session.showNotice("Chat deleted on this device. Your contact is still saved.")
+        }
+    }
+    fun showConversationList() {
+        session.navigation.showConversationList()
+    }
     fun showError(message: String) = session.showError(message)
     fun showNotice(message: String) = session.showNotice(message)
     fun accountChanged(accountId: String) = session.cloudSync.accountChanged(accountId)
@@ -34,8 +48,11 @@ class ChatViewModel(private val session: MessagingSession, private val ownsSessi
         if (session.state.value.screen == ChatScreen.WELCOME) session.navigation.showConversationList()
         val state = session.state.value
         session.state.update { it.copy(nearbyActive = true, error = null) }
+        session.nearbyTransport.configureAccount(session.currentProfile().username, state.onlineAccountId)
         session.nearbyTransport.startAdvertising(state.displayName, session.localPeerId, session.localPhoneHash)
         if (session.state.value.nearbyActive) session.nearbyTransport.startDiscovery()
+        // Retry optional key publication after a server-rule update, without delaying radio startup.
+        session.workScope.launch { session.accountPublisher.publishAccount() }
     }
 
     fun connectToDevice(endpointId: String) {
@@ -149,12 +166,12 @@ class ChatViewModel(private val session: MessagingSession, private val ownsSessi
             if (conversation.type != ConversationType.DIRECT && session.connectedPeers.isNotEmpty()) {
                 sendStoredMessage(message)
             }
-            else if (session.connectedPeers.containsKey(peerId)) sendStoredMessage(message)
+            else if (session.connectedPeers.containsKey(session.persistence.transportPeerId(peerId))) sendStoredMessage(message)
         }
     }
 
     fun disconnect(peerId: String) {
-        session.nearbyTransport.disconnect(peerId)
+        session.nearbyTransport.disconnect(session.persistence.transportPeerId(peerId))
     }
 
     fun dismissError() {
@@ -189,53 +206,144 @@ class ChatViewModel(private val session: MessagingSession, private val ownsSessi
     }
 
     override fun onConnectionInitiated(device: NearbyDevice, authenticationDigits: String) {
+        if (!session.state.value.nearbyActive) {
+            session.nearbyTransport.rejectConnection(device.endpointId)
+            return
+        }
+        if (device.peerId.isNotBlank() && session.nearbyTransport.canVerifyIdentity(device.endpointId)) {
+            checkingConnections += device.endpointId
+            session.workScope.launch {
+                var trusted = session.dependencies.nearbyIdentities.trusted(device.peerId)
+                    ?.takeIf { it.username == device.username }
+                if (trusted == null) {
+                    val saved = session.store.getSavedContacts().filter {
+                        it.cloudUserId.isNotBlank() && it.username.equals(device.username, ignoreCase = true)
+                    }.distinctBy(SavedContact::cloudUserId).singleOrNull()
+                    if (saved != null && session.state.value.onlineAccountId.isNotBlank()) {
+                        val account = kotlinx.coroutines.withTimeoutOrNull(7_000L) {
+                            runCatching { session.cloudController?.getAccount(saved.cloudUserId) }.getOrNull()
+                        }
+                        if (account != null && account.peerId == device.peerId && account.username == device.username &&
+                            account.nearbyPublicKey.isNotBlank()) {
+                            trusted = TrustedNearbyIdentity(account.peerId, account.username, account.uid,
+                                account.nearbyPublicKey, accountVerified = true)
+                        }
+                    }
+                }
+                if (!checkingConnections.remove(device.endpointId) || !session.state.value.nearbyActive) return@launch
+                if (trusted != null) session.nearbyTransport.acceptKnownConnection(device.endpointId, trusted)
+                else showConnectionRequest(device, authenticationDigits)
+            }
+            return
+        }
+        showConnectionRequest(device, authenticationDigits)
+    }
+
+    private fun showConnectionRequest(device: NearbyDevice, authenticationDigits: String) {
         session.state.update { state ->
-            if (session.requestedEndpointId == device.endpointId && state.screen == ChatScreen.CONNECTING) {
-                state.copy(
-                    authenticationDigits = authenticationDigits,
-                    error = null,
-                )
-            } else state
+            state.copy(
+                connectionRequests = state.connectionRequests.filterNot { it.device.endpointId == device.endpointId } +
+                    NearbyConnectionRequest(device, authenticationDigits),
+                authenticationDigits = if (session.requestedEndpointId == device.endpointId) authenticationDigits
+                    else state.authenticationDigits,
+                error = null,
+            )
         }
     }
 
+    fun acceptConnection(endpointId: String) {
+        if (session.state.value.connectionRequests.none { it.device.endpointId == endpointId }) return
+        session.state.update { it.copy(connectionRequests = it.connectionRequests.filterNot { request ->
+            request.device.endpointId == endpointId
+        }) }
+        session.nearbyTransport.acceptConnection(endpointId)
+    }
+
+    fun rejectConnection(endpointId: String) {
+        session.nearbyTransport.rejectConnection(endpointId)
+        onConnectionClosed(endpointId)
+    }
+
+    override fun onConnectionClosed(endpointId: String) {
+        checkingConnections.remove(endpointId)
+        val wasRequested = session.requestedEndpointId == endpointId
+        if (wasRequested) session.requestedEndpointId = null
+        session.state.update { it.copy(
+            connectionRequests = it.connectionRequests.filterNot { request -> request.device.endpointId == endpointId },
+            screen = if (wasRequested && it.screen == ChatScreen.CONNECTING) ChatScreen.CHATS else it.screen,
+            authenticationDigits = if (wasRequested) null else it.authenticationDigits,
+        ) }
+    }
+
     override fun onConnected(peer: ConnectedPeer) {
+        session.workScope.launch {
+            session.connectedPeers[peer.peerId] = peer
+            rememberDevice(peer)
+            // The approved radio link must not wait for Firebase to become reachable.
+            recordConnected(peer)
+            val linkedPeer = withTimeoutOrNull(7_000L) { session.accountLookup.linkNearbyPeer(peer) } ?: peer
+            if (session.connectedPeers[peer.peerId]?.endpointId != peer.endpointId) return@launch
+            session.connectedPeers[peer.peerId] = linkedPeer
+            rememberDevice(linkedPeer)
+            if (linkedPeer != peer) recordConnected(linkedPeer)
+            else {
+                session.persistence.reloadSavedContactsNow()
+                session.persistence.reloadConversationsNow()
+                session.state.value.selectedPeerId?.let(session.persistence::reloadMessagesNow)
+            }
+        }
+    }
+
+    private fun rememberDevice(peer: ConnectedPeer) {
+        if (peer.publicKey.isBlank()) return
+        val identities = session.dependencies.nearbyIdentities
+        identities.remember(TrustedNearbyIdentity(peer.peerId, peer.username, peer.accountUid, peer.publicKey,
+            peer.accountVerified || identities.trusted(peer.peerId)?.accountVerified == true))
+    }
+
+    private fun recordConnected(peer: ConnectedPeer) {
         session.connectedPeers[peer.peerId] = peer
+        val conversationId = session.persistence.canonicalPeerId(peer.peerId)
         val shouldOpen = session.state.value.screen == ChatScreen.CONNECTING && session.requestedEndpointId == peer.endpointId
         if (shouldOpen) session.requestedEndpointId = null
 
         session.state.update { state ->
-            val existing = state.conversations.firstOrNull { it.peerId == peer.peerId }
-            val conversation = (existing ?: ConversationSummary(peer.peerId, peer.name)).copy(
+            val existing = state.conversations.firstOrNull { it.peerId == conversationId }
+            val conversation = (existing ?: ConversationSummary(conversationId, peer.name)).copy(
                 name = peer.name,
                 connected = true,
             )
             val conversations = state.conversations
-                .filterNot { it.peerId == peer.peerId }
+                .filterNot { it.peerId == conversationId }
                 .plus(conversation)
                 .sortedByDescending { it.lastMessageAt }
 
             state.copy(
                 screen = if (shouldOpen) ChatScreen.CONVERSATION else state.screen,
-                selectedPeerId = if (shouldOpen) peer.peerId else state.selectedPeerId,
+                selectedPeerId = if (shouldOpen) conversationId else state.selectedPeerId,
                 discoveredDevices = state.discoveredDevices.filterNot { it.endpointId == peer.endpointId },
                 conversations = conversations,
                 directConnectionCount = session.connectedPeers.size,
                 authenticationDigits = null,
+                connectionRequests = state.connectionRequests.filterNot { it.device.endpointId == peer.endpointId },
                 error = null,
             )
         }
 
         session.workScope.launch {
-            session.store.savePeer(peer.peerId, peer.name, peer.phoneHash)
-            session.store.linkContact(peer.phoneHash, peer.peerId)
-            if (peer.phoneHash.isNotBlank()) {
+            session.store.savePeer(conversationId, peer.name, peer.phoneHash)
+            if (peer.username.isNotBlank() && (!conversationId.startsWith("account:") || peer.accountVerified))
+                session.store.savePeerUsername(conversationId, peer.username)
+            if (shouldOpen) session.store.reopenConversation(conversationId)
+            session.persistence.mergeConversationAlias(peer.peerId, conversationId)
+            if (!peer.accountVerified && peer.username.isBlank() && peer.phoneHash.isNotBlank()) {
+                session.store.linkContact(peer.phoneHash, peer.peerId)
                 session.persistence.movePhoneConversationToPeer(peer.phoneHash, peer.peerId)
             }
             session.persistence.reloadConversationsNow()
             session.persistence.reloadSavedContactsNow()
-            if (session.state.value.selectedPeerId == peer.peerId) session.persistence.reloadMessagesNow(peer.peerId)
-            session.store.getPendingMessages(peer.peerId).forEach(::sendStoredMessage)
+            if (session.state.value.selectedPeerId == conversationId) session.persistence.reloadMessagesNow(conversationId)
+            session.store.getPendingMessages(conversationId).forEach(::sendStoredMessage)
             session.groupManagement.synchronizeGroupsWith(peer.peerId)
             session.cloudSync.syncPending()
         }
@@ -258,40 +366,40 @@ class ChatViewModel(private val session: MessagingSession, private val ownsSessi
     }
 
     override fun onMessageReceived(message: IncomingNearbyMessage) {
-        val savedMessage = ChatMessage(
-            id = message.messageId,
-            peerId = message.conversationId,
-            text = message.text,
-            author = if (message.senderId == session.localPeerId) MessageAuthor.ME else MessageAuthor.PEER,
-            sentAt = message.sentAt,
-            status = MessageStatus.DELIVERED,
-            senderId = message.senderId,
-            senderName = message.senderName,
-            senderPhoneHash = message.senderPhoneHash,
-        )
-
+        if (message.conversationId == MeshGroup.ID) return
         session.workScope.launch {
-            val isOpenMesh = message.conversationId == MeshGroup.ID
             val isDirect = message.conversationId == message.senderId
-            val isPrivateMember = !isOpenMesh && !isDirect &&
+            val conversationId = if (isDirect) session.persistence.canonicalPeerId(message.senderId) else message.conversationId
+            val savedMessage = ChatMessage(
+                id = message.messageId,
+                peerId = conversationId,
+                text = message.text,
+                author = if (message.senderId == session.localPeerId) MessageAuthor.ME else MessageAuthor.PEER,
+                sentAt = message.sentAt,
+                status = MessageStatus.DELIVERED,
+                senderId = message.senderId,
+                senderName = message.senderName,
+                senderPhoneHash = message.senderPhoneHash,
+                senderAccountId = session.connectedPeers[message.senderId]?.takeIf { it.accountVerified }?.accountUid.orEmpty(),
+            )
+            val isPrivateMember = !isDirect &&
                 session.store.isGroupMember(message.conversationId, session.localPeerId, session.localPhoneHash) &&
                 session.store.isGroupMember(
                     message.conversationId,
                     message.senderId,
                     message.senderPhoneHash,
                 )
-            if (!isOpenMesh && !isDirect && !isPrivateMember) return@launch
+            if (!isDirect && !isPrivateMember) return@launch
 
-            if (isOpenMesh) {
-                session.store.savePeer(MeshGroup.ID, MeshGroup.NAME)
-            } else if (isDirect) {
-                session.store.savePeer(message.senderId, message.senderName, message.senderPhoneHash)
+            if (isDirect) {
+                session.store.savePeer(conversationId, message.senderName, message.senderPhoneHash)
             }
             val inserted = session.store.saveMessage(savedMessage)
             if (inserted) {
                 session.persistence.reloadConversationsNow()
-                if (session.state.value.selectedPeerId == message.conversationId) {
-                    session.persistence.reloadMessagesNow(message.conversationId)
+                val currentConversation = if (isDirect) session.persistence.canonicalPeerId(message.senderId) else conversationId
+                if (session.state.value.selectedPeerId == currentConversation) {
+                    session.persistence.reloadMessagesNow(currentConversation)
                 }
                 session.persistence.notifyIncoming(savedMessage)
             }
@@ -304,20 +412,21 @@ class ChatViewModel(private val session: MessagingSession, private val ownsSessi
     }
 
     override fun onMessageSent(peerId: String, messageId: String) {
-        session.persistence.setMessageStatus(peerId, messageId, MessageStatus.SENT)
+        session.persistence.setMessageStatus(session.persistence.canonicalPeerId(peerId), messageId, MessageStatus.SENT)
     }
 
     override fun onMessageDelivered(peerId: String, messageId: String) {
-        session.persistence.setMessageStatus(peerId, messageId, MessageStatus.DELIVERED)
+        session.persistence.setMessageStatus(session.persistence.canonicalPeerId(peerId), messageId, MessageStatus.DELIVERED)
     }
 
     override fun onDisconnected(peerId: String) {
+        val canonical = session.persistence.canonicalPeerId(peerId)
         session.connectedPeers.remove(peerId)
         session.state.update { state ->
             state.copy(
                 conversations = state.conversations.map { conversation ->
                     when (conversation.peerId) {
-                        peerId -> conversation.copy(connected = false)
+                        canonical -> conversation.copy(connected = false)
                         else -> if (conversation.type != ConversationType.DIRECT) {
                             conversation.copy(connected = session.connectedPeers.isNotEmpty())
                         } else {
@@ -351,7 +460,7 @@ class ChatViewModel(private val session: MessagingSession, private val ownsSessi
         session.nearbyTransport.sendMessage(
             OutgoingNearbyMessage(
                 messageId = message.id,
-                peerId = message.peerId,
+                peerId = session.persistence.transportPeerId(message.peerId),
                 text = message.text,
                 sentAt = message.sentAt,
                 isGroup = session.state.value.conversations.firstOrNull {
@@ -375,6 +484,7 @@ class ChatViewModel(private val session: MessagingSession, private val ownsSessi
     }
 
     fun stopChat() {
+        checkingConnections.clear()
         session.requestedEndpointId = null
         session.nearbyTransport.stop()
         session.connectedPeers.clear()
@@ -384,6 +494,7 @@ class ChatViewModel(private val session: MessagingSession, private val ownsSessi
                 screen = if (it.screen == ChatScreen.CONNECTING) ChatScreen.CHATS else it.screen,
                 discoveredDevices = emptyList(),
                 authenticationDigits = null,
+                connectionRequests = emptyList(),
                 directConnectionCount = 0,
                 conversations = it.conversations.map { conversation ->
                     conversation.copy(connected = false)

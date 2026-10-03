@@ -11,6 +11,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
@@ -38,11 +39,25 @@ class EventViewModel(private val session: MessagingSession) : ViewModel(), Event
                 }
             }
         }
+        services?.let { eventServices ->
+            eventScope.launch {
+                combine(session.uiState.map { it.screen == ChatScreen.EVENTS }, uiState) { visible, events ->
+                    EventMeshSelection.select(events, visible, System.currentTimeMillis())
+                }.distinctUntilChanged().collect { selection ->
+                    eventServices.meshGateway.setActiveEvent(
+                        selection?.eventId,
+                        selection?.meshSecret.orEmpty(),
+                        selection?.userId.orEmpty(),
+                        accessGranted = selection != null,
+                    )
+                }
+            }
+        }
     }
 
     fun showEvents() {
-        session.state.update { it.copy(screen = ChatScreen.EVENTS, error = null) }
         eventCoordinator?.showList()
+        session.state.update { it.copy(screen = ChatScreen.EVENTS, error = null) }
     }
 
     fun beginCreateEvent() = eventCoordinator?.beginCreate() ?: Unit

@@ -3,6 +3,7 @@ package com.example.blap.chat
 /** Saved contacts and identities learned from direct or relayed peers. */
 interface ContactRepository {
     fun savePeer(peerId: String, name: String, phoneHash: String = "")
+    fun savePeerUsername(peerId: String, username: String) = Unit
     fun saveMeshPeer(peerId: String, name: String, phoneHash: String = "")
     fun saveContact(contact: SavedContact)
     fun getSavedContacts(): List<SavedContact>
@@ -33,4 +34,6 @@ interface ChatRepository {
     fun getCloudPendingMessages(): List<ChatMessage> = emptyList()
     fun markCloudSynced(messageId: String) = Unit
     fun moveConversation(fromPeerId: String, toPeerId: String) = Unit
+    fun deleteConversation(peerId: String) = Unit
+    fun reopenConversation(peerId: String) = Unit
 }

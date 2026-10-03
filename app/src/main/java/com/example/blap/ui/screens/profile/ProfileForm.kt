@@ -49,6 +49,7 @@ internal fun ProfileForm(
     onDelete: (() -> Unit)? = null,
     isContact: Boolean = false,
     allowQrOnly: Boolean = false,
+    saving: Boolean = false,
 ) {
     var confirmingDelete by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize()) {
@@ -153,7 +154,7 @@ internal fun ProfileForm(
         }
         Button(
             onClick = onSave,
-            enabled = profile.displayName.isNotBlank() &&
+            enabled = !saving && profile.displayName.isNotBlank() &&
                 (!isContact || profile.phoneNumber.isNotBlank() || profile.email.isNotBlank() ||
                     profile.googleAccountEmail.isNotBlank() || profile.username.isNotBlank() || allowQrOnly),
             modifier = Modifier

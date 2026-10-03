@@ -22,7 +22,7 @@ internal fun ConnectingScreen(authenticationDigits: String?, onBack: () -> Unit)
         verticalArrangement = Arrangement.Center,
     ) {
         Text("Connecting phones", style = MaterialTheme.typography.headlineMedium)
-        Text("Keep both phones nearby", modifier = Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("Keep both phones nearby. Both people must accept the connection.", modifier = Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (authenticationDigits != null) {
             Card(
                 modifier = Modifier.padding(top = 22.dp),

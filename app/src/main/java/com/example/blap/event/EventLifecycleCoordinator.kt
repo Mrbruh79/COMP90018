@@ -303,10 +303,13 @@ internal class EventLifecycleCoordinator(
             ?: return
         closeAnnouncementObserver()
         closeEventObservers()
+        val cachedMembership = eventStore.getMembership(event.id, currentState().currentUserId)
         updateState {
             it.copy(
                 page = EventPage.DETAIL,
                 selectedEventId = event.id,
+                membership = cachedMembership,
+                activeEventId = event.id.takeIf { EventCheckInState.isCheckedIn(event, cachedMembership, clock()) },
                 announcements = eventStore.getAnnouncements(event.id),
                 chatMessages = eventStore.getChatMessages(event.id),
                 participantSearchResult = null,
@@ -320,7 +323,12 @@ internal class EventLifecycleCoordinator(
         }
         scope.launch {
             val userId = runCatching { requireUserId() }.getOrNull() ?: return@launch
-            updateState { it.copy(membership = eventStore.getMembership(event.id, userId)) }
+            val membership = eventStore.getMembership(event.id, userId)
+            updateState {
+                if (it.selectedEventId != event.id) it else it.copy(membership = membership,
+                    activeEventId = event.id.takeIf { EventCheckInState.isCheckedIn(event, membership, clock()) })
+            }
+            if (currentState().selectedEventId != event.id) return@launch
             refreshMembers(event.id)
             refreshAnnouncements(event.id)
             if (event.visibility == EventVisibility.PRIVATE && event.isAdmin(userId)) {
@@ -338,8 +346,14 @@ internal class EventLifecycleCoordinator(
                 error = null,
             )
         }
+        refreshAnnouncementMesh()
         startAnnouncementObserver(event.id)
         refreshAnnouncements(event.id)
+    }
+
+    private fun refreshAnnouncementMesh() {
+        val selection = EventMeshSelection.select(currentState(), eventsVisible = true, now = clock()) ?: return
+        meshGateway.refreshEventMesh(selection.eventId)
     }
 
     fun closeAnnouncementObserver() {
@@ -372,6 +386,7 @@ internal class EventLifecycleCoordinator(
         )
         val announcement = unsigned.copy(signature = EventAnnouncementSigner.sign(unsigned, keys.private))
         eventStore.saveAnnouncement(announcement)
+        refreshAnnouncementMesh()
         meshGateway.sendEventAnnouncement(announcement)
         updateState { it.copy(announcements = eventStore.getAnnouncements(event.id)) }
         scope.launch {
@@ -382,7 +397,8 @@ internal class EventLifecycleCoordinator(
                 }
                 .onFailure {
                     updateState {
-                        it.copy(notice = "Announcement sent on-site and will upload when retried online.")
+                        it.copy(notice = "Announcement saved locally. It can sync through the active event mesh. " +
+                            "Cloud upload will retry when announcements are refreshed online.")
                     }
                 }
         }
@@ -530,7 +546,7 @@ internal class EventLifecycleCoordinator(
         announcementObserver = remoteRepository.observeAnnouncements(
             eventId = eventId,
             onAnnouncements = { announcements ->
-                announcements.forEach(eventStore::saveAnnouncement)
+                announcements.forEach(::saveRemoteAnnouncement)
                 updateState { state ->
                     if (state.selectedEventId == eventId && state.page == EventPage.ANNOUNCEMENTS) {
                         state.copy(announcements = eventStore.getAnnouncements(eventId))
@@ -593,7 +609,7 @@ internal class EventLifecycleCoordinator(
         scope.launch {
             runCatching { remoteRepository.getAnnouncements(eventId) }
                 .onSuccess { remote ->
-                    remote.forEach(eventStore::saveAnnouncement)
+                    remote.forEach(::saveRemoteAnnouncement)
                     eventStore.getPendingAnnouncements(eventId).forEach { pending ->
                         runCatching { remoteRepository.saveAnnouncement(pending) }
                             .onSuccess { eventStore.markAnnouncementSynced(pending.id) }
@@ -604,6 +620,15 @@ internal class EventLifecycleCoordinator(
                         } else state
                     }
                 }
+        }
+    }
+
+    private fun saveRemoteAnnouncement(announcement: EventAnnouncement) {
+        val added = eventStore.saveAnnouncement(announcement)
+        val selection = EventMeshSelection.select(currentState(), eventsVisible = true, now = clock())
+        if (added && selection?.eventId == announcement.eventId) {
+            // A connected attendee can carry a new cloud announcement to offline event peers.
+            meshGateway.sendEventAnnouncement(announcement)
         }
     }
 
@@ -649,11 +674,14 @@ internal class EventLifecycleCoordinator(
                             }
                         }
                     } else if (localMembership != null) {
-                        eventStore.saveMembership(localMembership)
+                        val mergedMembership = EventCheckInState.mergeMembership(localMembership, cachedMembership)
+                        eventStore.saveMembership(mergedMembership)
                         if (localMembership.isAdmin) registerLocalAdminKey(eventId, localMembership.userId)
                         updateState { state ->
                             if (state.selectedEventId == eventId) {
-                                state.copy(members = members, membership = localMembership)
+                                val event = state.selectedEvent
+                                state.copy(members = members, membership = mergedMembership,
+                                    activeEventId = event?.id?.takeIf { EventCheckInState.isCheckedIn(event, mergedMembership, clock()) })
                             } else state
                         }
                     } else {

@@ -20,6 +20,8 @@ interface NearbyConnectionTransport {
         fun onEndpointFound(endpointId: String, endpointName: String)
         fun onEndpointLost(endpointId: String)
         fun onConnectionInitiated(endpointId: String, endpointName: String, authenticationDigits: String)
+        fun onConnectionInitiated(endpointId: String, endpointName: String, authenticationDigits: String,
+            rawToken: ByteArray) = onConnectionInitiated(endpointId, endpointName, authenticationDigits)
         fun onConnectionSucceeded(endpointId: String)
         fun onConnectionFailed(endpointId: String, message: String)
         fun onDisconnected(endpointId: String)

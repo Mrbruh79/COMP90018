@@ -33,6 +33,21 @@ class MeshRouterTest {
     }
 
     @Test
+    fun retiredPublicRoomMessagesAndAcknowledgementsAreDropped() {
+        val packet = groupMessage().copy(recipientId = MeshGroup.ID)
+        assertTrue(router.ingest(packet, chatContext()).isDrop)
+        router.rememberGroupMessage(packet)
+        assertTrue(router.cachedGroupMessages().isEmpty())
+        assertTrue(router.ingest(NearbyPacket.Acknowledgement("old-message", "bob", "alice",
+            MeshGroup.ID, 4, true), chatContext()).isDrop)
+        val definition = NearbyPacket.GroupDefinition(MeshGroup.ID, "Legacy room", "bob", 0L,
+            listOf(GroupMember("bob", "Bob")), 4)
+        assertTrue(router.ingest(definition, chatContext()).isDrop)
+        router.noteOutgoingGroup(definition)
+        assertTrue(router.cachedGroupDefinitions().isEmpty())
+    }
+
+    @Test
     fun duplicateGroupMessageIsDeliveredButNotForwarded() {
         val packet = groupMessage()
         router.ingest(packet, chatContext())

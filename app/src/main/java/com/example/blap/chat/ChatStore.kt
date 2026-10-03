@@ -16,7 +16,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     context,
     "nearby_chat$scope.db",
     null,
-    11,
+    13,
 ), ChatStore {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -25,6 +25,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
                 peer_id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
                 phone_hash TEXT NOT NULL DEFAULT '',
+                username TEXT NOT NULL DEFAULT '',
                 last_seen INTEGER NOT NULL
             )
             """.trimIndent(),
@@ -50,9 +51,12 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
         createGroupTables(db)
         createMeshPeersTable(db)
         createContactsTable(db)
+        createChatDeletionTables(db)
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 13) addColumnIfMissing(db, "peers", "username", "username TEXT NOT NULL DEFAULT ''")
+        if (oldVersion < 12) createChatDeletionTables(db)
         if (oldVersion < 2) {
             db.execSQL("ALTER TABLE messages ADD COLUMN sender_id TEXT NOT NULL DEFAULT ''")
             db.execSQL("ALTER TABLE messages ADD COLUMN sender_name TEXT NOT NULL DEFAULT ''")
@@ -145,7 +149,16 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             put("phone_hash", phoneHash)
             put("last_seen", System.currentTimeMillis())
         }
-        writableDatabase.insertWithOnConflict("peers", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        writableDatabase.transaction {
+            insertWithOnConflict("peers", null, values, SQLiteDatabase.CONFLICT_IGNORE)
+            update("peers", values, "peer_id = ?", arrayOf(peerId))
+        }
+    }
+
+    @Synchronized
+    override fun savePeerUsername(peerId: String, username: String) {
+        writableDatabase.update("peers", ContentValues().apply { put("username", username) },
+            "peer_id = ?", arrayOf(peerId))
     }
 
     @Synchronized
@@ -243,7 +256,8 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     override fun linkContact(phoneHash: String, peerId: String) {
         if (phoneHash.isBlank()) return
         val values = ContentValues().apply { put("linked_peer_id", peerId) }
-        writableDatabase.update("app_contacts", values, "phone_hash = ?", arrayOf(phoneHash))
+        writableDatabase.update("app_contacts", values,
+            "phone_hash = ? AND (cloud_user_id = '' OR linked_peer_id = ?)", arrayOf(phoneHash, peerId))
     }
 
     @Synchronized
@@ -350,6 +364,10 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     @Synchronized
     override fun saveMessage(message: ChatMessage): Boolean {
+        if (readableDatabase.rawQuery("SELECT 1 FROM deleted_message_ids WHERE message_id = ?",
+                arrayOf(message.id)).use { it.moveToFirst() }) return false
+        val deletedBefore = deletionTime(message.peerId)
+        if (deletedBefore != null && message.sentAt <= deletedBefore) return false
         val values = ContentValues().apply {
             put("message_id", message.id)
             put("peer_id", message.peerId)
@@ -369,6 +387,8 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             values,
             SQLiteDatabase.CONFLICT_IGNORE,
         )
+        if (row != -1L) writableDatabase.update("chat_deletions", ContentValues().apply { put("hidden", 0) },
+            "peer_id = ?", arrayOf(message.peerId))
         return row != -1L
     }
 
@@ -391,8 +411,10 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
                 COALESCE((SELECT text FROM messages m WHERE m.peer_id = p.peer_id
                     ORDER BY sent_at DESC, rowid DESC LIMIT 1), '') AS last_message,
                 COALESCE((SELECT sent_at FROM messages m WHERE m.peer_id = p.peer_id
-                    ORDER BY sent_at DESC, rowid DESC LIMIT 1), p.last_seen) AS last_message_at
+                    ORDER BY sent_at DESC, rowid DESC LIMIT 1), p.last_seen) AS last_message_at,
+                p.username
             FROM peers p
+            WHERE NOT EXISTS (SELECT 1 FROM chat_deletions d WHERE d.peer_id = p.peer_id AND d.hidden = 1)
             ORDER BY last_message_at DESC
         """.trimIndent()
 
@@ -403,6 +425,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
                     name = cursor.getString(1),
                     lastMessage = cursor.getString(2),
                     lastMessageAt = cursor.getLong(3),
+                    username = cursor.getString(4),
                     type = if (cursor.getString(0) == MeshGroup.ID) {
                         ConversationType.OPEN_MESH
                     } else {
@@ -412,6 +435,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             }
         }
         getGroups().forEach { group ->
+            if (isChatHidden(group.id)) return@forEach
             val lastMessage = getMessages(group.id).lastOrNull()
             conversations += ConversationSummary(
                 peerId = group.id,
@@ -489,10 +513,56 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     override fun moveConversation(fromPeerId: String, toPeerId: String) {
         if (fromPeerId == toPeerId) return
         writableDatabase.transaction {
+            execSQL("UPDATE peers SET username = (SELECT username FROM peers WHERE peer_id = ?) " +
+                "WHERE peer_id = ? AND username = '' AND EXISTS (SELECT 1 FROM peers WHERE peer_id = ?)",
+                arrayOf(fromPeerId, toPeerId, fromPeerId))
+            rawQuery("SELECT deleted_before, hidden FROM chat_deletions WHERE peer_id = ?", arrayOf(fromPeerId)).use { cursor ->
+                if (cursor.moveToFirst()) {
+                    val time = maxOf(cursor.getLong(0), deletionTime(toPeerId) ?: 0L)
+                    insertWithOnConflict("chat_deletions", null, ContentValues().apply {
+                        put("peer_id", toPeerId); put("deleted_before", time); put("hidden", cursor.getInt(1))
+                    }, SQLiteDatabase.CONFLICT_REPLACE)
+                    delete("messages", "peer_id = ? AND sent_at <= ?", arrayOf(toPeerId, time.toString()))
+                }
+            }
             update("messages", ContentValues().apply { put("peer_id", toPeerId) },
                 "peer_id = ?", arrayOf(fromPeerId))
+            deletionTime(toPeerId)?.let { time ->
+                delete("messages", "peer_id = ? AND sent_at <= ?", arrayOf(toPeerId, time.toString()))
+            }
+            execSQL("UPDATE chat_deletions SET hidden = 0 WHERE peer_id = ? AND EXISTS (SELECT 1 FROM messages WHERE peer_id = ?)",
+                arrayOf(toPeerId, toPeerId))
             delete("peers", "peer_id = ?", arrayOf(fromPeerId))
         }
+    }
+
+    @Synchronized
+    override fun deleteConversation(peerId: String) {
+        writableDatabase.transaction {
+            execSQL("INSERT OR IGNORE INTO deleted_message_ids(message_id) SELECT message_id FROM messages WHERE peer_id = ?", arrayOf(peerId))
+            delete("messages", "peer_id = ?", arrayOf(peerId))
+            insertWithOnConflict("chat_deletions", null, ContentValues().apply {
+                put("peer_id", peerId); put("deleted_before", System.currentTimeMillis()); put("hidden", 1)
+            }, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+
+    private fun deletionTime(peerId: String): Long? = readableDatabase.rawQuery(
+        "SELECT deleted_before FROM chat_deletions WHERE peer_id = ?", arrayOf(peerId),
+    ).use { if (it.moveToFirst()) it.getLong(0) else null }
+
+    @Synchronized
+    override fun reopenConversation(peerId: String) {
+        writableDatabase.update("chat_deletions", ContentValues().apply { put("hidden", 0) }, "peer_id = ?", arrayOf(peerId))
+    }
+
+    private fun isChatHidden(peerId: String): Boolean = readableDatabase.rawQuery(
+        "SELECT 1 FROM chat_deletions WHERE peer_id = ? AND hidden = 1", arrayOf(peerId),
+    ).use { it.moveToFirst() }
+
+    private fun createChatDeletionTables(db: SQLiteDatabase) {
+        db.execSQL("CREATE TABLE IF NOT EXISTS chat_deletions(peer_id TEXT PRIMARY KEY, deleted_before INTEGER NOT NULL, hidden INTEGER NOT NULL DEFAULT 1)")
+        db.execSQL("CREATE TABLE IF NOT EXISTS deleted_message_ids(message_id TEXT PRIMARY KEY)")
     }
 
     private fun readMessage(cursor: Cursor): ChatMessage {

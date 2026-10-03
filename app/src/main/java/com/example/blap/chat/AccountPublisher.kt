@@ -8,6 +8,7 @@ class AccountPublisher(private val session: MessagingSession) {
     fun applyAccountProfile(username: String, displayName: String) {
         val updated = session.identityStore.getProfile().copy(username = username, displayName = displayName)
         session.identityStore.saveProfileAt(updated, session.identityStore.profileUpdatedAt())
+        session.nearbyTransport.configureAccount(username, session.state.value.onlineAccountId)
         session.state.update { state ->
             state.copy(
                 displayName = displayName,
@@ -27,7 +28,9 @@ class AccountPublisher(private val session: MessagingSession) {
             return
         }
         val controller = session.cloudController ?: return
-        runCatching { controller.publishAccount(session.currentProfile(), session.localPeerId) }
+        runCatching {
+            controller.publishAccount(session.currentProfile(), session.localPeerId)
+        }
             .onSuccess {
                 session.state.update { state -> state.copy(onlineLookupStatus =
                     if (state.profileDiscoverableByPhone) "Phone lookup is active"
@@ -39,7 +42,14 @@ class AccountPublisher(private val session: MessagingSession) {
             .onFailure {
                 session.state.update { state -> state.copy(onlineLookupStatus = "Online update failed") }
                 session.showCloudError(it.localizedMessage ?: "Could not publish your account details.")
+                return
             }
+        // Account lookup remains usable if the server has not enabled device-key publication yet.
+        runCatching {
+            controller.publishNearbyKey(session.localPeerId, NearbyIdentityProof.publicKey(session.dependencies.nearbyIdentities.keys()))
+        }.onFailure {
+            session.showNotice("Nearby identity could not sync online. New device connections may need approval.")
+        }
     }
 
 }
