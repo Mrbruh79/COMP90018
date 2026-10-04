@@ -19,6 +19,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -41,10 +42,12 @@ import androidx.core.net.toUri
 import com.example.blap.R
 import com.example.blap.event.CommunityEvent
 import com.example.blap.event.EventInvitationStatus
+import com.example.blap.event.EventRole
 import com.example.blap.event.EventUiState
 import com.example.blap.event.EventVisibility
 import com.example.blap.event.EventCheckInState
 import com.example.blap.location.GeoCoordinates
+import com.example.blap.ui.components.Avatar
 import com.example.blap.ui.components.ListRow
 import com.example.blap.ui.components.SubScreenHeader
 import com.example.blap.ui.theme.ButtonHeightMedium
@@ -269,9 +272,22 @@ internal fun EventDetailScreen(
             item {
                 Column {
                     HorizontalDivider()
+                    if (membership.isAdmin) {
+                        Text(
+                            "Event Admin Tools",
+                            modifier = Modifier.padding(top = 12.dp),
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        ListRow(
+                            title = "Edit Event",
+                            supportingText = "Change event details",
+                            onClick = onBeginEdit,
+                        )
+                    }
                     ListRow(
                         title = "Announcements",
-                        supportingText = "Read announcements from organizers",
+                        supportingText = if (membership.isAdmin) "Broadcast announcements to attendees"
+                        else "Read announcements from organizers",
                         onClick = onShowAnnouncements,
                     )
                     ListRow(
@@ -279,27 +295,19 @@ internal fun EventDetailScreen(
                         supportingText = "Discuss the event with fellow attendees",
                         onClick = onShowDiscussion,
                     )
+                    if (membership.isAdmin && event.isActive(now)) {
+                        ListRow(
+                            title = "Display Event QR",
+                            supportingText = "Display the QR used for venue check-in",
+                            onClick = onShowCheckInQr,
+                        )
+                    }
                     HorizontalDivider()
                 }
             }
-            item {
-                OutlinedButton(
-                    onClick = { showLeaveConfirmation = true },
-                    modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error,
-                    ),
-                ) { Text(if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) "Leave and Delete Event" else "Leave Event") }
-            }
-            if (membership.isAdmin) {
+            if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) {
                 item {
-                    Text("Find participant", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        "Search active participants using an exact @username or verified account email.",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
-                    )
+                    Text("Participant List", style = MaterialTheme.typography.titleMedium)
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -308,11 +316,11 @@ internal fun EventDetailScreen(
                         OutlinedTextField(
                             value = participantIdentifier,
                             onValueChange = { participantIdentifier = it.take(120) },
-                            label = { Text("Username or email") },
+                            placeholder = { Text("Search participants") },
                             singleLine = true,
                             modifier = Modifier.weight(1f),
                         )
-                        Button(
+                        OutlinedButton(
                             onClick = { onSearchParticipant(participantIdentifier) },
                             enabled = participantIdentifier.isNotBlank() && !state.loading,
                         ) { Text("Search") }
@@ -320,69 +328,40 @@ internal fun EventDetailScreen(
                 }
                 state.participantSearchResult?.let { result ->
                     item(key = "participant-search-${result.membership.userId}") {
-                        Card(modifier = Modifier.fillMaxWidth()) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth().padding(16.dp),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically,
-                            ) {
-                                Column(Modifier.weight(1f)) {
-                                    Text(result.membership.displayName, style = MaterialTheme.typography.titleMedium)
-                                    if (result.username.isNotBlank()) {
-                                        Text("@${result.username}", color = MaterialTheme.colorScheme.primary)
-                                    }
-                                    Text(
-                                        result.membership.role.name.replace('_', ' ').lowercase(),
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                                TextButton(
-                                    onClick = { onRemoveMember(result.membership.userId) },
-                                    enabled = !state.loading,
-                                ) { Text("Remove", color = MaterialTheme.colorScheme.error) }
-                            }
-                        }
+                        ParticipantCard(
+                            name = result.membership.displayName,
+                            role = result.membership.role,
+                            username = result.username,
+                            canPromote = false,
+                            canRemove = result.membership.role != com.example.blap.event.EventRole.PRIMARY_ADMIN,
+                            enabled = !state.loading,
+                            onPromote = { onPromoteMember(result.membership.userId) },
+                            onRemove = { onRemoveMember(result.membership.userId) },
+                        )
                     }
                 }
-            }
-            if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) {
-                item { Text("Event team", style = MaterialTheme.typography.titleMedium) }
                 items(state.members.filter { it.canParticipate }, key = { "member-${it.userId}" }) { member ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(member.displayName)
-                            Text(member.role.name.replace('_', ' ').lowercase(), style = MaterialTheme.typography.bodySmall)
-                        }
-                        if (
-                            member.userId != membership.userId &&
-                            member.role != com.example.blap.event.EventRole.PRIMARY_ADMIN
-                        ) {
-                            Column(horizontalAlignment = Alignment.End) {
-                                if (member.role == com.example.blap.event.EventRole.ATTENDEE) {
-                                    TextButton(onClick = { onPromoteMember(member.userId) }) {
-                                        Text("Make co-admin")
-                                    }
-                                }
-                                TextButton(onClick = { onRemoveMember(member.userId) }) {
-                                    Text("Remove")
-                                }
-                            }
-                        }
-                    }
+                    val actionable = member.userId != membership.userId &&
+                        member.role != com.example.blap.event.EventRole.PRIMARY_ADMIN
+                    ParticipantCard(
+                        name = member.displayName,
+                        role = member.role,
+                        username = "",
+                        canPromote = actionable && member.role == com.example.blap.event.EventRole.ATTENDEE,
+                        canRemove = actionable,
+                        enabled = !state.loading,
+                        onPromote = { onPromoteMember(member.userId) },
+                        onRemove = { onRemoveMember(member.userId) },
+                    )
                 }
             }
             if (event.visibility == EventVisibility.PRIVATE && membership.isAdmin) {
-                item { Text("Invite people", style = MaterialTheme.typography.titleMedium) }
+                item { Text("Invite People", style = MaterialTheme.typography.titleMedium) }
                 item {
                     Text(
-                        "Enter an exact @username or verified CommonGround account email.",
+                        "Invite participants using their username or email",
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodySmall,
+                        style = MaterialTheme.typography.bodyMedium,
                     )
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
@@ -392,11 +371,11 @@ internal fun EventDetailScreen(
                         OutlinedTextField(
                             value = inviteIdentifier,
                             onValueChange = { inviteIdentifier = it.take(120) },
-                            label = { Text("Username or email") },
+                            placeholder = { Text("Search username or email") },
                             singleLine = true,
                             modifier = Modifier.weight(1f),
                         )
-                        Button(
+                        OutlinedButton(
                             onClick = {
                                 onInvite(inviteIdentifier)
                                 inviteIdentifier = ""
@@ -432,8 +411,85 @@ internal fun EventDetailScreen(
                     }
                 }
             }
+            // Last, so it sits below the admin sections rather than between them.
+            item {
+                OutlinedButton(
+                    onClick = { showLeaveConfirmation = true },
+                    modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text(
+                        if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) "Leave and Delete Event"
+                        else "Leave Event",
+                    )
+                }
+            }
         }
     }
+    }
+}
+
+/** Role names users see. Deliberately not derived from the enum, so renaming a constant cannot change the UI. */
+private fun EventRole.label() = when (this) {
+    EventRole.PRIMARY_ADMIN -> "Event Creator"
+    EventRole.CO_ADMIN -> "Co-Admin"
+    EventRole.ATTENDEE -> "Participant"
+}
+
+@Composable
+private fun ParticipantCard(
+    name: String,
+    role: EventRole,
+    username: String,
+    canPromote: Boolean,
+    canRemove: Boolean,
+    enabled: Boolean,
+    onPromote: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Avatar(name, connected = false)
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .padding(start = 12.dp),
+                ) {
+                    Text(name, style = MaterialTheme.typography.titleMedium)
+                    if (username.isNotBlank()) {
+                        Text("@$username", color = MaterialTheme.colorScheme.primary)
+                    }
+                    Text(
+                        role.label(),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (canRemove) {
+                    TextButton(onClick = onRemove, enabled = enabled) {
+                        Text("Remove", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            }
+            if (canPromote) {
+                OutlinedButton(
+                    onClick = onPromote,
+                    enabled = enabled,
+                    modifier = Modifier.fillMaxWidth(),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.primary,
+                    ),
+                ) { Text("Make co-admin") }
+            }
+        }
     }
 }
 
