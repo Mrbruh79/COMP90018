@@ -19,13 +19,13 @@ import androidx.compose.ui.unit.dp
 import com.example.blap.R
 
 @Composable
-internal fun SettingsRow(
+internal fun ListRow(
     title: String,
     supportingText: String,
     onClick: () -> Unit,
     supportingTextColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
 ) {
-    SettingsRowLayout(
+    ListRowLayout(
         title = title,
         supportingText = supportingText,
         supportingTextColor = supportingTextColor,
@@ -36,20 +36,20 @@ internal fun SettingsRow(
 }
 
 @Composable
-internal fun SettingsToggleRow(
+internal fun ListToggleRow(
     title: String,
     supportingText: String,
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
     enabled: Boolean = true,
 ) {
-    SettingsRowLayout(title, supportingText, enabled = enabled) {
+    ListRowLayout(title, supportingText, enabled = enabled) {
         Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
 }
 
 @Composable
-private fun SettingsRowLayout(
+private fun ListRowLayout(
     title: String,
     supportingText: String,
     modifier: Modifier = Modifier,

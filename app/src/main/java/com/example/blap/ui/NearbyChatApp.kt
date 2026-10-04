@@ -476,7 +476,7 @@ private fun AppNavigationBar(
         NavigationBarItem(
             selected = state == ChatScreen.EVENTS,
             onClick = onEvents,
-            icon = { Icon(painterResource(R.drawable.ic_chat), contentDescription = null) },
+            icon = { Icon(painterResource(R.drawable.ic_calendar), contentDescription = null) },
             label = { Text("Events") },
         )
         NavigationBarItem(
