@@ -2,16 +2,22 @@ package com.example.blap.ui.screens.events
 
 import android.Manifest
 import android.content.pm.PackageManager
+import androidx.annotation.DrawableRes
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -19,6 +25,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -33,9 +41,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.blap.R
 import com.example.blap.event.CommunityEvent
 import com.example.blap.event.EventAccessFilter
 import com.example.blap.event.EventDateFilter
@@ -45,6 +57,7 @@ import com.example.blap.event.EventListSection
 import com.example.blap.event.EventUiState
 import com.example.blap.event.EventVisibility
 import com.example.blap.location.LocationFix
+import com.example.blap.ui.theme.ButtonHeightExtraSmall
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -136,41 +149,41 @@ internal fun EventListScreen(
 
     Column(Modifier.fillMaxSize()) {
         Row(
-            Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 16.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                "Find an event or open one you joined",
-                modifier = Modifier
-                    .weight(1f)
-                    .padding(end = 12.dp),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Button(onClick = onBeginCreate) { Text("Create") }
-        }
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            FilterChip(
-                selected = state.eventListSection == EventListSection.DISCOVER,
-                onClick = { onSelectListSection(EventListSection.DISCOVER) },
-                label = { Text("Discover") },
-            )
-            FilterChip(
-                selected = state.eventListSection == EventListSection.MY_EVENTS,
-                onClick = { onSelectListSection(EventListSection.MY_EVENTS) },
-                label = {
-                    Text(
-                        if (state.invitations.isEmpty()) "My events"
-                        else "My events (${state.invitations.size})",
-                    )
-                },
-            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FilterChip(
+                    selected = state.eventListSection == EventListSection.DISCOVER,
+                    onClick = { onSelectListSection(EventListSection.DISCOVER) },
+                    label = { Text("All") },
+                )
+                FilterChip(
+                    selected = state.eventListSection == EventListSection.MY_EVENTS,
+                    onClick = { onSelectListSection(EventListSection.MY_EVENTS) },
+                    label = {
+                        Text(
+                            if (state.invitations.isEmpty()) "My Events"
+                            else "My Events(${state.invitations.size})",
+                        )
+                    },
+                )
+            }
+            Button(
+                onClick = onBeginCreate,
+                modifier = Modifier.height(ButtonHeightExtraSmall),
+                contentPadding = PaddingValues(horizontal = 16.dp),
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_add),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
+                Text("Create Event", modifier = Modifier.padding(start = 6.dp))
+            }
         }
 
         if (state.eventListSection == EventListSection.DISCOVER) {
@@ -227,7 +240,7 @@ internal fun EventListScreen(
                 state.eventListSection == EventListSection.MY_EVENTS &&
                 state.invitations.isNotEmpty()
             ) {
-                item { Text("Private invitations", style = MaterialTheme.typography.titleLarge) }
+                item { Text("Private invitations", style = MaterialTheme.typography.titleMedium) }
                 items(state.invitations, key = { "invite-${it.id}" }) { invitation ->
                     Card(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -255,7 +268,7 @@ internal fun EventListScreen(
                 state.eventListSection == EventListSection.MY_EVENTS &&
                 currentEvents.isNotEmpty()
             ) {
-                item { Text("Active and upcoming", style = MaterialTheme.typography.titleLarge) }
+                item { Text("Active and Upcoming", style = MaterialTheme.typography.titleMedium) }
             }
 
             if (currentEvents.isEmpty()) {
@@ -274,8 +287,8 @@ internal fun EventListScreen(
                         state.discoveryMode == EventDiscoveryMode.CITY ->
                             "No events found for ${state.discoveryCityQuery}."
                         state.discoveryMode == EventDiscoveryMode.SEARCH ->
-                            "No events match your search."
-                        else -> "No upcoming public events found."
+                            "No results found. Please try again."
+                        else -> "No events scheduled near you."
                     }
                     Text(message, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -292,6 +305,7 @@ internal fun EventListScreen(
                     } else {
                         null
                     },
+                    now = listClock,
                     onOpen = { onOpen(event.id) },
                 )
             }
@@ -312,12 +326,12 @@ internal fun EventListScreen(
             }
 
             if (pastEvents.isNotEmpty()) {
-                item { Text("Past events", style = MaterialTheme.typography.titleLarge) }
+                item { Text("Past Event", style = MaterialTheme.typography.titleMedium) }
                 items(pastEvents, key = { "past-${it.id}" }) { event ->
                     EventDiscoveryCard(
                         event = event,
                         distanceMetres = null,
-                        isPast = true,
+                        now = listClock,
                         onOpen = { onOpen(event.id) },
                     )
                 }
@@ -467,7 +481,7 @@ private fun DiscoveryControls(
 private fun EventDiscoveryCard(
     event: CommunityEvent,
     distanceMetres: Double?,
-    isPast: Boolean = false,
+    now: Long,
     onOpen: () -> Unit,
 ) {
     Card(
@@ -476,52 +490,85 @@ private fun EventDiscoveryCard(
         modifier = Modifier.fillMaxWidth(),
     ) {
         Column(Modifier.padding(16.dp)) {
-            Text(event.title, style = MaterialTheme.typography.titleMedium)
-            if (isPast) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(MaterialTheme.shapes.extraSmall)
+                        .background(MaterialTheme.colorScheme.tertiary),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        painterResource(R.drawable.ic_calendar),
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onTertiary,
+                    )
+                }
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .padding(start = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(event.title, style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                        overflow = TextOverflow.Ellipsis)
+                    if (event.description.isNotBlank()) {
+                        Text(
+                            event.description,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
+            eventStatusLabel(event, now)?.let { status ->
                 Text(
-                    "Past event · ended ${formatEventTime(event.endsAt)}",
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.labelMedium,
+                    status,
+                    modifier = Modifier.padding(top = 8.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.secondary,
                 )
             }
-            when {
-                event.visibility == EventVisibility.PRIVATE -> Text(
-                    "Private · invite only",
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelMedium,
-                )
-                event.requiresSignIn -> Text(
-                    "Protected · sign-in required to join",
-                    color = MaterialTheme.colorScheme.primary,
-                    style = MaterialTheme.typography.labelMedium,
-                )
+            HorizontalDivider(Modifier.padding(vertical = 16.dp))
+            EventCardDetail(R.drawable.ic_calendar, formatEventTime(event.startsAt))
+            event.venueName.takeIf(String::isNotBlank)?.let {
+                Spacer(Modifier.height(8.dp))
+                EventCardDetail(R.drawable.ic_location, it)
             }
-            if (event.isDeleted) {
-                Text(
-                    "Deleted · read-only",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.labelMedium,
-                )
+            distanceMetres?.let {
+                Spacer(Modifier.height(8.dp))
+                EventCardDetail(R.drawable.ic_location, formatDistance(it))
             }
-            if (event.description.isNotBlank()) {
-                Text(
-                    event.description,
-                    modifier = Modifier.padding(top = 6.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
-                )
-            }
-            Text(
-                listOfNotNull(
-                    event.venueName.takeIf(String::isNotBlank),
-                    formatEventTime(event.startsAt),
-                    distanceMetres?.let(::formatDistance),
-                ).joinToString("\n"),
-                modifier = Modifier.padding(top = 10.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary,
-            )
         }
+    }
+}
+
+private fun eventStatusLabel(event: CommunityEvent, now: Long): String? = when {
+    event.isDeleted -> "Deleted Event - Read Only"
+    event.endsAt < now -> "Event ended on ${formatEventTime(event.endsAt)}"
+    event.visibility == EventVisibility.PRIVATE -> "Private Event - Invite Only"
+    event.requiresSignIn -> "Protected Event - Signed-in Users Only"
+    else -> null
+}
+
+@Composable
+private fun EventCardDetail(@DrawableRes iconRes: Int, text: String) {
+    Row(verticalAlignment = Alignment.Top) {
+        Icon(
+            painterResource(iconRes),
+            contentDescription = null,
+            modifier = Modifier
+                .padding(top = 2.dp)
+                .size(16.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text,
+            modifier = Modifier.padding(start = 8.dp),
+            style = MaterialTheme.typography.bodyMedium,
+        )
     }
 }
 
