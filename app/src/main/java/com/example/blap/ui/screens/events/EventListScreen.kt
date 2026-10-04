@@ -3,6 +3,8 @@ package com.example.blap.ui.screens.events
 import android.Manifest
 import android.content.pm.PackageManager
 import androidx.annotation.DrawableRes
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FilterList
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -19,24 +21,34 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SheetState
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -51,6 +63,7 @@ import com.example.blap.R
 import com.example.blap.event.CommunityEvent
 import com.example.blap.event.EventAccessFilter
 import com.example.blap.event.EventDateFilter
+import com.example.blap.event.DEFAULT_DISCOVERY_DISTANCE_KM
 import com.example.blap.event.EventDiscoveryMode
 import com.example.blap.event.EventDiscoveryPolicy
 import com.example.blap.event.EventListSection
@@ -58,10 +71,12 @@ import com.example.blap.event.EventUiState
 import com.example.blap.event.EventVisibility
 import com.example.blap.location.LocationFix
 import com.example.blap.ui.theme.ButtonHeightExtraSmall
+import com.example.blap.ui.theme.ButtonHeightMedium
 import java.util.Locale
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun EventListScreen(
     state: EventUiState,
@@ -87,6 +102,13 @@ internal fun EventListScreen(
     var locating by remember { mutableStateOf(false) }
     var locationError by remember { mutableStateOf<String?>(null) }
     var listClock by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    var showFilters by rememberSaveable { mutableStateOf(false) }
+    val filterSheetState = rememberModalBottomSheetState()
+    val filtersActive = state.discoveryMode == EventDiscoveryMode.CITY ||
+        state.discoveryMode == EventDiscoveryMode.SEARCH ||
+        state.discoveryDistanceKm != DEFAULT_DISCOVERY_DISTANCE_KM ||
+        state.discoveryDateFilter != EventDateFilter.ANY_UPCOMING ||
+        state.discoveryAccessFilter != EventAccessFilter.ALL
 
     LaunchedEffect(state.events, state.currentUserId) {
         while (true) {
@@ -160,10 +182,12 @@ internal fun EventListScreen(
                     selected = state.eventListSection == EventListSection.DISCOVER,
                     onClick = { onSelectListSection(EventListSection.DISCOVER) },
                     label = { Text("All") },
+                    colors = sectionChipColors(),
                 )
                 FilterChip(
                     selected = state.eventListSection == EventListSection.MY_EVENTS,
                     onClick = { onSelectListSection(EventListSection.MY_EVENTS) },
+                    colors = sectionChipColors(),
                     label = {
                         Text(
                             if (state.invitations.isEmpty()) "My Events"
@@ -187,16 +211,59 @@ internal fun EventListScreen(
         }
 
         if (state.eventListSection == EventListSection.DISCOVER) {
-            DiscoveryControls(
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = state.discoverySearchQuery,
+                    onValueChange = onSearchQueryChanged,
+                    placeholder = { Text("Search events") },
+                    leadingIcon = {
+                        Icon(painterResource(R.drawable.ic_search), contentDescription = null)
+                    },
+                    singleLine = true,
+                    shape = CircleShape,
+                    modifier = Modifier.weight(1f),
+                )
+                OutlinedButton(
+                    onClick = onSearchEvents,
+                    enabled = state.discoverySearchQuery.trim().length >= 2 && !state.discoveryLoading,
+                ) { Text("Search") }
+            }
+            FilterChip(
+                selected = filtersActive,
+                onClick = { showFilters = true },
+                label = { Text(if (filtersActive) "Filter Active" else "Filter Events") },
+                leadingIcon = {
+                    Icon(
+                        Icons.Default.FilterList,
+                        contentDescription = null,
+                        modifier = Modifier.size(FilterChipDefaults.IconSize),
+                    )
+                },
+                modifier = Modifier.padding(top = 12.dp),
+            )
+        }
+
+        if (showFilters) {
+            EventFilterSheet(
                 state = state,
                 cityQuery = cityQuery,
                 locating = locating,
+                locationError = locationError,
+                filtersActive = filtersActive,
+                sheetState = filterSheetState,
                 onCityQueryChanged = { cityQuery = it.take(80) },
-                onSearchQueryChanged = onSearchQueryChanged,
-                onSearchEvents = onSearchEvents,
-                onClearEventSearch = {
+                onClearFilters = {
                     cityQuery = ""
                     onClearEventSearch()
+                    onDiscoveryDistanceChanged(DEFAULT_DISCOVERY_DISTANCE_KM)
+                    onDateFilterChanged(EventDateFilter.ANY_UPCOMING)
+                    onAccessFilterChanged(EventAccessFilter.ALL)
                 },
                 onDiscoverCity = { onDiscoverCity(cityQuery) },
                 onDiscoverNearby = {
@@ -218,7 +285,7 @@ internal fun EventListScreen(
                 onDiscoveryDistanceChanged = onDiscoveryDistanceChanged,
                 onDateFilterChanged = onDateFilterChanged,
                 onAccessFilterChanged = onAccessFilterChanged,
-                locationError = locationError,
+                onDismiss = { showFilters = false },
             )
         }
 
@@ -340,139 +407,189 @@ internal fun EventListScreen(
     }
 }
 
+/** Outlined buttons carry the accent border and label used elsewhere in the app, dimming together when disabled. */
 @Composable
-private fun DiscoveryControls(
+private fun accentOutlineBorder(enabled: Boolean) = BorderStroke(
+    1.dp,
+    if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+)
+
+@Composable
+private fun accentOutlineColors() = ButtonDefaults.outlinedButtonColors(
+    contentColor = MaterialTheme.colorScheme.primary,
+    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+)
+
+/** The section tabs switch which collection is shown, so they carry more emphasis than the filters below. */
+@Composable
+private fun sectionChipColors() = FilterChipDefaults.filterChipColors(
+    selectedContainerColor = MaterialTheme.colorScheme.primary,
+    selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EventFilterSheet(
     state: EventUiState,
     cityQuery: String,
     locating: Boolean,
+    locationError: String?,
+    filtersActive: Boolean,
+    sheetState: SheetState,
     onCityQueryChanged: (String) -> Unit,
-    onSearchQueryChanged: (String) -> Unit,
-    onSearchEvents: () -> Unit,
-    onClearEventSearch: () -> Unit,
+    onClearFilters: () -> Unit,
     onDiscoverCity: () -> Unit,
     onDiscoverNearby: () -> Unit,
     onDiscoveryDistanceChanged: (Int) -> Unit,
     onDateFilterChanged: (EventDateFilter) -> Unit,
     onAccessFilterChanged: (EventAccessFilter) -> Unit,
-    locationError: String?,
+    onDismiss: () -> Unit,
 ) {
-    Column(
-        modifier = Modifier.padding(top = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            modifier = Modifier
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
-            OutlinedTextField(
-                value = state.discoverySearchQuery,
-                onValueChange = onSearchQueryChanged,
-                label = { Text("Search events or venues") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
-            Button(
-                onClick = onSearchEvents,
-                enabled = state.discoverySearchQuery.trim().length >= 2 && !state.discoveryLoading,
-            ) { Text("Search") }
-        }
-        if (
-            state.discoveryMode == EventDiscoveryMode.SEARCH ||
-            state.discoveryMode == EventDiscoveryMode.CITY
-        ) {
-            OutlinedButton(onClick = onClearEventSearch) { Text("Clear discovery filter") }
-        }
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            OutlinedTextField(
-                value = cityQuery,
-                onValueChange = onCityQueryChanged,
-                label = { Text("City or suburb") },
-                singleLine = true,
-                modifier = Modifier.weight(1f),
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Filter Events", style = MaterialTheme.typography.titleMedium)
+                if (filtersActive) {
+                    OutlinedButton(
+                        onClick = onClearFilters,
+                        modifier = Modifier.height(ButtonHeightExtraSmall),
+                        contentPadding = PaddingValues(horizontal = 16.dp),
+                        border = accentOutlineBorder(true),
+                        colors = accentOutlineColors(),
+                    ) { Text("Clear Filter") }
+                }
+            }
+            HorizontalDivider()
+
+            Text("Location", style = MaterialTheme.typography.bodyMedium)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                OutlinedTextField(
+                    value = cityQuery,
+                    onValueChange = onCityQueryChanged,
+                    placeholder = { Text("Search cities or suburbs") },
+                    singleLine = true,
+                    modifier = Modifier.weight(1f),
+                )
+                val citySearchEnabled = cityQuery.trim().length >= 2 && !state.discoveryLoading
+                OutlinedButton(
+                    onClick = onDiscoverCity,
+                    enabled = citySearchEnabled,
+                    border = accentOutlineBorder(citySearchEnabled),
+                    colors = accentOutlineColors(),
+                ) { Text("Search") }
+            }
             OutlinedButton(
-                onClick = onDiscoverCity,
-                enabled = cityQuery.trim().length >= 2 && !state.discoveryLoading,
-            ) { Text("Apply") }
-            OutlinedButton(onClick = onDiscoverNearby, enabled = !locating) {
+                onClick = onDiscoverNearby,
+                enabled = !locating,
+                modifier = Modifier.fillMaxWidth(),
+                border = accentOutlineBorder(!locating),
+                colors = accentOutlineColors(),
+            ) {
+                Icon(
+                    painterResource(R.drawable.ic_location),
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                )
                 Text(
                     when {
                         locating -> "Locating…"
                         state.discoveryCentre == null -> "Use current location"
-                        else -> "Refresh location"
+                        else -> "Refresh Location"
                     },
+                    modifier = Modifier.padding(start = 8.dp),
                 )
             }
-        }
-        locationError?.let { message ->
-            Text(
-                message,
-                color = MaterialTheme.colorScheme.error,
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
+            locationError?.let { message ->
+                Text(
+                    message,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                )
+            }
 
-        if (state.discoveryCentre != null) {
-            Text("Nearby distance", style = MaterialTheme.typography.labelLarge)
+            if (state.discoveryCentre != null) {
+                HorizontalDivider()
+                Text("Search Radius", style = MaterialTheme.typography.bodyMedium)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    listOf(5, 10, 25, 50).forEach { distance ->
+                        FilterChip(
+                            selected = state.discoveryDistanceKm == distance,
+                            onClick = { onDiscoveryDistanceChanged(distance) },
+                            label = { Text("${distance}km") },
+                        )
+                    }
+                }
+            }
+
+            HorizontalDivider()
+            Text("Event Start Time", style = MaterialTheme.typography.bodyMedium)
             Row(
                 modifier = Modifier.horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
             ) {
-                listOf(5, 10, 25, 50).forEach { distance ->
+                EventDateFilter.values().forEach { filter ->
                     FilterChip(
-                        selected = state.discoveryDistanceKm == distance,
-                        onClick = { onDiscoveryDistanceChanged(distance) },
-                        label = { Text("$distance km") },
+                        selected = state.discoveryDateFilter == filter,
+                        onClick = { onDateFilterChanged(filter) },
+                        label = {
+                            Text(
+                                when (filter) {
+                                    EventDateFilter.ANY_UPCOMING -> "Upcoming"
+                                    EventDateFilter.TODAY -> "Today"
+                                    EventDateFilter.NEXT_7_DAYS -> "Next 7 Days"
+                                },
+                            )
+                        },
                     )
                 }
             }
-        }
 
-        Text("When", style = MaterialTheme.typography.labelLarge)
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            EventDateFilter.values().forEach { filter ->
-                FilterChip(
-                    selected = state.discoveryDateFilter == filter,
-                    onClick = { onDateFilterChanged(filter) },
-                    label = {
-                        Text(
-                            when (filter) {
-                                EventDateFilter.ANY_UPCOMING -> "Upcoming"
-                                EventDateFilter.TODAY -> "Today"
-                                EventDateFilter.NEXT_7_DAYS -> "Next 7 days"
-                            },
-                        )
-                    },
-                )
+            HorizontalDivider()
+            Text("Access Requirements", style = MaterialTheme.typography.bodyMedium)
+            Row(
+                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                EventAccessFilter.values().forEach { filter ->
+                    FilterChip(
+                        selected = state.discoveryAccessFilter == filter,
+                        onClick = { onAccessFilterChanged(filter) },
+                        label = {
+                            Text(
+                                when (filter) {
+                                    EventAccessFilter.ALL -> "All public"
+                                    EventAccessFilter.OPEN -> "Open to guests"
+                                    EventAccessFilter.SIGN_IN_REQUIRED -> "Sign-in required"
+                                },
+                            )
+                        },
+                    )
+                }
             }
-        }
 
-        Text("Access", style = MaterialTheme.typography.labelLarge)
-        Row(
-            modifier = Modifier.horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            EventAccessFilter.values().forEach { filter ->
-                FilterChip(
-                    selected = state.discoveryAccessFilter == filter,
-                    onClick = { onAccessFilterChanged(filter) },
-                    label = {
-                        Text(
-                            when (filter) {
-                                EventAccessFilter.ALL -> "All public"
-                                EventAccessFilter.OPEN -> "Open to guests"
-                                EventAccessFilter.SIGN_IN_REQUIRED -> "Sign-in required"
-                            },
-                        )
-                    },
-                )
-            }
+            HorizontalDivider()
+            Button(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(ButtonHeightMedium),
+            ) { Text("Filter Events") }
         }
     }
 }
