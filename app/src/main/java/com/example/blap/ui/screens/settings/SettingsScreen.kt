@@ -24,8 +24,8 @@ import androidx.compose.ui.unit.dp
 import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.ui.components.Avatar
-import com.example.blap.ui.components.SettingsRow
-import com.example.blap.ui.components.SettingsToggleRow
+import com.example.blap.ui.components.ListRow
+import com.example.blap.ui.components.ListToggleRow
 import com.example.blap.ui.screens.auth.AccountAccess
 import com.example.blap.ui.screens.auth.AuthActions
 
@@ -101,7 +101,7 @@ internal fun SettingsScreen(
             }
         }
         item {
-            SettingsToggleRow(
+            ListToggleRow(
                 title = "Discover Nearby Devices",
                 supportingText = if (nearbyActive) "You are now visible to nearby users."
                 else "Make yourself visible to nearby users",
@@ -110,7 +110,7 @@ internal fun SettingsScreen(
             )
         }
         item {
-            SettingsRow(
+            ListRow(
                 title = "Edit Profile Card",
                 supportingText = "Choose what you share on your contact card",
                 onClick = onEditProfile,
@@ -118,7 +118,7 @@ internal fun SettingsScreen(
         }
         if (!authAccount.isAnonymous) {
             item {
-                SettingsRow(
+                ListRow(
                     title = "Online Account Discovery",
                     supportingText = "Manage your online account information",
                     onClick = onShowDiscoverySettings,
@@ -126,14 +126,14 @@ internal fun SettingsScreen(
             }
         }
         item {
-            SettingsRow(
+            ListRow(
                 title = "Manage Notifications",
                 supportingText = "Choose when you want to be notified by the app",
                 onClick = onShowNotificationSettings,
             )
         }
         item {
-            SettingsRow(
+            ListRow(
                 title = "Manage Android Permissions",
                 supportingText = "Nearby devices, contacts, and location access",
                 onClick = onOpenAppSettings,

@@ -52,6 +52,7 @@ import com.example.blap.chat.ChatUiState
 import com.example.blap.chat.ContactProfile
 import com.example.blap.auth.AuthAccount
 import com.example.blap.auth.PublicAccountProfile
+import com.example.blap.event.EventPage
 import com.example.blap.event.EventUiState
 import com.example.blap.location.LocationFix
 import com.example.blap.location.PlaceSearchResult
@@ -151,6 +152,11 @@ fun NearbyChatApp(
         )
     }
 
+    // Every event page lives under the one EVENTS screen, so the shell checks the event page too:
+    // its sub-pages draw their own back header and should lose the tab chrome like any other sub-screen.
+    val showTabChrome = chatUiState.screen in TOP_LEVEL_SCREENS &&
+        (chatUiState.screen != ChatScreen.EVENTS || eventUiState.page == EventPage.LIST)
+
     Box(
         Modifier
             .fillMaxSize()
@@ -179,7 +185,7 @@ fun NearbyChatApp(
                 }
             },
             bottomBar = {
-                if (chatUiState.screen in TOP_LEVEL_SCREENS) {
+                if (showTabChrome) {
                     AppNavigationBar(
                         state = chatUiState.screen,
                         onChats = chatActions.onBackToChats,
@@ -198,7 +204,7 @@ fun NearbyChatApp(
                     .consumeWindowInsets(padding)
                     .padding(horizontal = 18.dp),
             ) {
-                if (chatUiState.screen in TOP_LEVEL_SCREENS) Header(chatUiState)
+                if (showTabChrome) Header(chatUiState)
                 Crossfade(
                     targetState = chatUiState.screen,
                     animationSpec = tween(180),
@@ -476,7 +482,7 @@ private fun AppNavigationBar(
         NavigationBarItem(
             selected = state == ChatScreen.EVENTS,
             onClick = onEvents,
-            icon = { Icon(painterResource(R.drawable.ic_chat), contentDescription = null) },
+            icon = { Icon(painterResource(R.drawable.ic_calendar), contentDescription = null) },
             label = { Text("Events") },
         )
         NavigationBarItem(

@@ -10,7 +10,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -22,6 +21,7 @@ import com.example.blap.chat.ChatMessage
 import com.example.blap.chat.MessageAuthor
 import com.example.blap.chat.MessageStatus
 import com.example.blap.event.EventUiState
+import com.example.blap.ui.components.SubScreenHeader
 import com.example.blap.ui.components.MessageBubble
 import com.example.blap.ui.components.MessageComposer
 
@@ -31,8 +31,7 @@ internal fun EventChatScreen(state: EventUiState, onSend: (String) -> Unit, onBa
     val membership = state.membership
     val writable = state.activeEventId == state.selectedEventId && state.selectedEvent?.isActive(System.currentTimeMillis()) == true
     Column(Modifier.fillMaxSize()) {
-        TextButton(onClick = onBack) { Text("‹ Event") }
-        Text("On-site chat", style = MaterialTheme.typography.headlineMedium)
+        SubScreenHeader("On-site Chat", onBack)
         Text("Mesh only · not uploaded to the cloud", color = MaterialTheme.colorScheme.onSurfaceVariant)
         LazyColumn(
             modifier = Modifier.weight(1f),
