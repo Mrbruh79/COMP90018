@@ -13,10 +13,10 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DatePicker
 import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
@@ -38,12 +38,12 @@ import androidx.compose.ui.unit.dp
 import com.example.blap.event.CommunityEvent
 import com.example.blap.event.EventCreateRequest
 import com.example.blap.event.EventVisibility
-import com.example.blap.ui.components.ListToggleRow
-import com.example.blap.ui.components.SubScreenHeader
-import com.example.blap.ui.theme.ButtonHeightMedium
 import com.example.blap.location.GeoCoordinates
 import com.example.blap.location.LocationFix
 import com.example.blap.location.PlaceSearchResult
+import com.example.blap.ui.components.ListToggleRow
+import com.example.blap.ui.components.SubScreenHeader
+import com.example.blap.ui.theme.ButtonHeightMedium
 import java.time.Instant
 import java.time.LocalDate
 import java.time.LocalTime
@@ -144,144 +144,144 @@ internal fun EventFormScreen(
     }
 
     Column(Modifier.fillMaxSize()) {
-    SubScreenHeader(if (existing == null) "Create Event" else "Edit Event", onBack)
-    LazyColumn(
-        modifier = Modifier.weight(1f),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 20.dp),
-    ) {
-        item { Text("Event Information", style = MaterialTheme.typography.titleMedium) }
-        item {
-            OutlinedTextField(
-                title,
-                { title = it.take(80) },
-                label = { Text("Event Title") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-        item {
-            OutlinedTextField(
-                description,
-                { description = it.take(1_000) },
-                label = { Text("Description") },
-                modifier = Modifier.fillMaxWidth(),
-                minLines = 3,
-            )
-        }
-        if (existing == null) {
+        SubScreenHeader(if (existing == null) "Create Event" else "Edit Event", onBack)
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 20.dp),
+        ) {
+            item { Text("Event Information", style = MaterialTheme.typography.titleMedium) }
             item {
-                Column {
-                    ListToggleRow(
-                        title = "Private Event",
-                        supportingText = "Hidden from public. Only for invited users.",
-                        checked = privateEvent,
-                        onCheckedChange = {
-                            privateEvent = it
-                            if (it) protectedEvent = false
-                        },
-                    )
-                    if (!privateEvent) {
+                OutlinedTextField(
+                    title,
+                    { title = it.take(80) },
+                    label = { Text("Event Title") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+            item {
+                OutlinedTextField(
+                    description,
+                    { description = it.take(1_000) },
+                    label = { Text("Description") },
+                    modifier = Modifier.fillMaxWidth(),
+                    minLines = 3,
+                )
+            }
+            if (existing == null) {
+                item {
+                    Column {
                         ListToggleRow(
-                            title = "Protected Public Event",
-                            supportingText = "Only signed in users can join the event.",
-                            checked = protectedEvent,
-                            onCheckedChange = { protectedEvent = it },
+                            title = "Private Event",
+                            supportingText = "Hidden from public. Only for invited users.",
+                            checked = privateEvent,
+                            onCheckedChange = {
+                                privateEvent = it
+                                if (it) protectedEvent = false
+                            },
                         )
+                        if (!privateEvent) {
+                            ListToggleRow(
+                                title = "Protected Public Event",
+                                supportingText = "Only signed in users can join the event.",
+                                checked = protectedEvent,
+                                onCheckedChange = { protectedEvent = it },
+                            )
+                        }
                     }
                 }
             }
-        }
-        item { HorizontalDivider() }
-        item {
-            Text("Event Schedule", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Times use ${startsAt.zone.id}.",
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
-        item { Text("Event Start", style = MaterialTheme.typography.titleMedium) }
-        item {
-            PickerField("Start Date", startsAt.format(EVENT_DATE_FORMAT)) { showStartDatePicker = true }
-        }
-        item {
-            PickerField("Start Time", startsAt.format(EVENT_TIME_FORMAT)) { showStartTimePicker = true }
-        }
-        item { Text("Event End", style = MaterialTheme.typography.titleMedium) }
-        item {
-            PickerField("End Date", endsAt.format(EVENT_DATE_FORMAT)) { showEndDatePicker = true }
-        }
-        item {
-            PickerField("End Time", endsAt.format(EVENT_TIME_FORMAT)) { showEndTimePicker = true }
-        }
-        if (!scheduleValid) {
+            item { HorizontalDivider() }
             item {
+                Text("Event Schedule", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "The event must end after it starts and cannot already be over.",
-                    color = MaterialTheme.colorScheme.error,
+                    "Times use ${startsAt.zone.id}.",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
                 )
             }
-        }
-        item { HorizontalDivider() }
-        item { Text("Event Location", style = MaterialTheme.typography.titleMedium) }
-        item {
-            EventLocationPicker(
-                selection = locationSelection,
-                radiusMetres = radius.toDouble(),
-                onSelectionChanged = { locationSelection = it },
-                getCurrentLocation = getCurrentLocation,
-                searchPlaces = searchPlaces,
-                addressForCoordinates = addressForCoordinates,
-            )
-        }
-        item {
-            Text("Check-in Radius: ${radius.toInt()}m")
-            Slider(
-                value = radius,
-                onValueChange = { radius = it },
-                valueRange = 20f..500f,
-                steps = 23,
-            )
-        }
-        item { HorizontalDivider() }
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Button(
-                    onClick = {
-                        val location = requireNotNull(locationSelection)
-                        onSubmit(
-                            EventCreateRequest(
-                                title,
-                                description,
-                                location.venueName,
-                                location.coordinates.latitude,
-                                location.coordinates.longitude,
-                                radius.toDouble(),
-                                startsAt.toInstant().toEpochMilli(),
-                                endsAt.toInstant().toEpochMilli(),
-                                if (privateEvent) EventVisibility.PRIVATE else EventVisibility.PUBLIC,
-                                !privateEvent && protectedEvent,
-                            ),
-                        )
-                    },
-                    enabled = valid && !loading,
-                    modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
-                ) {
+            item { Text("Event Start", style = MaterialTheme.typography.titleMedium) }
+            item {
+                PickerField("Start Date", startsAt.format(EVENT_DATE_FORMAT)) { showStartDatePicker = true }
+            }
+            item {
+                PickerField("Start Time", startsAt.format(EVENT_TIME_FORMAT)) { showStartTimePicker = true }
+            }
+            item { Text("Event End", style = MaterialTheme.typography.titleMedium) }
+            item {
+                PickerField("End Date", endsAt.format(EVENT_DATE_FORMAT)) { showEndDatePicker = true }
+            }
+            item {
+                PickerField("End Time", endsAt.format(EVENT_TIME_FORMAT)) { showEndTimePicker = true }
+            }
+            if (!scheduleValid) {
+                item {
                     Text(
-                        if (loading) {
-                            if (existing == null) "Publishing…" else "Saving…"
-                        } else if (existing == null) "Create Event" else "Update Event",
+                        "The event must end after it starts and cannot already be over.",
+                        color = MaterialTheme.colorScheme.error,
                     )
                 }
-                TextButton(
-                    onClick = onBack,
-                    enabled = !loading,
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text("Cancel") }
+            }
+            item { HorizontalDivider() }
+            item { Text("Event Location", style = MaterialTheme.typography.titleMedium) }
+            item {
+                EventLocationPicker(
+                    selection = locationSelection,
+                    radiusMetres = radius.toDouble(),
+                    onSelectionChanged = { locationSelection = it },
+                    getCurrentLocation = getCurrentLocation,
+                    searchPlaces = searchPlaces,
+                    addressForCoordinates = addressForCoordinates,
+                )
+            }
+            item {
+                Text("Check-in Radius: ${radius.toInt()}m")
+                Slider(
+                    value = radius,
+                    onValueChange = { radius = it },
+                    valueRange = 20f..500f,
+                    steps = 23,
+                )
+            }
+            item { HorizontalDivider() }
+            item {
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Button(
+                        onClick = {
+                            val location = requireNotNull(locationSelection)
+                            onSubmit(
+                                EventCreateRequest(
+                                    title,
+                                    description,
+                                    location.venueName,
+                                    location.coordinates.latitude,
+                                    location.coordinates.longitude,
+                                    radius.toDouble(),
+                                    startsAt.toInstant().toEpochMilli(),
+                                    endsAt.toInstant().toEpochMilli(),
+                                    if (privateEvent) EventVisibility.PRIVATE else EventVisibility.PUBLIC,
+                                    !privateEvent && protectedEvent,
+                                ),
+                            )
+                        },
+                        enabled = valid && !loading,
+                        modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                    ) {
+                        Text(
+                            if (loading) {
+                                if (existing == null) "Publishing…" else "Saving…"
+                            } else if (existing == null) "Create Event" else "Update Event",
+                        )
+                    }
+                    TextButton(
+                        onClick = onBack,
+                        enabled = !loading,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("Cancel") }
+                }
             }
         }
-    }
     }
 }
 

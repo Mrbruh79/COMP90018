@@ -2,11 +2,9 @@ package com.example.blap.ui.screens.events
 
 import android.Manifest
 import android.content.pm.PackageManager
-import androidx.annotation.DrawableRes
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.FilterList
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -20,14 +18,14 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.FilterList
 import androidx.compose.material3.Button
-import androidx.compose.foundation.BorderStroke
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -48,8 +46,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -61,15 +59,17 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import com.example.blap.R
 import com.example.blap.event.CommunityEvent
+import com.example.blap.event.DEFAULT_DISCOVERY_DISTANCE_KM
 import com.example.blap.event.EventAccessFilter
 import com.example.blap.event.EventDateFilter
-import com.example.blap.event.DEFAULT_DISCOVERY_DISTANCE_KM
 import com.example.blap.event.EventDiscoveryMode
 import com.example.blap.event.EventDiscoveryPolicy
 import com.example.blap.event.EventListSection
 import com.example.blap.event.EventUiState
 import com.example.blap.event.EventVisibility
 import com.example.blap.location.LocationFix
+import com.example.blap.ui.components.accentOutlineBorder
+import com.example.blap.ui.components.accentOutlineColors
 import com.example.blap.ui.theme.ButtonHeightExtraSmall
 import com.example.blap.ui.theme.ButtonHeightMedium
 import java.util.Locale
@@ -177,7 +177,14 @@ internal fun EventListScreen(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            // The chips give way at large font scales, so Create Event keeps its full width
+            // instead of overflowing the screen edge.
+            Row(
+                modifier = Modifier
+                    .weight(1f, fill = false)
+                    .horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 FilterChip(
                     selected = state.eventListSection == EventListSection.DISCOVER,
                     onClick = { onSelectListSection(EventListSection.DISCOVER) },
@@ -406,19 +413,6 @@ internal fun EventListScreen(
         }
     }
 }
-
-/** Outlined buttons carry the accent border and label used elsewhere in the app, dimming together when disabled. */
-@Composable
-private fun accentOutlineBorder(enabled: Boolean) = BorderStroke(
-    1.dp,
-    if (enabled) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-)
-
-@Composable
-private fun accentOutlineColors() = ButtonDefaults.outlinedButtonColors(
-    contentColor = MaterialTheme.colorScheme.primary,
-    disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
-)
 
 /** The section tabs switch which collection is shown, so they carry more emphasis than the filters below. */
 @Composable

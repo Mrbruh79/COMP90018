@@ -3,7 +3,6 @@ package com.example.blap.ui.screens.events
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -17,7 +16,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -41,17 +39,19 @@ import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import com.example.blap.R
 import com.example.blap.event.CommunityEvent
+import com.example.blap.event.EventCheckInState
 import com.example.blap.event.EventInvitationStatus
 import com.example.blap.event.EventRole
 import com.example.blap.event.EventUiState
 import com.example.blap.event.EventVisibility
-import com.example.blap.event.EventCheckInState
 import com.example.blap.location.GeoCoordinates
 import com.example.blap.ui.components.Avatar
 import com.example.blap.ui.components.ListRow
 import com.example.blap.ui.components.SubScreenHeader
-import com.example.blap.ui.theme.ButtonHeightMedium
+import com.example.blap.ui.components.accentOutlineBorder
+import com.example.blap.ui.components.accentOutlineColors
 import com.example.blap.ui.screens.events.formatEventTime
+import com.example.blap.ui.theme.ButtonHeightMedium
 
 @Composable
 internal fun EventDetailScreen(
@@ -144,291 +144,285 @@ internal fun EventDetailScreen(
         )
     }
     Column(Modifier.fillMaxSize()) {
-    SubScreenHeader(event.title, onBack)
-    LazyColumn(
-        modifier = Modifier.weight(1f),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(top = 8.dp, bottom = 20.dp),
-    ) {
-        item {
-            Text(event.title, style = MaterialTheme.typography.headlineSmall)
-            if (event.visibility == EventVisibility.PRIVATE) {
-                Text(
-                    "Private · invite only",
-                    modifier = Modifier.padding(top = 6.dp),
-                    color = MaterialTheme.colorScheme.secondary,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            } else if (event.requiresSignIn) {
-                Text(
-                    "Protected public event · sign-in required to join",
-                    modifier = Modifier.padding(top = 6.dp),
-                    color = MaterialTheme.colorScheme.secondary,
-                    fontWeight = FontWeight.SemiBold,
-                )
+        SubScreenHeader(event.title, onBack)
+        LazyColumn(
+            modifier = Modifier.weight(1f),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            contentPadding = PaddingValues(top = 8.dp, bottom = 20.dp),
+        ) {
+            item {
+                Text(event.title, style = MaterialTheme.typography.headlineSmall)
+                if (event.visibility == EventVisibility.PRIVATE) {
+                    Text(
+                        "Private · invite only",
+                        modifier = Modifier.padding(top = 6.dp),
+                        color = MaterialTheme.colorScheme.secondary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                } else if (event.requiresSignIn) {
+                    Text(
+                        "Protected public event · sign-in required to join",
+                        modifier = Modifier.padding(top = 6.dp),
+                        color = MaterialTheme.colorScheme.secondary,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                if (event.isDeleted) {
+                    Text(
+                        "Deleted by the event admin · saved content is read-only",
+                        modifier = Modifier.padding(top = 8.dp),
+                        color = MaterialTheme.colorScheme.error,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
+                Text(event.description, modifier = Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (membership?.canParticipate == true && !event.isDeleted) {
+                    Text(
+                        if (checkedIn) "You are checked in to the event"
+                        else "Check in to access event discussions.",
+                        modifier = Modifier.padding(top = 12.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = if (checkedIn) MaterialTheme.colorScheme.secondary
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
             if (event.isDeleted) {
-                Text(
-                    "Deleted by the event admin · saved content is read-only",
-                    modifier = Modifier.padding(top = 8.dp),
-                    color = MaterialTheme.colorScheme.error,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            }
-            Text(event.description, modifier = Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (membership?.canParticipate == true && !event.isDeleted) {
-                Text(
-                    if (checkedIn) "You are checked in to the event"
-                    else "Check in to access event discussions.",
-                    modifier = Modifier.padding(top = 12.dp),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = if (checkedIn) MaterialTheme.colorScheme.secondary
-                    else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        if (event.isDeleted) {
-            item { EventScheduleAndMap(event, context) }
-            if (membership != null) {
-                if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) {
-                    item {
-                        Button(
-                            onClick = { showDeleteConfirmation = true },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) { Text("Finish deleting event") }
+                item { EventScheduleAndMap(event, context) }
+                if (membership != null) {
+                    if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) {
+                        item {
+                            Button(
+                                onClick = { showDeleteConfirmation = true },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Finish deleting event") }
+                        }
                     }
                 }
-            }
-        } else if (membership == null || membership.leftAt != null) {
-            if (event.visibility == EventVisibility.PUBLIC) {
-                item {
-                    Button(
-                        onClick = onJoin,
-                        enabled = !state.loading,
-                        modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
-                    ) { Text("Join Event") }
-                }
-            } else {
-                item { Text("An accepted in-app invitation is required to join this event.") }
-            }
-            item { EventScheduleAndMap(event, context) }
-        } else {
-            if (event.isActive(now)) {
-                if (checkedIn) {
+            } else if (membership == null || membership.leftAt != null) {
+                if (event.visibility == EventVisibility.PUBLIC) {
                     item {
                         Button(
-                            onClick = onShowSavedChat,
+                            onClick = onJoin,
+                            enabled = !state.loading,
                             modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
-                        ) {
-                            Icon(
-                                painterResource(R.drawable.ic_chat),
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp),
-                            )
-                            Text("On-site Chat", modifier = Modifier.padding(start = 8.dp))
+                        ) { Text("Join Event") }
+                    }
+                } else {
+                    item { Text("An accepted in-app invitation is required to join this event.") }
+                }
+                item { EventScheduleAndMap(event, context) }
+            } else {
+                if (event.isActive(now)) {
+                    if (checkedIn) {
+                        item {
+                            Button(
+                                onClick = onShowSavedChat,
+                                modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                            ) {
+                                Icon(
+                                    painterResource(R.drawable.ic_chat),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Text("On-site Chat", modifier = Modifier.padding(start = 8.dp))
+                            }
+                        }
+                    } else {
+                        item {
+                            Button(
+                                onClick = onRequestGpsEntry,
+                                modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                            ) { Text("Check in to Event") }
+                        }
+                        item {
+                            OutlinedButton(
+                                onClick = onScanCheckInQr,
+                                modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                                border = accentOutlineBorder(),
+                                colors = accentOutlineColors(),
+                            ) {
+                                Icon(
+                                    painterResource(R.drawable.ic_scan_qr),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                                Text("Check-in with Event QR", modifier = Modifier.padding(start = 8.dp))
+                            }
                         }
                     }
                 } else {
                     item {
-                        Button(
-                            onClick = onRequestGpsEntry,
-                            modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
-                        ) { Text("Check in to Event") }
-                    }
-                    item {
                         OutlinedButton(
-                            onClick = onScanCheckInQr,
+                            onClick = onShowSavedChat,
                             modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.primary,
-                            ),
-                        ) {
-                            Icon(
-                                painterResource(R.drawable.ic_scan_qr),
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp),
+                            border = accentOutlineBorder(),
+                            colors = accentOutlineColors(),
+                        ) { Text("View saved On-site Chat") }
+                    }
+                }
+                item { EventScheduleAndMap(event, context) }
+                // ListRow brings its own vertical padding, so the rows and their dividers share one
+                // item without extra list spacing — otherwise each divider sits 24dp from the rows
+                // above or below it but only 12dp from everything else.
+                item {
+                    Column {
+                        HorizontalDivider()
+                        if (membership.isAdmin) {
+                            Text(
+                                "Event Admin Tools",
+                                modifier = Modifier.padding(top = 12.dp),
+                                style = MaterialTheme.typography.titleMedium,
                             )
-                            Text("Check-in with Event QR", modifier = Modifier.padding(start = 8.dp))
+                            ListRow(
+                                title = "Edit Event",
+                                supportingText = "Change event details",
+                                onClick = onBeginEdit,
+                            )
+                        }
+                        ListRow(
+                            title = "Announcements",
+                            supportingText = if (membership.isAdmin) "Broadcast announcements to attendees"
+                            else "Read announcements from organizers",
+                            onClick = onShowAnnouncements,
+                        )
+                        ListRow(
+                            title = "Event discussion",
+                            supportingText = "Discuss the event with fellow attendees",
+                            onClick = onShowDiscussion,
+                        )
+                        if (membership.isAdmin && event.isActive(now)) {
+                            ListRow(
+                                title = "Display Event QR",
+                                supportingText = "Display the QR used for venue check-in",
+                                onClick = onShowCheckInQr,
+                            )
+                        }
+                        HorizontalDivider()
+                    }
+                }
+                if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) {
+                    item {
+                        Text("Participant List", style = MaterialTheme.typography.titleMedium)
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            OutlinedTextField(
+                                value = participantIdentifier,
+                                onValueChange = { participantIdentifier = it.take(120) },
+                                placeholder = { Text("Search participants") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                            OutlinedButton(
+                                onClick = { onSearchParticipant(participantIdentifier) },
+                                enabled = participantIdentifier.isNotBlank() && !state.loading,
+                            ) { Text("Search") }
+                        }
+                    }
+                    state.participantSearchResult?.let { result ->
+                        item(key = "participant-search-${result.membership.userId}") {
+                            ParticipantCard(
+                                name = result.membership.displayName,
+                                role = result.membership.role,
+                                username = result.username,
+                                canPromote = false,
+                                canRemove = result.membership.role != com.example.blap.event.EventRole.PRIMARY_ADMIN,
+                                enabled = !state.loading,
+                                onPromote = { onPromoteMember(result.membership.userId) },
+                                onRemove = { onRemoveMember(result.membership.userId) },
+                            )
+                        }
+                    }
+                    items(state.members.filter { it.canParticipate }, key = { "member-${it.userId}" }) { member ->
+                        val actionable = member.userId != membership.userId &&
+                            member.role != com.example.blap.event.EventRole.PRIMARY_ADMIN
+                        ParticipantCard(
+                            name = member.displayName,
+                            role = member.role,
+                            username = "",
+                            canPromote = actionable && member.role == com.example.blap.event.EventRole.ATTENDEE,
+                            canRemove = actionable,
+                            enabled = !state.loading,
+                            onPromote = { onPromoteMember(member.userId) },
+                            onRemove = { onRemoveMember(member.userId) },
+                        )
+                    }
+                }
+                if (event.visibility == EventVisibility.PRIVATE && membership.isAdmin) {
+                    item { Text("Invite People", style = MaterialTheme.typography.titleMedium) }
+                    item {
+                        Text(
+                            "Invite participants using their username or email",
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            OutlinedTextField(
+                                value = inviteIdentifier,
+                                onValueChange = { inviteIdentifier = it.take(120) },
+                                placeholder = { Text("Search username or email") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                            )
+                            OutlinedButton(
+                                onClick = {
+                                    onInvite(inviteIdentifier)
+                                    inviteIdentifier = ""
+                                },
+                                enabled = inviteIdentifier.isNotBlank() && !state.loading,
+                            ) { Text("Invite") }
+                        }
+                    }
+                    items(state.eventInvitations, key = { "outgoing-${it.id}" }) { invitation ->
+                        val invitationStatus = if (
+                            invitation.status == EventInvitationStatus.ACCEPTED &&
+                            invitation.recipientUid !in event.memberIds
+                        ) {
+                            "left"
+                        } else {
+                            invitation.status.name.lowercase()
+                        }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(invitation.recipientName.ifBlank { "@${invitation.recipientUsername}" })
+                                Text(
+                                    "@${invitation.recipientUsername} · $invitationStatus",
+                                    style = MaterialTheme.typography.bodySmall,
+                                )
+                            }
+                            if (invitation.status == EventInvitationStatus.PENDING) {
+                                TextButton(onClick = { onRevokeInvitation(invitation.id) }) { Text("Revoke") }
+                            }
                         }
                     }
                 }
-            } else {
+                // Last, so it sits below the admin sections rather than between them.
                 item {
                     OutlinedButton(
-                        onClick = onShowSavedChat,
+                        onClick = { showLeaveConfirmation = true },
                         modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MaterialTheme.colorScheme.primary,
-                        ),
-                    ) { Text("View saved On-site Chat") }
-                }
-            }
-            item { EventScheduleAndMap(event, context) }
-            // ListRow brings its own vertical padding, so the rows and their dividers share one
-            // item without extra list spacing — otherwise each divider sits 24dp from the rows
-            // above or below it but only 12dp from everything else.
-            item {
-                Column {
-                    HorizontalDivider()
-                    if (membership.isAdmin) {
+                        border = accentOutlineBorder(accent = MaterialTheme.colorScheme.error),
+                        colors = accentOutlineColors(accent = MaterialTheme.colorScheme.error),
+                    ) {
                         Text(
-                            "Event Admin Tools",
-                            modifier = Modifier.padding(top = 12.dp),
-                            style = MaterialTheme.typography.titleMedium,
-                        )
-                        ListRow(
-                            title = "Edit Event",
-                            supportingText = "Change event details",
-                            onClick = onBeginEdit,
+                            if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) "Leave and Delete Event"
+                            else "Leave Event",
                         )
                     }
-                    ListRow(
-                        title = "Announcements",
-                        supportingText = if (membership.isAdmin) "Broadcast announcements to attendees"
-                        else "Read announcements from organizers",
-                        onClick = onShowAnnouncements,
-                    )
-                    ListRow(
-                        title = "Event discussion",
-                        supportingText = "Discuss the event with fellow attendees",
-                        onClick = onShowDiscussion,
-                    )
-                    if (membership.isAdmin && event.isActive(now)) {
-                        ListRow(
-                            title = "Display Event QR",
-                            supportingText = "Display the QR used for venue check-in",
-                            onClick = onShowCheckInQr,
-                        )
-                    }
-                    HorizontalDivider()
-                }
-            }
-            if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) {
-                item {
-                    Text("Participant List", style = MaterialTheme.typography.titleMedium)
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedTextField(
-                            value = participantIdentifier,
-                            onValueChange = { participantIdentifier = it.take(120) },
-                            placeholder = { Text("Search participants") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                        )
-                        OutlinedButton(
-                            onClick = { onSearchParticipant(participantIdentifier) },
-                            enabled = participantIdentifier.isNotBlank() && !state.loading,
-                        ) { Text("Search") }
-                    }
-                }
-                state.participantSearchResult?.let { result ->
-                    item(key = "participant-search-${result.membership.userId}") {
-                        ParticipantCard(
-                            name = result.membership.displayName,
-                            role = result.membership.role,
-                            username = result.username,
-                            canPromote = false,
-                            canRemove = result.membership.role != com.example.blap.event.EventRole.PRIMARY_ADMIN,
-                            enabled = !state.loading,
-                            onPromote = { onPromoteMember(result.membership.userId) },
-                            onRemove = { onRemoveMember(result.membership.userId) },
-                        )
-                    }
-                }
-                items(state.members.filter { it.canParticipate }, key = { "member-${it.userId}" }) { member ->
-                    val actionable = member.userId != membership.userId &&
-                        member.role != com.example.blap.event.EventRole.PRIMARY_ADMIN
-                    ParticipantCard(
-                        name = member.displayName,
-                        role = member.role,
-                        username = "",
-                        canPromote = actionable && member.role == com.example.blap.event.EventRole.ATTENDEE,
-                        canRemove = actionable,
-                        enabled = !state.loading,
-                        onPromote = { onPromoteMember(member.userId) },
-                        onRemove = { onRemoveMember(member.userId) },
-                    )
-                }
-            }
-            if (event.visibility == EventVisibility.PRIVATE && membership.isAdmin) {
-                item { Text("Invite People", style = MaterialTheme.typography.titleMedium) }
-                item {
-                    Text(
-                        "Invite participants using their username or email",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedTextField(
-                            value = inviteIdentifier,
-                            onValueChange = { inviteIdentifier = it.take(120) },
-                            placeholder = { Text("Search username or email") },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
-                        )
-                        OutlinedButton(
-                            onClick = {
-                                onInvite(inviteIdentifier)
-                                inviteIdentifier = ""
-                            },
-                            enabled = inviteIdentifier.isNotBlank() && !state.loading,
-                        ) { Text("Invite") }
-                    }
-                }
-                items(state.eventInvitations, key = { "outgoing-${it.id}" }) { invitation ->
-                    val invitationStatus = if (
-                        invitation.status == EventInvitationStatus.ACCEPTED &&
-                        invitation.recipientUid !in event.memberIds
-                    ) {
-                        "left"
-                    } else {
-                        invitation.status.name.lowercase()
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(invitation.recipientName.ifBlank { "@${invitation.recipientUsername}" })
-                            Text(
-                                "@${invitation.recipientUsername} · $invitationStatus",
-                                style = MaterialTheme.typography.bodySmall,
-                            )
-                        }
-                        if (invitation.status == EventInvitationStatus.PENDING) {
-                            TextButton(onClick = { onRevokeInvitation(invitation.id) }) { Text("Revoke") }
-                        }
-                    }
-                }
-            }
-            // Last, so it sits below the admin sections rather than between them.
-            item {
-                OutlinedButton(
-                    onClick = { showLeaveConfirmation = true },
-                    modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.error,
-                    ),
-                ) {
-                    Text(
-                        if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) "Leave and Delete Event"
-                        else "Leave Event",
-                    )
                 }
             }
         }
-    }
     }
 }
 
@@ -483,10 +477,8 @@ private fun ParticipantCard(
                     onClick = onPromote,
                     enabled = enabled,
                     modifier = Modifier.fillMaxWidth(),
-                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.primary,
-                    ),
+                    border = accentOutlineBorder(),
+                    colors = accentOutlineColors(),
                 ) { Text("Make co-admin") }
             }
         }
@@ -508,10 +500,8 @@ private fun EventScheduleAndMap(event: CommunityEvent, context: Context) {
         OutlinedButton(
             onClick = { openEventInMaps(context, event) },
             modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
-            colors = ButtonDefaults.outlinedButtonColors(
-                contentColor = MaterialTheme.colorScheme.primary,
-            ),
+            border = accentOutlineBorder(),
+            colors = accentOutlineColors(),
         ) {
             Icon(
                 painterResource(R.drawable.ic_location),
