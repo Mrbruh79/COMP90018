@@ -3,6 +3,7 @@ package com.example.blap.ui.screens.events
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -11,11 +12,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
+import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -29,15 +34,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
+import com.example.blap.R
 import com.example.blap.event.CommunityEvent
 import com.example.blap.event.EventInvitationStatus
 import com.example.blap.event.EventUiState
 import com.example.blap.event.EventVisibility
 import com.example.blap.event.EventCheckInState
 import com.example.blap.location.GeoCoordinates
+import com.example.blap.ui.components.ListRow
+import com.example.blap.ui.components.SubScreenHeader
+import com.example.blap.ui.theme.ButtonHeightMedium
 import com.example.blap.ui.screens.events.formatEventTime
 
 @Composable
@@ -130,26 +140,27 @@ internal fun EventDetailScreen(
             },
         )
     }
+    Column(Modifier.fillMaxSize()) {
+    SubScreenHeader(event.title, onBack)
     LazyColumn(
-        modifier = Modifier.fillMaxSize(),
+        modifier = Modifier.weight(1f),
         verticalArrangement = Arrangement.spacedBy(12.dp),
-        contentPadding = PaddingValues(bottom = 20.dp),
+        contentPadding = PaddingValues(top = 8.dp, bottom = 20.dp),
     ) {
-        item { TextButton(onClick = onBack) { Text("‹ All events") } }
         item {
-            Text(event.title, style = MaterialTheme.typography.headlineMedium)
+            Text(event.title, style = MaterialTheme.typography.headlineSmall)
             if (event.visibility == EventVisibility.PRIVATE) {
                 Text(
                     "Private · invite only",
                     modifier = Modifier.padding(top = 6.dp),
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.secondary,
                     fontWeight = FontWeight.SemiBold,
                 )
             } else if (event.requiresSignIn) {
                 Text(
                     "Protected public event · sign-in required to join",
                     modifier = Modifier.padding(top = 6.dp),
-                    color = MaterialTheme.colorScheme.primary,
+                    color = MaterialTheme.colorScheme.secondary,
                     fontWeight = FontWeight.SemiBold,
                 )
             }
@@ -162,35 +173,19 @@ internal fun EventDetailScreen(
                 )
             }
             Text(event.description, modifier = Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Text(
-                if (checkedIn) "Checked in · Nearby event sync available"
-                else if (membership?.canParticipate == true) "Not checked in to the venue"
-                else "Not joined",
-                modifier = Modifier.padding(top = 8.dp),
-                style = MaterialTheme.typography.bodySmall,
-                color = if (checkedIn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (event.venueName.isNotBlank()) {
+            if (membership?.canParticipate == true && !event.isDeleted) {
                 Text(
-                    event.venueName,
-                    modifier = Modifier.padding(top = 10.dp),
-                    fontWeight = FontWeight.SemiBold,
+                    if (checkedIn) "You are checked in to the event"
+                    else "Check in to access event discussions.",
+                    modifier = Modifier.padding(top = 12.dp),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (checkedIn) MaterialTheme.colorScheme.secondary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            Text(
-                "${formatEventTime(event.startsAt)} – ${formatEventTime(event.endsAt)}",
-                modifier = Modifier.padding(top = 10.dp),
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-        item {
-            EventVenueMap(event)
-            OutlinedButton(
-                onClick = { openEventInMaps(context, event) },
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-            ) { Text("Open in maps") }
         }
         if (event.isDeleted) {
+            item { EventScheduleAndMap(event, context) }
             if (membership != null) {
                 if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) {
                     item {
@@ -204,45 +199,98 @@ internal fun EventDetailScreen(
         } else if (membership == null || membership.leftAt != null) {
             if (event.visibility == EventVisibility.PUBLIC) {
                 item {
-                    Button(onClick = onJoin, enabled = !state.loading, modifier = Modifier.fillMaxWidth()) {
-                        Text("Join event")
-                    }
+                    Button(
+                        onClick = onJoin,
+                        enabled = !state.loading,
+                        modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                    ) { Text("Join Event") }
                 }
             } else {
                 item { Text("An accepted in-app invitation is required to join this event.") }
             }
+            item { EventScheduleAndMap(event, context) }
         } else {
-            if (membership.isAdmin) {
-                item {
-                    OutlinedButton(onClick = onBeginEdit, modifier = Modifier.fillMaxWidth()) {
-                        Text("Edit event")
-                    }
-                }
-            }
-            item { Button(onClick = onShowAnnouncements, modifier = Modifier.fillMaxWidth()) { Text("Announcements") } }
-            item {
-                Button(onClick = onShowDiscussion, modifier = Modifier.fillMaxWidth()) {
-                    Text("Event discussion")
-                }
-            }
             if (event.isActive(now)) {
                 if (checkedIn) {
-                    item { Button(onClick = onShowSavedChat, modifier = Modifier.fillMaxWidth()) { Text("On-site chat") } }
+                    item {
+                        Button(
+                            onClick = onShowSavedChat,
+                            modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                        ) {
+                            Icon(
+                                painterResource(R.drawable.ic_chat),
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Text("On-site Chat", modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
                 } else {
-                    item { OutlinedButton(onClick = onRequestGpsEntry, modifier = Modifier.fillMaxWidth()) { Text("Retry GPS check-in") } }
-                    item { OutlinedButton(onClick = onScanCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Check in with venue QR") } }
-                }
-                if (membership.isAdmin) {
-                    item { OutlinedButton(onClick = onShowCheckInQr, modifier = Modifier.fillMaxWidth()) { Text("Display venue check-in QR") } }
+                    item {
+                        Button(
+                            onClick = onRequestGpsEntry,
+                            modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                        ) { Text("Check in to Event") }
+                    }
+                    item {
+                        OutlinedButton(
+                            onClick = onScanCheckInQr,
+                            modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.primary,
+                            ),
+                        ) {
+                            Icon(
+                                painterResource(R.drawable.ic_scan_qr),
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                            )
+                            Text("Check-in with Event QR", modifier = Modifier.padding(start = 8.dp))
+                        }
+                    }
                 }
             } else {
-                item { OutlinedButton(onClick = onShowSavedChat, modifier = Modifier.fillMaxWidth()) { Text("View saved on-site chat") } }
+                item {
+                    OutlinedButton(
+                        onClick = onShowSavedChat,
+                        modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.primary,
+                        ),
+                    ) { Text("View saved On-site Chat") }
+                }
+            }
+            item { EventScheduleAndMap(event, context) }
+            // ListRow brings its own vertical padding, so the rows and their dividers share one
+            // item without extra list spacing — otherwise each divider sits 24dp from the rows
+            // above or below it but only 12dp from everything else.
+            item {
+                Column {
+                    HorizontalDivider()
+                    ListRow(
+                        title = "Announcements",
+                        supportingText = "Read announcements from organizers",
+                        onClick = onShowAnnouncements,
+                    )
+                    ListRow(
+                        title = "Event discussion",
+                        supportingText = "Discuss the event with fellow attendees",
+                        onClick = onShowDiscussion,
+                    )
+                    HorizontalDivider()
+                }
             }
             item {
                 OutlinedButton(
                     onClick = { showLeaveConfirmation = true },
-                    modifier = Modifier.fillMaxWidth(),
-                ) { Text(if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) "Leave and delete event" else "Leave event") }
+                    modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) { Text(if (membership.role == com.example.blap.event.EventRole.PRIMARY_ADMIN) "Leave and Delete Event" else "Leave Event") }
             }
             if (membership.isAdmin) {
                 item {
@@ -327,13 +375,6 @@ internal fun EventDetailScreen(
                         }
                     }
                 }
-                item {
-                    TextButton(
-                        onClick = { showDeleteConfirmation = true },
-                        enabled = !state.loading,
-                        modifier = Modifier.fillMaxWidth(),
-                    ) { Text("Delete event", color = MaterialTheme.colorScheme.error) }
-                }
             }
             if (event.visibility == EventVisibility.PRIVATE && membership.isAdmin) {
                 item { Text("Invite people", style = MaterialTheme.typography.titleMedium) }
@@ -391,6 +432,37 @@ internal fun EventDetailScreen(
                     }
                 }
             }
+        }
+    }
+    }
+}
+
+@Composable
+private fun EventScheduleAndMap(event: CommunityEvent, context: Context) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        HorizontalDivider()
+        EventIconRow(
+            R.drawable.ic_calendar,
+            "${formatEventTime(event.startsAt)} - ${formatEventTime(event.endsAt)}",
+        )
+        if (event.venueName.isNotBlank()) {
+            EventIconRow(R.drawable.ic_location, event.venueName)
+        }
+        EventVenueMap(event)
+        OutlinedButton(
+            onClick = { openEventInMaps(context, event) },
+            modifier = Modifier.fillMaxWidth().height(ButtonHeightMedium),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = MaterialTheme.colorScheme.primary,
+            ),
+        ) {
+            Icon(
+                painterResource(R.drawable.ic_location),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Text("Open in Maps", modifier = Modifier.padding(start = 8.dp))
         }
     }
 }

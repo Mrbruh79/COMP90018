@@ -13,7 +13,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -24,6 +23,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.blap.event.EventUiState
 import com.example.blap.event.EventCheckInState
+import com.example.blap.ui.components.SubScreenHeader
 import com.example.blap.ui.components.MessageComposer
 import com.example.blap.ui.screens.events.formatEventTime
 
@@ -35,8 +35,7 @@ internal fun EventAnnouncementsScreen(
 ) {
     var draft by remember(state.selectedEventId) { mutableStateOf("") }
     Column(Modifier.fillMaxSize()) {
-        TextButton(onClick = onBack) { Text("‹ Event") }
-        Text("Announcements", style = MaterialTheme.typography.headlineMedium)
+        SubScreenHeader("Announcements", onBack)
         Text(
             if (state.selectedEvent?.let { EventCheckInState.isCheckedIn(it, state.membership, System.currentTimeMillis()) } == true)
                 "Checked in · keep Nearby on for event mesh sync"

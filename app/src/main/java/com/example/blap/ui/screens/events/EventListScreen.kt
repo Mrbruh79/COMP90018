@@ -649,14 +649,14 @@ private fun EventDiscoveryCard(
                 )
             }
             HorizontalDivider(Modifier.padding(vertical = 16.dp))
-            EventCardDetail(R.drawable.ic_calendar, formatEventTime(event.startsAt))
+            EventIconRow(R.drawable.ic_calendar, formatEventTime(event.startsAt))
             event.venueName.takeIf(String::isNotBlank)?.let {
                 Spacer(Modifier.height(8.dp))
-                EventCardDetail(R.drawable.ic_location, it)
+                EventIconRow(R.drawable.ic_location, it)
             }
             distanceMetres?.let {
                 Spacer(Modifier.height(8.dp))
-                EventCardDetail(R.drawable.ic_location, formatDistance(it))
+                EventIconRow(R.drawable.ic_location, formatDistance(it))
             }
         }
     }
@@ -668,25 +668,6 @@ private fun eventStatusLabel(event: CommunityEvent, now: Long): String? = when {
     event.visibility == EventVisibility.PRIVATE -> "Private Event - Invite Only"
     event.requiresSignIn -> "Protected Event - Signed-in Users Only"
     else -> null
-}
-
-@Composable
-private fun EventCardDetail(@DrawableRes iconRes: Int, text: String) {
-    Row(verticalAlignment = Alignment.Top) {
-        Icon(
-            painterResource(iconRes),
-            contentDescription = null,
-            modifier = Modifier
-                .padding(top = 2.dp)
-                .size(16.dp),
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Text(
-            text,
-            modifier = Modifier.padding(start = 8.dp),
-            style = MaterialTheme.typography.bodyMedium,
-        )
-    }
 }
 
 private fun formatDistance(distanceMetres: Double): String = if (distanceMetres < 1_000) {

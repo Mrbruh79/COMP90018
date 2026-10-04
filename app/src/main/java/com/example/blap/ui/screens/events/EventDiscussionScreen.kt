@@ -30,6 +30,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.blap.event.EventDiscussionComment
 import com.example.blap.event.EventUiState
+import com.example.blap.ui.components.SubScreenHeader
 import com.example.blap.ui.screens.events.formatEventTime
 
 @Composable
@@ -49,8 +50,7 @@ internal fun EventDiscussionScreen(
     var draft by remember(event.id) { mutableStateOf("") }
 
     Column(Modifier.fillMaxSize()) {
-        TextButton(onClick = onBack) { Text("‹ Event") }
-        Text("Event discussion", style = MaterialTheme.typography.headlineMedium)
+        SubScreenHeader("Event discussion", onBack)
         Text(
             "Online comments for event members · replies can be nested",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -128,8 +128,7 @@ internal fun EventDiscussionThreadScreen(
         }
 
     Column(Modifier.fillMaxSize()) {
-        TextButton(onClick = onBack) { Text("‹ Discussion") }
-        Text("Thread", style = MaterialTheme.typography.headlineMedium)
+        SubScreenHeader("Thread", onBack)
         LazyColumn(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(10.dp),
