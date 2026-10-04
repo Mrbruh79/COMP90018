@@ -73,22 +73,22 @@ fun EventHub(
             getCurrentLocation = getCurrentLocation,
         )
         EventPage.CREATE -> EventFormScreen(
-            null,
-            state.loading,
-            actions.onCreate,
-            actions.onBack,
-            getCurrentLocation,
-            searchPlaces,
-            addressForCoordinates,
+            existing = null,
+            loading = state.loading,
+            onSubmit = actions.onCreate,
+            onBack = actions.onBack,
+            getCurrentLocation = getCurrentLocation,
+            searchPlaces = searchPlaces,
+            addressForCoordinates = addressForCoordinates,
         )
         EventPage.EDIT -> EventFormScreen(
-            state.selectedEvent,
-            state.loading,
-            actions.onUpdate,
-            actions.onBack,
-            getCurrentLocation,
-            searchPlaces,
-            addressForCoordinates,
+            existing = state.selectedEvent,
+            loading = state.loading,
+            onSubmit = actions.onUpdate,
+            onBack = actions.onBack,
+            getCurrentLocation = getCurrentLocation,
+            searchPlaces = searchPlaces,
+            addressForCoordinates = addressForCoordinates,
         )
         EventPage.DETAIL -> EventDetailScreen(
             state = state,

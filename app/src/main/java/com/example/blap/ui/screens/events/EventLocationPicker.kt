@@ -4,12 +4,16 @@ import android.Manifest
 import android.content.pm.PackageManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Card
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -23,9 +27,11 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import com.example.blap.R
 import com.example.blap.location.GeoCoordinates
 import com.example.blap.location.LocationFix
 import com.example.blap.location.PlaceSearchResult
@@ -110,9 +116,8 @@ internal fun EventLocationPicker(
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        Text("Event location", style = MaterialTheme.typography.titleMedium)
         Text(
-            "Search for a venue, use your current position, or tap the map to place the pin.",
+            "Search for the venue or pin the location on the map.",
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Row(
@@ -122,7 +127,7 @@ internal fun EventLocationPicker(
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = { searchQuery = it.take(MAX_VENUE_NAME_LENGTH) },
-                label = { Text("Venue or address") },
+                placeholder = { Text("Search location") },
                 singleLine = true,
                 modifier = Modifier.weight(1f),
             )
@@ -167,8 +172,25 @@ internal fun EventLocationPicker(
             },
             enabled = !locating,
             modifier = Modifier.fillMaxWidth(),
+            border = BorderStroke(
+                1.dp,
+                if (locating) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.primary,
+            ),
+            colors = ButtonDefaults.outlinedButtonColors(
+                contentColor = MaterialTheme.colorScheme.primary,
+                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+            ),
         ) {
-            Text(if (locating) "Finding location…" else "Use my location")
+            Icon(
+                painterResource(R.drawable.ic_location),
+                contentDescription = null,
+                modifier = Modifier.size(18.dp),
+            )
+            Text(
+                if (locating) "Finding location…" else "Use Current Location",
+                modifier = Modifier.padding(start = 8.dp),
+            )
         }
         OsmEventMap(
             point = selection?.coordinates,
@@ -188,7 +210,7 @@ internal fun EventLocationPicker(
                 onValueChange = { name ->
                     onSelectionChanged(current.copy(venueName = name.take(MAX_VENUE_NAME_LENGTH)))
                 },
-                label = { Text("Venue or address") },
+                label = { Text("Venue Address") },
                 modifier = Modifier.fillMaxWidth(),
             )
         }
