@@ -13,6 +13,7 @@ class EventCoordinator(
     private val adminKeyStore: EventAdminKeyStore,
     private val identityStore: IdentityStore,
     private val nearbyController: EventMeshGateway,
+    private val notifier: EventNotifier,
     private val scope: CoroutineScope,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -31,6 +32,7 @@ class EventCoordinator(
         remoteRepository = remoteRepository,
         adminKeyStore = adminKeyStore,
         meshGateway = nearbyController,
+        notifier = notifier,
         scope = scope,
         currentState = { _uiState.value },
         updateState = { transform -> _uiState.update(transform) },

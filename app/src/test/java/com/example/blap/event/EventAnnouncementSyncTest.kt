@@ -151,7 +151,7 @@ class EventAnnouncementSyncTest {
         }
         val lifecycle = EventLifecycleCoordinator(store, remote, keyStore, identity, mesh, scope,
             { state }, { transform -> state = transform(state) }, {}, { 200L })
-        val onSite = EventOnSiteCoordinator(store, remote, keyStore, mesh, scope,
+        val onSite = EventOnSiteCoordinator(store, remote, keyStore, mesh, NoopEventNotifier, scope,
             { state }, { transform -> state = transform(state) }, {}, { 200L })
 
         fun announcement(): EventAnnouncement {

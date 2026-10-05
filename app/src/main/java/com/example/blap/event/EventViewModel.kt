@@ -21,8 +21,15 @@ class EventViewModel(private val session: MessagingSession) : ViewModel(), Event
     private val eventScope = CoroutineScope(SupervisorJob() + session.dependencies.ioDispatcher)
     private val services = session.dependencies.events
     private val eventCoordinator = services?.let {
-        EventCoordinator(it.store, it.remoteRepository, it.adminKeyStore, session.identityStore,
-            it.meshGateway, eventScope)
+        EventCoordinator(
+            eventStore = it.store,
+            remoteRepository = it.remoteRepository,
+            adminKeyStore = it.adminKeyStore,
+            identityStore = session.identityStore,
+            nearbyController = it.meshGateway,
+            notifier = it.notifier,
+            scope = eventScope,
+        )
     }
     private val closed = AtomicBoolean(false)
     private var observedAccountId = session.dependencies.accountId
