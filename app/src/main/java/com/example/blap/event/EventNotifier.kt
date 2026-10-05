@@ -14,6 +14,12 @@ interface EventNotifier {
         message: EventChatMessage,
         chatVisible: Boolean,
     )
+
+    fun incomingDiscussionComment(
+        event: CommunityEvent,
+        comment: EventDiscussionComment,
+        discussionVisible: Boolean,
+    )
 }
 
 // Used when event notifications are not configured, such as in tests.
@@ -29,5 +35,11 @@ object NoopEventNotifier : EventNotifier {
         event: CommunityEvent,
         message: EventChatMessage,
         chatVisible: Boolean,
+    ) = Unit
+
+    override fun incomingDiscussionComment(
+        event: CommunityEvent,
+        comment: EventDiscussionComment,
+        discussionVisible: Boolean,
     ) = Unit
 }

@@ -18,6 +18,8 @@ import kotlinx.coroutines.flow.update
 
 /** Owns event actions, event state and mesh callbacks without routing through chat. */
 class EventViewModel(private val session: MessagingSession) : ViewModel(), EventMeshGateway.Listener {
+    @Volatile private var appVisible = false
+    private val pendingNotification = MutableStateFlow<EventNotificationTarget?>(null)
     private val eventScope = CoroutineScope(SupervisorJob() + session.dependencies.ioDispatcher)
     private val services = session.dependencies.events
     private val eventCoordinator = services?.let {
@@ -29,6 +31,7 @@ class EventViewModel(private val session: MessagingSession) : ViewModel(), Event
             nearbyController = it.meshGateway,
             notifier = it.notifier,
             scope = eventScope,
+            eventsVisible = { appVisible && session.uiState.value.screen == ChatScreen.EVENTS },
         )
     }
     private val closed = AtomicBoolean(false)
@@ -39,9 +42,30 @@ class EventViewModel(private val session: MessagingSession) : ViewModel(), Event
         session.closeEvents = ::dispose
         services?.meshGateway?.eventListener = this
         eventScope.launch {
+            combine(pendingNotification, uiState) { target, state -> target to state }
+                .collect { (target, state) ->
+                    if (target == null || state.currentUserId.isBlank() || state.loading) return@collect
+                    if (!target.belongsTo(state.currentUserId)) {
+                        pendingNotification.compareAndSet(target, null)
+                        return@collect
+                    }
+                    val available = target.isAvailable(state)
+                    if (!available && !state.eventsAuthoritative) return@collect
+                    if (!pendingNotification.compareAndSet(target, null)) return@collect
+                    session.state.update { it.copy(screen = ChatScreen.EVENTS, error = null) }
+                    if (available) {
+                        eventCoordinator?.openEvent(target.eventId)
+                    } else {
+                        eventCoordinator?.showList()
+                        session.showNotice("This event is no longer available to your account.")
+                    }
+                }
+        }
+        eventScope.launch {
             session.uiState.map { it.onlineAccountId }.distinctUntilChanged().collect { accountId ->
                 if (accountId != observedAccountId) {
                     observedAccountId = accountId
+                    pendingNotification.value = null
                     eventCoordinator?.accountChanged()
                 }
             }
@@ -65,6 +89,13 @@ class EventViewModel(private val session: MessagingSession) : ViewModel(), Event
     fun showEvents() {
         eventCoordinator?.showList()
         session.state.update { it.copy(screen = ChatScreen.EVENTS, error = null) }
+    }
+
+    fun setAppVisible(visible: Boolean) { appVisible = visible }
+
+    fun openNotification(target: EventNotificationTarget) {
+        if (target.eventId.isBlank() || !target.belongsTo(session.dependencies.accountId)) return
+        pendingNotification.value = target
     }
 
     fun beginCreateEvent() = eventCoordinator?.beginCreate() ?: Unit

@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.net.Uri
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import com.example.blap.MainActivity
@@ -41,7 +42,10 @@ class AndroidEventNotifier(
 
         createChannels()
 
-        val notification = NotificationCompat.Builder(context, ANNOUNCEMENT_CHANNEL_ID)
+        val notification = NotificationCompat.Builder(
+            context,
+            ANNOUNCEMENT_CHANNEL_ID,
+        )
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(
                 if (settings.showPreview) {
@@ -87,7 +91,10 @@ class AndroidEventNotifier(
 
         createChannels()
 
-        val notification = NotificationCompat.Builder(context, EVENT_CHAT_CHANNEL_ID)
+        val notification = NotificationCompat.Builder(
+            context,
+            EVENT_CHAT_CHANNEL_ID,
+        )
             .setSmallIcon(R.mipmap.ic_launcher)
             .setContentTitle(
                 if (settings.showPreview) {
@@ -110,6 +117,63 @@ class AndroidEventNotifier(
 
         manager.notify(
             "event-chat:${message.id}".hashCode(),
+            notification,
+        )
+    }
+
+    override fun incomingDiscussionComment(
+        event: CommunityEvent,
+        comment: EventDiscussionComment,
+        discussionVisible: Boolean,
+    ) {
+        val settings = settingsStore.load()
+
+        if (!EventNotificationPolicy.shouldAlertForDiscussion(
+                settings = settings,
+                comment = comment,
+                accountId = accountId,
+                discussionVisible = discussionVisible,
+            )
+        ) return
+
+        if (!hasNotificationPermission()) return
+
+        createChannels()
+
+        val notification = NotificationCompat.Builder(
+            context,
+            EVENT_DISCUSSION_CHANNEL_ID,
+        )
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentTitle(
+                if (settings.showPreview) {
+                    if (comment.isRoot) {
+                        "${event.title} discussion"
+                    } else {
+                        "New reply in ${event.title}"
+                    }
+                } else {
+                    if (comment.isRoot) {
+                        "New discussion comment"
+                    } else {
+                        "New discussion reply"
+                    }
+                },
+            )
+            .setContentText(
+                if (settings.showPreview) {
+                    "${comment.authorName}: ${comment.body}"
+                } else {
+                    "Open CommonGround to read it"
+                },
+            )
+            .setContentIntent(createContentIntent(event.id))
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_SOCIAL)
+            .build()
+
+        manager.notify(
+            "event-discussion:${comment.id}".hashCode(),
             notification,
         )
     }
@@ -139,12 +203,24 @@ class AndroidEventNotifier(
                 NotificationManager.IMPORTANCE_DEFAULT,
             ),
         )
+
+        manager.createNotificationChannel(
+            NotificationChannel(
+                EVENT_DISCUSSION_CHANNEL_ID,
+                "Event discussions",
+                NotificationManager.IMPORTANCE_DEFAULT,
+            ),
+        )
     }
 
     private fun createContentIntent(eventId: String): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            putExtra(EXTRA_EVENT_ID, eventId)
+            // Extras alone do not distinguish PendingIntents (nor do hash codes guarantee uniqueness).
+            data = Uri.Builder().scheme("commonground").authority("event-notification")
+                .appendPath(accountId).appendPath(eventId).build()
+            putExtra(EventNotificationTarget.EXTRA_EVENT_ID, eventId)
+            putExtra(EventNotificationTarget.EXTRA_ACCOUNT_ID, accountId)
         }
 
         return PendingIntent.getActivity(
@@ -158,7 +234,6 @@ class AndroidEventNotifier(
     private companion object {
         const val ANNOUNCEMENT_CHANNEL_ID = "event_announcements"
         const val EVENT_CHAT_CHANNEL_ID = "event_messages"
-        const val EXTRA_EVENT_ID = "notification_event_id"
-
+        const val EVENT_DISCUSSION_CHANNEL_ID = "event_discussions"
     }
 }

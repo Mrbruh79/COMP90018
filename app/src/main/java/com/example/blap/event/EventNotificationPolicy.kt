@@ -34,5 +34,21 @@ object EventNotificationPolicy {
         return true
     }
 
+    fun shouldAlertForDiscussion(
+        settings: ChatNotificationSettings,
+        comment: EventDiscussionComment,
+        accountId: String,
+        discussionVisible: Boolean,
+        now: Long = System.currentTimeMillis(),
+    ): Boolean {
+        if (!settings.enabled) return false
+        if (discussionVisible) return false
+        if (comment.authorId == accountId) return false
+        if (comment.deletedByAdmin || comment.deletedAt != null) return false
+        if (comment.createdAt < now - RECENT_WINDOW_MS) return false
+
+        return true
+    }
+
     private const val RECENT_WINDOW_MS = 120_000L
 }

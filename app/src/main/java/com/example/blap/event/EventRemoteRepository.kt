@@ -5,6 +5,7 @@ import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.MetadataChanges
 import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.Source
 import java.util.Locale
@@ -62,6 +63,12 @@ interface EventRemoteRepository {
         onComments: (List<EventDiscussionComment>) -> Unit,
         onError: (Throwable) -> Unit,
     ): AutoCloseable?
+    /** All roots, independent of UI pagination, so replies to older threads can be observed. */
+    fun observeDiscussionNotificationRoots(
+        eventId: String,
+        onComments: (List<EventDiscussionComment>) -> Unit,
+        onError: (Throwable) -> Unit,
+    ): AutoCloseable? = observeDiscussionRoots(eventId, 100, onComments, onError)
     fun observeDiscussionLikes(
         eventId: String,
         onLikedCommentIds: (Set<String>) -> Unit,
@@ -225,7 +232,7 @@ class FirebaseEventRemoteRepository(
             return AutoCloseable { }
         }
         val registration = joinedEventsQuery(uid, user.isAnonymous)
-            .addSnapshotListener { snapshot, error ->
+            .addSnapshotListener(MetadataChanges.INCLUDE) { snapshot, error ->
                 if (error != null) onError(error)
                 else if (snapshot != null) {
                     onEvents(
@@ -503,6 +510,20 @@ class FirebaseEventRemoteRepository(
                         .filterNot(EventDiscussionComment::deletedByAdmin),
                 )
             }
+        return AutoCloseable(registration::remove)
+    }
+
+    override fun observeDiscussionNotificationRoots(
+        eventId: String,
+        onComments: (List<EventDiscussionComment>) -> Unit,
+        onError: (Throwable) -> Unit,
+    ): AutoCloseable {
+        val registration = discussionThreads(eventId).addSnapshotListener { snapshot, error ->
+            if (error != null) onError(error)
+            else onComments(snapshot?.documents.orEmpty().mapNotNull { document ->
+                document.data?.toDiscussionComment(document.id, eventId, document.id)
+            }.filterNot(EventDiscussionComment::deletedByAdmin))
+        }
         return AutoCloseable(registration::remove)
     }
 

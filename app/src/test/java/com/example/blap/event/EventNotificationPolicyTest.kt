@@ -6,6 +6,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Test
 
 class EventNotificationPolicyTest {
+    @Test fun authorDeletedDiscussionCommentDoesNotAlert() {
+        val comment = EventDiscussionComment(eventId = "event", authorId = "other", authorName = "Other",
+            body = "", createdAt = 1_000_000L, deletedAt = 1_000_001L)
+        assertFalse(EventNotificationPolicy.shouldAlertForDiscussion(ChatNotificationSettings(), comment,
+            accountId = "me", discussionVisible = false, now = 1_000_002L))
+    }
 
     @Test
     fun incomingChatMessageAlerts() {
@@ -223,6 +229,133 @@ class EventNotificationPolicyTest {
             ),
             accountId = "my-user",
             announcementsVisible = false,
+            now = now,
+        )
+
+        assertFalse(result)
+    }
+
+    @Test
+    fun incomingDiscussionCommentAlerts() {
+        val now = 1_000_000L
+
+        val result = EventNotificationPolicy.shouldAlertForDiscussion(
+            settings = ChatNotificationSettings(enabled = true),
+            comment = EventDiscussionComment(
+                eventId = "event-1",
+                authorId = "other-user",
+                authorName = "Other User",
+                body = "Hello discussion",
+                createdAt = now,
+            ),
+            accountId = "my-user",
+            discussionVisible = false,
+            now = now,
+        )
+
+        assertTrue(result)
+    }
+
+    @Test
+    fun ownDiscussionCommentDoesNotAlert() {
+        val now = 1_000_000L
+
+        val result = EventNotificationPolicy.shouldAlertForDiscussion(
+            settings = ChatNotificationSettings(enabled = true),
+            comment = EventDiscussionComment(
+                eventId = "event-1",
+                authorId = "my-user",
+                authorName = "Me",
+                body = "My comment",
+                createdAt = now,
+            ),
+            accountId = "my-user",
+            discussionVisible = false,
+            now = now,
+        )
+
+        assertFalse(result)
+    }
+
+    @Test
+    fun visibleDiscussionDoesNotAlert() {
+        val now = 1_000_000L
+
+        val result = EventNotificationPolicy.shouldAlertForDiscussion(
+            settings = ChatNotificationSettings(enabled = true),
+            comment = EventDiscussionComment(
+                eventId = "event-1",
+                authorId = "other-user",
+                authorName = "Other User",
+                body = "Hello",
+                createdAt = now,
+            ),
+            accountId = "my-user",
+            discussionVisible = true,
+            now = now,
+        )
+
+        assertFalse(result)
+    }
+
+    @Test
+    fun staleDiscussionCommentDoesNotAlert() {
+        val now = 1_000_000L
+
+        val result = EventNotificationPolicy.shouldAlertForDiscussion(
+            settings = ChatNotificationSettings(enabled = true),
+            comment = EventDiscussionComment(
+                eventId = "event-1",
+                authorId = "other-user",
+                authorName = "Other User",
+                body = "Old comment",
+                createdAt = now - 120_001L,
+            ),
+            accountId = "my-user",
+            discussionVisible = false,
+            now = now,
+        )
+
+        assertFalse(result)
+    }
+
+    @Test
+    fun deletedDiscussionCommentDoesNotAlert() {
+        val now = 1_000_000L
+
+        val result = EventNotificationPolicy.shouldAlertForDiscussion(
+            settings = ChatNotificationSettings(enabled = true),
+            comment = EventDiscussionComment(
+                eventId = "event-1",
+                authorId = "other-user",
+                authorName = "Other User",
+                body = "Removed comment",
+                createdAt = now,
+                deletedByAdmin = true,
+            ),
+            accountId = "my-user",
+            discussionVisible = false,
+            now = now,
+        )
+
+        assertFalse(result)
+    }
+
+    @Test
+    fun disabledNotificationsSuppressDiscussionAlert() {
+        val now = 1_000_000L
+
+        val result = EventNotificationPolicy.shouldAlertForDiscussion(
+            settings = ChatNotificationSettings(enabled = false),
+            comment = EventDiscussionComment(
+                eventId = "event-1",
+                authorId = "other-user",
+                authorName = "Other User",
+                body = "Hello",
+                createdAt = now,
+            ),
+            accountId = "my-user",
+            discussionVisible = false,
             now = now,
         )
 

@@ -30,8 +30,8 @@ internal fun NotificationSettingsScreen(
         ) {
             item {
                 ListToggleRow(
-                    title = "Chat Alerts",
-                    supportingText = "Enables chat alert notifications",
+                    title = "Chat & Event Alerts",
+                    supportingText = "Enables chat, event message, announcement and discussion notifications",
                     checked = settings.enabled,
                     onCheckedChange = { onSettingsChanged(settings.copy(enabled = it)) },
                 )
@@ -75,7 +75,9 @@ internal fun NotificationSettingsScreen(
             }
             item {
                 InfoCard(
-                    "Alerts only appear while CommonGround is running. Notifications for messages that arrive when the app is closed will only appear when the app is opened again.",
+                    "Alerts can arrive while CommonGround is in the background and still running. " +
+                        "If Android stops the app or you force-stop it, no new alerts are delivered. " +
+                        "Reopening the app loads updates without replaying event discussion or announcement alerts.",
                 )
             }
         }
