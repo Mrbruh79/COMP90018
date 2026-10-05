@@ -65,6 +65,8 @@ dependencies {
     implementation(libs.zxing.core)
     implementation(libs.osmdroid)
     implementation(libs.libphonenumber)
+    implementation("net.zetetic:android-database-sqlcipher:4.5.4")
+    implementation("androidx.sqlite:sqlite-ktx:2.4.0")
     debugImplementation(libs.androidx.compose.ui.tooling)
     testImplementation(libs.junit)
     androidTestImplementation(composeBom)

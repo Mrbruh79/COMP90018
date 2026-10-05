@@ -36,6 +36,10 @@ import com.example.blap.location.PlaceSearchRepository
 import com.example.blap.venue.FirebaseVenueRepository
 import com.example.blap.venue.VenueRepository
 
+import java.io.File
+import net.sqlcipher.database.SQLiteDatabase
+import com.example.blap.chat.KeystoreDatabaseKeyManager
+
 interface AppContainer {
     val authentication: AuthRepository
     val locationProvider: LocationProvider
@@ -53,6 +57,11 @@ interface AppContainer {
 /** Composition root. Only application context is retained; account resources are not cached. */
 class DefaultAppContainer(context: Context) : AppContainer {
     private val appContext = context.applicationContext
+    
+    init {
+        SQLiteDatabase.loadLibs(appContext)
+    }
+    
     override val authentication: AuthRepository by lazy { FirebaseAuthRepository() }
 
     override val locationProvider: LocationProvider by lazy { FusedLocationProvider(appContext) }
@@ -85,13 +94,27 @@ class DefaultAppContainer(context: Context) : AppContainer {
 
     private fun createDependencies(accountId: String): ChatDependencies {
         val scope = LocalDataScope.forAccount(appContext, accountId)
+        
+        // Handle migration (deletion of unencrypted database)
+        val unencryptedDbFile = appContext.getDatabasePath("nearby_chat$scope.db")
+        val isSqlCipherInitializedPref = appContext.getSharedPreferences("blap_prefs", Context.MODE_PRIVATE)
+        if (!isSqlCipherInitializedPref.getBoolean("sqlcipher_migrated_$scope", false)) {
+            if (unencryptedDbFile.exists()) {
+                appContext.deleteDatabase("nearby_chat$scope.db")
+            }
+            isSqlCipherInitializedPref.edit().putBoolean("sqlcipher_migrated_$scope", true).apply()
+        }
+
+        val keyManager = KeystoreDatabaseKeyManager()
+        val passphrase = keyManager.getDatabasePassphrase()
+        
         // Both contracts use the same manager so events do not create a second Nearby session.
         val nearbyIdentities = LocalNearbyIdentityStore(appContext, scope)
         val nearby = NearbyChatManager(appContext, nearbyIdentities)
         return ChatDependencies(
             nearbyTransport = nearby,
             nearbyIdentities = nearbyIdentities,
-            chatStore = SqliteChatStore(appContext, scope),
+            chatStore = SqliteChatStore(appContext, passphrase, scope),
             identityStore = LocalIdentityStore(appContext, scope),
             accountId = accountId,
             authRepository = authentication,

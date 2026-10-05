@@ -3,16 +3,19 @@ package com.example.blap.chat
 import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
-import androidx.core.database.sqlite.transaction
+import net.sqlcipher.database.SQLiteDatabase
+import net.sqlcipher.database.SQLiteOpenHelper
 
 /** Compatibility contract while the chat coordinator still uses a single store. */
 interface ChatStore : ContactRepository, GroupRepository, ChatRepository {
     fun close()
 }
 
-class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
+class SqliteChatStore(
+    context: Context,
+    private val passphrase: ByteArray,
+    scope: String = ""
+) : SQLiteOpenHelper(
     context,
     "nearby_chat$scope.db",
     null,
@@ -140,6 +143,10 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             db.execSQL("CREATE INDEX IF NOT EXISTS app_contacts_phone_hash ON app_contacts(phone_hash) WHERE phone_hash <> ''")
         }
     }
+    
+    // Testing accessor for migrations
+    val sqlCipherDatabase: SQLiteDatabase
+        get() = getWritableDatabase(passphrase)
 
     @Synchronized
     override fun savePeer(peerId: String, name: String, phoneHash: String) {
@@ -149,15 +156,20 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             put("phone_hash", phoneHash)
             put("last_seen", System.currentTimeMillis())
         }
-        writableDatabase.transaction {
-            insertWithOnConflict("peers", null, values, SQLiteDatabase.CONFLICT_IGNORE)
-            update("peers", values, "peer_id = ?", arrayOf(peerId))
+        val db = getWritableDatabase(passphrase)
+        db.beginTransaction()
+        try {
+            db.insertWithOnConflict("peers", null, values, SQLiteDatabase.CONFLICT_IGNORE)
+            db.update("peers", values, "peer_id = ?", arrayOf(peerId))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
     }
 
     @Synchronized
     override fun savePeerUsername(peerId: String, username: String) {
-        writableDatabase.update("peers", ContentValues().apply { put("username", username) },
+        getWritableDatabase(passphrase).update("peers", ContentValues().apply { put("username", username) },
             "peer_id = ?", arrayOf(peerId))
     }
 
@@ -169,7 +181,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             put("phone_hash", phoneHash)
             put("last_seen", System.currentTimeMillis())
         }
-        writableDatabase.insertWithOnConflict(
+        getWritableDatabase(passphrase).insertWithOnConflict(
             "mesh_peers",
             null,
             values,
@@ -198,7 +210,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             put("source", contact.source.ordinal)
             put("updated_at", contact.updatedAt)
         }
-        writableDatabase.insertWithOnConflict(
+        getWritableDatabase(passphrase).insertWithOnConflict(
             "app_contacts",
             null,
             values,
@@ -209,7 +221,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     @Synchronized
     override fun getSavedContacts(): List<SavedContact> {
         val contacts = mutableListOf<SavedContact>()
-        readableDatabase.query(
+        getReadableDatabase(passphrase).query(
             "app_contacts",
             arrayOf(
                 "contact_id", "name", "phone_number", "phone_hash", "linked_peer_id",
@@ -249,14 +261,14 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     @Synchronized
     override fun deleteContact(contactId: String) {
-        writableDatabase.delete("app_contacts", "contact_id = ?", arrayOf(contactId))
+        getWritableDatabase(passphrase).delete("app_contacts", "contact_id = ?", arrayOf(contactId))
     }
 
     @Synchronized
     override fun linkContact(phoneHash: String, peerId: String) {
         if (phoneHash.isBlank()) return
         val values = ContentValues().apply { put("linked_peer_id", peerId) }
-        writableDatabase.update("app_contacts", values,
+        getWritableDatabase(passphrase).update("app_contacts", values,
             "phone_hash = ? AND (cloud_user_id = '' OR linked_peer_id = ?)", arrayOf(phoneHash, peerId))
     }
 
@@ -268,7 +280,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             UNION ALL
             SELECT peer_id, name, phone_hash FROM mesh_peers
         """.trimIndent()
-        readableDatabase.rawQuery(query, arrayOf(MeshGroup.ID)).use { cursor ->
+        getReadableDatabase(passphrase).rawQuery(query, arrayOf(MeshGroup.ID)).use { cursor ->
             while (cursor.moveToNext()) {
                 contacts += GroupMember(cursor.getString(0), cursor.getString(1), cursor.getString(2))
             }
@@ -278,12 +290,14 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     @Synchronized
     override fun saveGroup(group: PrivateGroup) {
-        val storedRevision = readableDatabase.rawQuery(
+        val storedRevision = getReadableDatabase(passphrase).rawQuery(
             "SELECT created_at FROM chat_groups WHERE group_id = ?",
             arrayOf(group.id),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else Long.MIN_VALUE }
         if (storedRevision > group.createdAt) return
-        writableDatabase.transaction {
+        val db = getWritableDatabase(passphrase)
+        db.beginTransaction()
+        try {
             val groupValues = ContentValues().apply {
                 put("group_id", group.id)
                 put("name", group.name)
@@ -292,8 +306,8 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
                 put("cloud_synced", if (group.cloudSynced) 1 else 0)
                 put("owner_account_id", group.ownerAccountId)
             }
-            insertWithOnConflict("chat_groups", null, groupValues, SQLiteDatabase.CONFLICT_REPLACE)
-            delete("group_members", "group_id = ?", arrayOf(group.id))
+            db.insertWithOnConflict("chat_groups", null, groupValues, SQLiteDatabase.CONFLICT_REPLACE)
+            db.delete("group_members", "group_id = ?", arrayOf(group.id))
             group.members.distinctBy(GroupMember::peerId).forEach { member ->
                 val memberValues = ContentValues().apply {
                     put("group_id", group.id)
@@ -301,15 +315,18 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
                     put("name", member.name)
                     put("phone_hash", member.phoneHash)
                 }
-                insert("group_members", null, memberValues)
+                db.insert("group_members", null, memberValues)
             }
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
     }
 
     @Synchronized
     override fun getGroups(): List<PrivateGroup> {
         val groups = mutableListOf<PrivateGroup>()
-        readableDatabase.query(
+        getReadableDatabase(passphrase).query(
             "chat_groups",
             arrayOf("group_id", "name", "owner_id", "created_at", "cloud_synced", "owner_account_id"),
             null,
@@ -339,7 +356,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     @Synchronized
     override fun markGroupCloudSynced(groupId: String, revision: Long) {
-        writableDatabase.update(
+        getWritableDatabase(passphrase).update(
             "chat_groups", ContentValues().apply { put("cloud_synced", 1) },
             "group_id = ? AND created_at = ?", arrayOf(groupId, revision.toString()),
         )
@@ -347,16 +364,21 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     @Synchronized
     override fun deleteGroup(groupId: String) {
-        writableDatabase.transaction {
-            delete("group_members", "group_id = ?", arrayOf(groupId))
-            delete("messages", "peer_id = ?", arrayOf(groupId))
-            delete("chat_groups", "group_id = ?", arrayOf(groupId))
+        val db = getWritableDatabase(passphrase)
+        db.beginTransaction()
+        try {
+            db.delete("group_members", "group_id = ?", arrayOf(groupId))
+            db.delete("messages", "peer_id = ?", arrayOf(groupId))
+            db.delete("chat_groups", "group_id = ?", arrayOf(groupId))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
     }
 
     @Synchronized
     override fun isGroupMember(groupId: String, peerId: String, phoneHash: String): Boolean {
-        readableDatabase.rawQuery(
+        getReadableDatabase(passphrase).rawQuery(
             "SELECT 1 FROM group_members WHERE group_id = ? AND (peer_id = ? OR (? != '' AND phone_hash = ?)) LIMIT 1",
             arrayOf(groupId, peerId, phoneHash, phoneHash),
         ).use { cursor -> return cursor.moveToFirst() }
@@ -364,7 +386,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     @Synchronized
     override fun saveMessage(message: ChatMessage): Boolean {
-        if (readableDatabase.rawQuery("SELECT 1 FROM deleted_message_ids WHERE message_id = ?",
+        if (getReadableDatabase(passphrase).rawQuery("SELECT 1 FROM deleted_message_ids WHERE message_id = ?",
                 arrayOf(message.id)).use { it.moveToFirst() }) return false
         val deletedBefore = deletionTime(message.peerId)
         if (deletedBefore != null && message.sentAt <= deletedBefore) return false
@@ -381,13 +403,13 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             put("sender_account_id", message.senderAccountId)
             put("cloud_synced", if (message.cloudSynced) 1 else 0)
         }
-        val row = writableDatabase.insertWithOnConflict(
+        val row = getWritableDatabase(passphrase).insertWithOnConflict(
             "messages",
             null,
             values,
             SQLiteDatabase.CONFLICT_IGNORE,
         )
-        if (row != -1L) writableDatabase.update("chat_deletions", ContentValues().apply { put("hidden", 0) },
+        if (row != -1L) getWritableDatabase(passphrase).update("chat_deletions", ContentValues().apply { put("hidden", 0) },
             "peer_id = ?", arrayOf(message.peerId))
         return row != -1L
     }
@@ -395,7 +417,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     @Synchronized
     override fun updateMessageStatus(messageId: String, status: MessageStatus) {
         val values = ContentValues().apply { put("status", status.ordinal) }
-        writableDatabase.update(
+        getWritableDatabase(passphrase).update(
             "messages",
             values,
             "message_id = ? AND status < ?",
@@ -418,7 +440,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             ORDER BY last_message_at DESC
         """.trimIndent()
 
-        readableDatabase.rawQuery(query, null).use { cursor ->
+        getReadableDatabase(passphrase).rawQuery(query, null).use { cursor ->
             while (cursor.moveToNext()) {
                 conversations += ConversationSummary(
                     peerId = cursor.getString(0),
@@ -452,7 +474,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     @Synchronized
     override fun getMessages(peerId: String): List<ChatMessage> {
         val messages = mutableListOf<ChatMessage>()
-        readableDatabase.query(
+        getReadableDatabase(passphrase).query(
             "messages",
             MESSAGE_COLUMNS,
             "peer_id = ?",
@@ -467,7 +489,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     }
 
     @Synchronized
-    override fun hasCloudPeerMessage(peerId: String): Boolean = readableDatabase.rawQuery(
+    override fun hasCloudPeerMessage(peerId: String): Boolean = getReadableDatabase(passphrase).rawQuery(
         "SELECT 1 FROM messages WHERE peer_id = ? AND author = ? AND sender_account_id != '' LIMIT 1",
         arrayOf(peerId, MessageAuthor.PEER.ordinal.toString()),
     ).use { it.moveToFirst() }
@@ -475,7 +497,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     @Synchronized
     override fun getPendingMessages(peerId: String): List<ChatMessage> {
         val messages = mutableListOf<ChatMessage>()
-        readableDatabase.query(
+        getReadableDatabase(passphrase).query(
             "messages",
             MESSAGE_COLUMNS,
             "peer_id = ? AND author = ? AND status < ?",
@@ -492,7 +514,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     @Synchronized
     override fun getCloudPendingMessages(): List<ChatMessage> {
         val messages = mutableListOf<ChatMessage>()
-        readableDatabase.query(
+        getReadableDatabase(passphrase).query(
             "messages", MESSAGE_COLUMNS,
             "author = ? AND cloud_synced = 0 AND peer_id != ?",
             arrayOf(MessageAuthor.ME.ordinal.toString(), MeshGroup.ID),
@@ -503,7 +525,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     @Synchronized
     override fun markCloudSynced(messageId: String) {
-        writableDatabase.update(
+        getWritableDatabase(passphrase).update(
             "messages", ContentValues().apply { put("cloud_synced", 1) },
             "message_id = ?", arrayOf(messageId),
         )
@@ -512,51 +534,61 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     @Synchronized
     override fun moveConversation(fromPeerId: String, toPeerId: String) {
         if (fromPeerId == toPeerId) return
-        writableDatabase.transaction {
-            execSQL("UPDATE peers SET username = (SELECT username FROM peers WHERE peer_id = ?) " +
+        val db = getWritableDatabase(passphrase)
+        db.beginTransaction()
+        try {
+            db.execSQL("UPDATE peers SET username = (SELECT username FROM peers WHERE peer_id = ?) " +
                 "WHERE peer_id = ? AND username = '' AND EXISTS (SELECT 1 FROM peers WHERE peer_id = ?)",
                 arrayOf(fromPeerId, toPeerId, fromPeerId))
-            rawQuery("SELECT deleted_before, hidden FROM chat_deletions WHERE peer_id = ?", arrayOf(fromPeerId)).use { cursor ->
+            db.rawQuery("SELECT deleted_before, hidden FROM chat_deletions WHERE peer_id = ?", arrayOf(fromPeerId)).use { cursor ->
                 if (cursor.moveToFirst()) {
                     val time = maxOf(cursor.getLong(0), deletionTime(toPeerId) ?: 0L)
-                    insertWithOnConflict("chat_deletions", null, ContentValues().apply {
+                    db.insertWithOnConflict("chat_deletions", null, ContentValues().apply {
                         put("peer_id", toPeerId); put("deleted_before", time); put("hidden", cursor.getInt(1))
                     }, SQLiteDatabase.CONFLICT_REPLACE)
-                    delete("messages", "peer_id = ? AND sent_at <= ?", arrayOf(toPeerId, time.toString()))
+                    db.delete("messages", "peer_id = ? AND sent_at <= ?", arrayOf(toPeerId, time.toString()))
                 }
             }
-            update("messages", ContentValues().apply { put("peer_id", toPeerId) },
+            db.update("messages", ContentValues().apply { put("peer_id", toPeerId) },
                 "peer_id = ?", arrayOf(fromPeerId))
             deletionTime(toPeerId)?.let { time ->
-                delete("messages", "peer_id = ? AND sent_at <= ?", arrayOf(toPeerId, time.toString()))
+                db.delete("messages", "peer_id = ? AND sent_at <= ?", arrayOf(toPeerId, time.toString()))
             }
-            execSQL("UPDATE chat_deletions SET hidden = 0 WHERE peer_id = ? AND EXISTS (SELECT 1 FROM messages WHERE peer_id = ?)",
+            db.execSQL("UPDATE chat_deletions SET hidden = 0 WHERE peer_id = ? AND EXISTS (SELECT 1 FROM messages WHERE peer_id = ?)",
                 arrayOf(toPeerId, toPeerId))
-            delete("peers", "peer_id = ?", arrayOf(fromPeerId))
+            db.delete("peers", "peer_id = ?", arrayOf(fromPeerId))
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
     }
 
     @Synchronized
     override fun deleteConversation(peerId: String) {
-        writableDatabase.transaction {
-            execSQL("INSERT OR IGNORE INTO deleted_message_ids(message_id) SELECT message_id FROM messages WHERE peer_id = ?", arrayOf(peerId))
-            delete("messages", "peer_id = ?", arrayOf(peerId))
-            insertWithOnConflict("chat_deletions", null, ContentValues().apply {
+        val db = getWritableDatabase(passphrase)
+        db.beginTransaction()
+        try {
+            db.execSQL("INSERT OR IGNORE INTO deleted_message_ids(message_id) SELECT message_id FROM messages WHERE peer_id = ?", arrayOf(peerId))
+            db.delete("messages", "peer_id = ?", arrayOf(peerId))
+            db.insertWithOnConflict("chat_deletions", null, ContentValues().apply {
                 put("peer_id", peerId); put("deleted_before", System.currentTimeMillis()); put("hidden", 1)
             }, SQLiteDatabase.CONFLICT_REPLACE)
+            db.setTransactionSuccessful()
+        } finally {
+            db.endTransaction()
         }
     }
 
-    private fun deletionTime(peerId: String): Long? = readableDatabase.rawQuery(
+    private fun deletionTime(peerId: String): Long? = getReadableDatabase(passphrase).rawQuery(
         "SELECT deleted_before FROM chat_deletions WHERE peer_id = ?", arrayOf(peerId),
     ).use { if (it.moveToFirst()) it.getLong(0) else null }
 
     @Synchronized
     override fun reopenConversation(peerId: String) {
-        writableDatabase.update("chat_deletions", ContentValues().apply { put("hidden", 0) }, "peer_id = ?", arrayOf(peerId))
+        getWritableDatabase(passphrase).update("chat_deletions", ContentValues().apply { put("hidden", 0) }, "peer_id = ?", arrayOf(peerId))
     }
 
-    private fun isChatHidden(peerId: String): Boolean = readableDatabase.rawQuery(
+    private fun isChatHidden(peerId: String): Boolean = getReadableDatabase(passphrase).rawQuery(
         "SELECT 1 FROM chat_deletions WHERE peer_id = ? AND hidden = 1", arrayOf(peerId),
     ).use { it.moveToFirst() }
 
@@ -585,7 +617,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     private fun getGroupMembers(groupId: String): List<GroupMember> {
         val members = mutableListOf<GroupMember>()
-        readableDatabase.query(
+        getReadableDatabase(passphrase).query(
             "group_members",
             arrayOf("peer_id", "name", "phone_hash"),
             "group_id = ?",
