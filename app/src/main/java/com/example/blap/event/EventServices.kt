@@ -6,4 +6,5 @@ data class EventServices(
     val remoteRepository: EventRemoteRepository,
     val adminKeyStore: EventAdminKeyStore,
     val meshGateway: EventMeshGateway,
+    val notifier: EventNotifier = NoopEventNotifier,
 )

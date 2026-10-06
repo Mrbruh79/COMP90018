@@ -17,6 +17,7 @@ import com.example.blap.auth.AuthRepository
 import com.example.blap.auth.AccountProfileRepository
 import com.example.blap.auth.PublicAccountProfile
 import com.example.blap.auth.AuthViewModel
+import com.example.blap.event.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.runBlocking
@@ -32,6 +33,128 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class ChatViewModelTest {
+    @Test fun coldNotificationWaitsForEventsThenOpensDetailsAndKeepsObserversOffScreen() {
+        val fixture = notificationFixture()
+        fixture.events.openNotification(EventNotificationTarget("event", "alice"))
+        assertEquals(ChatScreen.CHATS, fixture.session.uiState.value.screen)
+        fixture.publish()
+        assertEquals(ChatScreen.EVENTS, fixture.session.uiState.value.screen)
+        assertEquals("event", fixture.events.uiState.value.selectedEventId)
+        assertEquals(EventPage.DETAIL, fixture.events.uiState.value.page)
+        assertEquals(setOf("event"), fixture.remote.roots.keys)
+        fixture.events.showEventDiscussion()
+        fixture.events.eventBack()
+        fixture.session.state.value = fixture.session.state.value.copy(screen = ChatScreen.CHATS)
+        assertEquals(setOf("event"), fixture.remote.roots.keys)
+        assertEquals(setOf("event"), fixture.remote.announcements.keys)
+        fixture.session.close()
+        assertTrue(fixture.remote.announcements.isEmpty())
+    }
+
+    @Test fun warmNotificationsAreConsumedOnceAndWrongAccountCannotNavigate() {
+        val fixture = notificationFixture()
+        fixture.publish()
+        fixture.events.openNotification(EventNotificationTarget("event", "someone-else"))
+        assertEquals(ChatScreen.CHATS, fixture.session.uiState.value.screen)
+        fixture.events.openNotification(EventNotificationTarget("event", "alice"))
+        assertEquals("event", fixture.events.uiState.value.selectedEventId)
+        fixture.events.showEvents()
+        fixture.publish()
+        assertNull(fixture.events.uiState.value.selectedEventId)
+        fixture.events.openNotification(EventNotificationTarget("removed", "alice"))
+        assertNull(fixture.events.uiState.value.selectedEventId)
+        assertTrue(fixture.session.uiState.value.notice.orEmpty().contains("no longer available"))
+    }
+
+    @Test fun notificationWaitsThroughMissingCacheSnapshotThenOpensServerEventOnce() {
+        val fixture = notificationFixture()
+        fixture.events.openNotification(EventNotificationTarget("event", "alice"))
+        fixture.publish(containsTarget = false, authoritative = false)
+        assertFalse(fixture.events.uiState.value.loading)
+        assertEquals(ChatScreen.CHATS, fixture.session.uiState.value.screen)
+        assertNull(fixture.session.uiState.value.notice)
+
+        fixture.publish()
+        assertEquals(ChatScreen.EVENTS, fixture.session.uiState.value.screen)
+        assertEquals("event", fixture.events.uiState.value.selectedEventId)
+        assertEquals(EventPage.DETAIL, fixture.events.uiState.value.page)
+        fixture.events.showEvents()
+        fixture.publish()
+        assertNull(fixture.events.uiState.value.selectedEventId)
+    }
+
+    @Test fun notificationCanOpenAvailableCachedEventWithoutWaitingForServer() {
+        val fixture = notificationFixture()
+        fixture.events.openNotification(EventNotificationTarget("event", "alice"))
+        fixture.publish(containsTarget = false, authoritative = false)
+        fixture.publish(authoritative = false)
+        assertEquals(ChatScreen.EVENTS, fixture.session.uiState.value.screen)
+        assertEquals("event", fixture.events.uiState.value.selectedEventId)
+        assertEquals(EventPage.DETAIL, fixture.events.uiState.value.page)
+        assertNull(fixture.session.uiState.value.notice)
+    }
+
+    @Test fun missingNotificationTargetIsConsumedOnlyAfterAuthoritativeAbsence() {
+        val fixture = notificationFixture()
+        fixture.events.openNotification(EventNotificationTarget("event", "alice"))
+        fixture.publish(containsTarget = false, authoritative = false)
+        assertEquals(ChatScreen.CHATS, fixture.session.uiState.value.screen)
+        assertNull(fixture.session.uiState.value.notice)
+
+        fixture.publish(containsTarget = false, authoritative = true)
+        assertEquals(ChatScreen.EVENTS, fixture.session.uiState.value.screen)
+        assertNull(fixture.events.uiState.value.selectedEventId)
+        assertTrue(fixture.session.uiState.value.notice.orEmpty().contains("no longer available"))
+        fixture.publish()
+        assertNull(fixture.events.uiState.value.selectedEventId)
+    }
+
+    private data class NotificationFixture(
+        val events: EventViewModel,
+        val session: MessagingSession,
+        val remote: NotificationRemote,
+        val publishSnapshot: (Boolean, Boolean) -> Unit,
+    ) {
+        fun publish(containsTarget: Boolean = true, authoritative: Boolean = true) =
+            publishSnapshot(containsTarget, authoritative)
+    }
+
+    private fun notificationFixture(): NotificationFixture {
+        val event = CommunityEvent("event", "Meetup", "", latitude = 0.0, longitude = 0.0,
+            startsAt = 0, endsAt = Long.MAX_VALUE, createdBy = "other", memberIds = setOf("alice", "other"))
+        val membership = EventMembership("event", "alice", "Alice", EventRole.ATTENDEE, 1L)
+        var publish: ((List<CommunityEvent>, Boolean) -> Unit)? = null
+        var serverEvents = listOf(event)
+        val remote = object : NotificationRemote() {
+            override suspend fun requireUserId() = "alice"
+            override suspend fun listEvents() = serverEvents
+            override suspend fun listInvitations() = emptyList<EventInvitation>()
+            override suspend fun listMembers(eventId: String) = listOf(membership)
+            override suspend fun getAnnouncements(eventId: String, limit: Int) = emptyList<EventAnnouncement>()
+            override fun observeEvents(onEvents: (List<CommunityEvent>, Boolean) -> Unit,
+                onError: (Throwable) -> Unit): AutoCloseable {
+                publish = onEvents
+                return AutoCloseable { publish = null }
+            }
+            override fun observeDiscussionLikes(eventId: String, onLikedCommentIds: (Set<String>) -> Unit,
+                onError: (Throwable) -> Unit): AutoCloseable? = null
+        }
+        val keyStore = object : EventAdminKeyStore {
+            override fun get(userId: String): java.security.KeyPair? = null
+            override fun getOrCreate(userId: String): java.security.KeyPair = error("Not an admin")
+        }
+        val identity = FakeIdentityStore().apply { saveDisplayName("Alice") }
+        val session = MessagingSession(ChatDependencies(FakeNearbyChatController(), FakeChatStore(), identity,
+            accountId = "alice", ioDispatcher = Dispatchers.Unconfined,
+            events = EventServices(InMemoryEventStore(), remote, keyStore, object : EventMeshGateway {}, NoopEventNotifier)))
+            .also(testSessions::add)
+        return NotificationFixture(EventViewModel(session), session, remote) { containsTarget, authoritative ->
+            val snapshotEvents = if (containsTarget) listOf(event) else emptyList()
+            if (authoritative) serverEvents = snapshotEvents
+            publish!!(snapshotEvents, authoritative)
+        }
+    }
+
     private companion object { const val TEST_GROUP = "private-test-group" }
 
     private fun prepareTestGroup(store: FakeChatStore) {

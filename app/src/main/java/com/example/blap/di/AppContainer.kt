@@ -25,6 +25,7 @@ import com.example.blap.chat.LocalNearbyIdentityStore
 import com.example.blap.chat.NotificationSettingsRepository
 import com.example.blap.chat.PrivateProfileStore
 import com.example.blap.chat.SqliteChatStore
+import com.example.blap.event.AndroidEventNotifier
 import com.example.blap.event.EventServices
 import com.example.blap.event.FirebaseEventRemoteRepository
 import com.example.blap.event.LocalEventAdminKeyStore
@@ -105,6 +106,11 @@ class DefaultAppContainer(context: Context) : AppContainer {
                 remoteRepository = FirebaseEventRemoteRepository(),
                 adminKeyStore = LocalEventAdminKeyStore(appContext),
                 meshGateway = nearby,
+                notifier = AndroidEventNotifier(
+                    context = appContext,
+                    settingsStore = ChatNotificationSettingsStore(appContext, scope),
+                    accountId = accountId,
+                ),
             ),
         )
     }

@@ -29,6 +29,8 @@ internal class EventLifecycleCoordinator(
     private var observedAnnouncementEventId: String? = null
 
     fun start() {
+        // Keep notification navigation pending until the account's event package is loaded.
+        updateState { it.copy(loading = true, eventsAuthoritative = false) }
         scope.launch {
             runCatching {
                 val userId = requireUserId()
@@ -45,7 +47,7 @@ internal class EventLifecycleCoordinator(
                 startInvitationObserver()
             }.onFailure { failure ->
                 updateState { state ->
-                    state.copy(error = failure.readableEventMessage("Could not connect to events"))
+                    state.copy(loading = false, error = failure.readableEventMessage("Could not connect to events"))
                 }
             }
         }
@@ -55,6 +57,7 @@ internal class EventLifecycleCoordinator(
         closeRemoteObservers()
         closeEventObservers()
         cachedUserId = null
+        updateState { it.copy(eventsAuthoritative = false) }
         scope.launch {
             runCatching {
                 val userId = requireUserId()
@@ -69,7 +72,7 @@ internal class EventLifecycleCoordinator(
     }
 
     fun refreshEvents() {
-        updateState { it.copy(loading = true, error = null) }
+        updateState { it.copy(loading = true, eventsAuthoritative = false, error = null) }
         scope.launch {
             runCatching {
                 val userId = requireUserId()
@@ -95,6 +98,7 @@ internal class EventLifecycleCoordinator(
                             invitation.status == EventInvitationStatus.PENDING
                         },
                         showingOfflineEvents = reconciliation.showingOfflineEvents,
+                        eventsAuthoritative = true,
                         loading = false,
                     )
                 }
@@ -104,6 +108,7 @@ internal class EventLifecycleCoordinator(
                     it.copy(
                         events = mergeJoinedEvents(it, cachedEvents),
                         showingOfflineEvents = cachedEvents.isNotEmpty(),
+                        eventsAuthoritative = false,
                         loading = false,
                         notice = if (cachedEvents.isNotEmpty()) {
                             "Event updates will resume when you are online."
@@ -467,7 +472,7 @@ internal class EventLifecycleCoordinator(
                     closeEventObservers()
                 }
                 updateState { current ->
-                    if (selectedEventUnavailable) {
+                    val updated = if (selectedEventUnavailable) {
                         current.returnToEventList(
                             events = mergeJoinedEvents(current, reconciliation.visibleEvents),
                             showingOfflineEvents = reconciliation.showingOfflineEvents,
@@ -486,6 +491,7 @@ internal class EventLifecycleCoordinator(
                             loading = false,
                         )
                     }
+                    updated.copy(eventsAuthoritative = authoritative)
                 }
                 val selectedEvent = remoteEvents.firstOrNull { it.id == currentState().selectedEventId }
                 if (
@@ -501,7 +507,7 @@ internal class EventLifecycleCoordinator(
                 updateState { state ->
                     val cachedEvents = cachedEventPackages(state.currentUserId)
                     val selectedWasJoined = state.selectedEvent?.let { state.currentUserId in it.memberIds } == true
-                    if (selectedWasJoined && state.selectedEventId != null &&
+                    val updated = if (selectedWasJoined && state.selectedEventId != null &&
                         cachedEvents.none { it.id == state.selectedEventId }
                     ) {
                         closeAnnouncementObserver()
@@ -526,6 +532,7 @@ internal class EventLifecycleCoordinator(
                             notice = "Event updates will resume when you are online.",
                         )
                     }
+                    updated.copy(eventsAuthoritative = false)
                 }
             },
         )
@@ -623,7 +630,7 @@ internal class EventLifecycleCoordinator(
         }
     }
 
-    private fun saveRemoteAnnouncement(announcement: EventAnnouncement) {
+    internal fun saveRemoteAnnouncement(announcement: EventAnnouncement) {
         val added = eventStore.saveAnnouncement(announcement)
         val selection = EventMeshSelection.select(currentState(), eventsVisible = true, now = clock())
         if (added && selection?.eventId == announcement.eventId) {

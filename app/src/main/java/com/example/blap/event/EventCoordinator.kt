@@ -6,6 +6,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.launch
 
 class EventCoordinator(
     private val eventStore: EventStore,
@@ -13,11 +16,22 @@ class EventCoordinator(
     private val adminKeyStore: EventAdminKeyStore,
     private val identityStore: IdentityStore,
     private val nearbyController: EventMeshGateway,
+    private val notifier: EventNotifier,
     private val scope: CoroutineScope,
     private val clock: () -> Long = System::currentTimeMillis,
+    private val eventsVisible: () -> Boolean = { false },
 ) {
     private val _uiState = MutableStateFlow(EventUiState())
     val uiState: StateFlow<EventUiState> = _uiState.asStateFlow()
+
+    private val notifications = EventNotificationCoordinator(
+        remote = remoteRepository,
+        delegate = notifier,
+        currentState = { _uiState.value },
+        eventsVisible = eventsVisible,
+        saveCloudAnnouncement = { lifecycleCoordinator.saveRemoteAnnouncement(it) },
+        clock = clock,
+    )
 
     private val discussionCoordinator = EventDiscussionCoordinator(
         remoteRepository = remoteRepository,
@@ -31,6 +45,7 @@ class EventCoordinator(
         remoteRepository = remoteRepository,
         adminKeyStore = adminKeyStore,
         meshGateway = nearbyController,
+        notifier = notifications,
         scope = scope,
         currentState = { _uiState.value },
         updateState = { transform -> _uiState.update(transform) },
@@ -70,11 +85,18 @@ class EventCoordinator(
         clock = clock,
     )
 
+    private val notificationObservers = scope.launch {
+        uiState.map { it.currentUserId to it.events }.distinctUntilChanged().collect {
+            notifications.updateSubscriptions(_uiState.value)
+        }
+    }
+
     init {
         lifecycleCoordinator.start()
     }
 
     fun accountChanged() {
+        notifications.reset()
         discoveryCoordinator.resetForAccount()
         lifecycleCoordinator.accountChanged()
     }
@@ -267,6 +289,8 @@ class EventCoordinator(
     }
 
     fun close() {
+        notificationObservers.cancel()
+        notifications.close()
         lifecycleCoordinator.close()
         discussionCoordinator.closeObservers()
         eventStore.close()

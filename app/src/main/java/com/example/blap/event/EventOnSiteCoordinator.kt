@@ -9,6 +9,7 @@ internal class EventOnSiteCoordinator(
     private val remoteRepository: EventRemoteRepository,
     private val adminKeyStore: EventAdminKeyStore,
     private val meshGateway: EventMeshGateway,
+    private val notifier: EventNotifier,
     private val scope: CoroutineScope,
     private val currentState: () -> EventUiState,
     private val updateState: (((EventUiState) -> EventUiState) -> Unit),
@@ -163,6 +164,7 @@ internal class EventOnSiteCoordinator(
         val state = currentState()
         val event = state.events.firstOrNull { it.id == message.eventId } ?: return
         val membership = state.membership ?: return
+
         if (!EventOnSitePolicy.canAcceptChatMessage(
                 event = event,
                 membership = membership,
@@ -172,21 +174,45 @@ internal class EventOnSiteCoordinator(
                 now = clock(),
             )
         ) return
+
         if (eventStore.saveChatMessage(message)) {
-            updateState { it.copy(chatMessages = eventStore.getChatMessages(event.id)) }
+            notifier.incomingChatMessage(
+                event = event,
+                message = message,
+                chatVisible = state.selectedEventId == event.id &&
+                        state.page == EventPage.ON_SITE_CHAT,
+            )
+
+            updateState {
+                it.copy(chatMessages = eventStore.getChatMessages(event.id))
+            }
         }
     }
 
     fun onAnnouncementReceived(announcement: EventAnnouncement) {
-        val event = currentState().events.firstOrNull { it.id == announcement.eventId }
+        val state = currentState()
+        val event = state.events.firstOrNull { it.id == announcement.eventId }
             ?: eventStore.getEvent(announcement.eventId)
             ?: return
+
         if (!EventOnSitePolicy.isValidAnnouncement(event, announcement)) return
+
         if (eventStore.saveAnnouncement(announcement)) {
-            updateState { state ->
-                if (state.selectedEventId == event.id) {
-                    state.copy(announcements = eventStore.getAnnouncements(event.id))
-                } else state
+            notifier.incomingAnnouncement(
+                event = event,
+                announcement = announcement,
+                announcementsVisible = state.selectedEventId == event.id &&
+                        state.page == EventPage.ANNOUNCEMENTS,
+            )
+
+            updateState { current ->
+                if (current.selectedEventId == event.id) {
+                    current.copy(
+                        announcements = eventStore.getAnnouncements(event.id),
+                    )
+                } else {
+                    current
+                }
             }
         }
     }

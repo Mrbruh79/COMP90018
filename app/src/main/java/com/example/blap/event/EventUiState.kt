@@ -44,6 +44,8 @@ data class EventUiState(
     val activeEventId: String? = null,
     val checkInQrPayload: String? = null,
     val showingOfflineEvents: Boolean = false,
+    // Whether the current joined-event list was confirmed by the server.
+    val eventsAuthoritative: Boolean = false,
     val currentUserId: String = "",
     val loading: Boolean = false,
     val notice: String? = null,
