@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.unit.dp
 import com.example.blap.chat.ConversationSummary
 import com.example.blap.chat.SavedContact
+import com.example.blap.ui.components.SubScreenHeader
 
 @Composable
 internal fun ChatContactProfileScreen(
@@ -26,48 +27,54 @@ internal fun ChatContactProfileScreen(
     onBack: () -> Unit,
 ) {
     val uriHandler = LocalUriHandler.current
-    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-        TextButton(onClick = onBack) { Text("Back to chat") }
-        Text(contact?.name ?: conversation?.name.orEmpty(), style = MaterialTheme.typography.headlineSmall)
-        val username = conversation?.username.orEmpty().ifBlank { contact?.username.orEmpty() }
-        if (username.isNotBlank()) {
-            Text("@$username", style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
-        }
-        if (contact == null) {
-            Text("This person is not in your saved contacts yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Button(onClick = onSaveContact, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-                Text("Save contact")
+    Column(Modifier.fillMaxSize()) {
+        SubScreenHeader(contact?.name ?: conversation?.name.orEmpty(), onBack)
+        Column(
+            Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState())
+                .padding(top = 8.dp),
+        ) {
+            val username = conversation?.username.orEmpty().ifBlank { contact?.username.orEmpty() }
+            if (username.isNotBlank()) {
+                Text("@$username", style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
             }
-            return@Column
-        }
-        Text(
-            when {
-                contact.cloudUserId.isNotBlank() -> "Online account linked"
-                contact.linkedPeerId != null -> "Paired nearby"
-                else -> "Saved on this phone"
-            }, color = MaterialTheme.colorScheme.primary,
-        )
-        listOf(
-            "Phone" to contact.phoneNumber,
-            "Email" to contact.email,
-            "Google account" to contact.googleAccountEmail,
-            "About" to contact.bio,
-        ).filter { it.second.isNotBlank() }.forEach { (label, value) ->
-            Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 16.dp))
-            Text(value)
-        }
-        listOf(
-            "Website" to contact.websiteUrl,
-            "Instagram" to contact.instagramUrl,
-            "X" to contact.xUrl,
-            "LinkedIn" to contact.linkedinUrl,
-            "GitHub" to contact.githubUrl,
-        ).filter { it.second.isNotBlank() }.forEach { (label, value) ->
-            TextButton(onClick = { runCatching { uriHandler.openUri(value) } }) { Text("Open $label") }
-        }
-        Button(onClick = onEdit, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
-            Text("Edit saved contact")
+            if (contact == null) {
+                Text("This person is not in your saved contacts yet.", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Button(onClick = onSaveContact, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                    Text("Save contact")
+                }
+                return@Column
+            }
+            Text(
+                when {
+                    contact.cloudUserId.isNotBlank() -> "Online account linked"
+                    contact.linkedPeerId != null -> "Paired nearby"
+                    else -> "Saved on this phone"
+                }, color = MaterialTheme.colorScheme.primary,
+            )
+            listOf(
+                "Phone" to contact.phoneNumber,
+                "Email" to contact.email,
+                "Google account" to contact.googleAccountEmail,
+                "About" to contact.bio,
+            ).filter { it.second.isNotBlank() }.forEach { (label, value) ->
+                Text(label, style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(top = 16.dp))
+                Text(value)
+            }
+            listOf(
+                "Website" to contact.websiteUrl,
+                "Instagram" to contact.instagramUrl,
+                "X" to contact.xUrl,
+                "LinkedIn" to contact.linkedinUrl,
+                "GitHub" to contact.githubUrl,
+            ).filter { it.second.isNotBlank() }.forEach { (label, value) ->
+                TextButton(onClick = { runCatching { uriHandler.openUri(value) } }) { Text("Open $label") }
+            }
+            Button(onClick = onEdit, modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                Text("Edit saved contact")
+            }
         }
     }
 }

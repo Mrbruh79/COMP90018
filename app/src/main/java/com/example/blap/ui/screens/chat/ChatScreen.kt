@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -24,11 +25,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,8 +50,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.blap.R
 import com.example.blap.chat.ChatContent
 import com.example.blap.chat.ChatMessage
 import com.example.blap.chat.ChatScreen
@@ -98,6 +101,7 @@ internal fun ChatScreen(
     var deletingId by rememberSaveable(conversation.peerId) { mutableStateOf<String?>(null) }
     var showPollDialog by rememberSaveable(conversation.peerId) { mutableStateOf(false) }
     var moreExpanded by remember { mutableStateOf(false) }
+    var attachExpanded by remember { mutableStateOf(false) }
     var confirmingChatDelete by rememberSaveable(conversation.peerId) { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var elapsedMs by remember { mutableIntStateOf(0) }
@@ -144,7 +148,9 @@ internal fun ChatScreen(
                 .padding(bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) { Text("Back") }
+            IconButton(onClick = onBack, modifier = Modifier.offset(x = (-12).dp)) {
+                Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = "Back")
+            }
             Box(Modifier.clickable(enabled = conversation.type == ConversationType.DIRECT) {
                 onOpenContactProfile()
             }) { Avatar(conversation.name, conversation.reachable()) }
@@ -154,11 +160,7 @@ internal fun ChatScreen(
                     .weight(1f)
                     .clickable(enabled = conversation.type == ConversationType.DIRECT) { onOpenContactProfile() },
             ) {
-                Text(conversation.name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (conversation.type == ConversationType.DIRECT) {
-                    Text("Tap to view profile", style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary)
-                }
+                Text(conversation.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     when {
                         conversation.type == ConversationType.PRIVATE_GROUP && directConnectionCount > 0 ->
@@ -169,11 +171,17 @@ internal fun ChatScreen(
                         conversation.onlineAccountLinked -> "Online account linked · not nearby"
                         else -> "Not connected nearby · messages may wait"
                     },
+                    style = MaterialTheme.typography.labelSmall,
                     color = if (conversation.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Box {
-                TextButton(onClick = { moreExpanded = true }) { Text("More") }
+                IconButton(
+                    onClick = { moreExpanded = true },
+                    modifier = Modifier.offset(x = 12.dp),
+                ) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                }
                 DropdownMenu(expanded = moreExpanded, onDismissRequest = { moreExpanded = false }) {
                     DropdownMenuItem(text = { Text("Delete chat", color = MaterialTheme.colorScheme.error) }, onClick = {
                         moreExpanded = false
@@ -262,23 +270,35 @@ internal fun ChatScreen(
                 TextButton(onClick = { finishRecording(false) }) { Text("Cancel") }
                 TextButton(onClick = { finishRecording(true) }) { Text("Send") }
             } else {
-                IconButton(onClick = {
-                    if (!microphonePermissionGranted) {
-                        onRequestMicrophonePermission()
-                        return@IconButton
+                Box {
+                    IconButton(onClick = { attachExpanded = true }) {
+                        Icon(
+                            painterResource(R.drawable.ic_add),
+                            contentDescription = "Add to message",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
                     }
-                    if (recorder.start()) {
-                        elapsedMs = 0
-                        recording = true
+                    DropdownMenu(
+                        expanded = attachExpanded,
+                        onDismissRequest = { attachExpanded = false },
+                    ) {
+                        DropdownMenuItem(text = { Text("Send voice message") }, onClick = {
+                            attachExpanded = false
+                            if (!microphonePermissionGranted) {
+                                onRequestMicrophonePermission()
+                                return@DropdownMenuItem
+                            }
+                            if (recorder.start()) {
+                                elapsedMs = 0
+                                recording = true
+                            }
+                        })
+                        DropdownMenuItem(text = { Text("Create poll") }, onClick = {
+                            attachExpanded = false
+                            showPollDialog = true
+                        })
                     }
-                }) { 
-                    Icon(
-                        imageVector = Icons.Default.Mic,
-                        contentDescription = "Mic",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
                 }
-                TextButton(onClick = { showPollDialog = true }) { Text("Poll") }
                 Box(Modifier.weight(1f)) {
                     MessageComposer(
                         text = if (editingId != null) editingText else draft,
@@ -292,7 +312,7 @@ internal fun ChatScreen(
                             replyingTo = null
                             editingId = null
                         },
-                        sendLabel = if (editingId != null) "Save" else "Send",
+                        sendLabel = if (editingId != null) "Save" else null,
                     )
                 }
             }
