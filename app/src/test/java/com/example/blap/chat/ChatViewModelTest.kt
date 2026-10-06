@@ -1214,7 +1214,7 @@ class ChatViewModelTest {
         viewModel.importScannedContactCard("https://example.com/not-a-card")
 
         assertTrue(store.getSavedContacts().isEmpty())
-        assertEquals("That QR code is not a BLAP contact card.", viewModel.uiState.value.error)
+        assertEquals("That QR code is not a CommonGround contact card.", viewModel.uiState.value.error)
     }
 
     @Test

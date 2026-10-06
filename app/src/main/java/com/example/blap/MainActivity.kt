@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
 /** Hosts Compose and Activity-bound Android operations. Application decisions belong to ViewModels. */
 class MainActivity : ComponentActivity() {
     private val models by lazy {
-        ApplicationViewModels.obtain(this, (application as BlapApplication).appContainer)
+        ApplicationViewModels.obtain(this, (application as CommonGroundApplication).appContainer)
     }
     private lateinit var platform: AndroidPlatformBridge
     private var restartingAccount = false

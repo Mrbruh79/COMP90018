@@ -58,7 +58,7 @@ internal fun MyCardScreen(profile: ContactProfile, peerId: String, onEdit: () ->
             ) {
                 Image(
                     bitmap = bitmap.asImageBitmap(),
-                    contentDescription = "QR code for ${profile.displayName}'s BLAP contact card",
+                    contentDescription = "QR code for ${profile.displayName}'s CommonGround contact card",
                     modifier = Modifier
                         .size(248.dp)
                         .padding(24.dp),

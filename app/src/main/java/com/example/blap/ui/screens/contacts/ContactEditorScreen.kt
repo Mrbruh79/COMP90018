@@ -21,7 +21,7 @@ internal fun ContactEditorScreen(
         subtitle = if (source == ContactSource.QR) {
             "Check the username before saving. It links this card to their online account."
         } else {
-            "Enter their username, phone or email. BLAP finds their account before saving."
+            "Enter their username, phone or email. CommonGround finds their account before saving."
         },
         profile = profile,
         onChanged = { if (!saving) onChanged(it) },

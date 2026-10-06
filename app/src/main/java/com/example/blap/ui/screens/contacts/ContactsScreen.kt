@@ -133,7 +133,7 @@ internal fun ContactsScreen(
                                     Text(
                                         contact.email.ifBlank {
                                             contact.googleAccountEmail.ifBlank {
-                                                contact.phoneNumber.ifBlank { "BLAP contact" }
+                                                contact.phoneNumber.ifBlank { "CommonGround contact" }
                                             }
                                         },
                                         style = MaterialTheme.typography.bodyMedium,

@@ -251,7 +251,7 @@ class ContactsViewModel(private val session: MessagingSession) : androidx.lifecy
     fun importScannedContactCard(payload: String) {
         val card = ContactCardCodec.decodeCard(payload)
         if (card == null) {
-            session.showError("That QR code is not a BLAP contact card.")
+            session.showError("That QR code is not a CommonGround contact card.")
             return
         }
         beginAddContact()

@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.BLAP" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.CommonGround" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:navigationBarColor">#0D1117</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
@@ -7,9 +7,9 @@
         <item name="android:windowBackground">#0D1117</item>
     </style>
 
-    <style name="Theme.BLAP.Starting" parent="Theme.SplashScreen">
+    <style name="Theme.CommonGround.Starting" parent="Theme.SplashScreen">
         <item name="windowSplashScreenBackground">#0D1117</item>
         <item name="windowSplashScreenAnimatedIcon">@drawable/ic_launcher_foreground</item>
-        <item name="postSplashScreenTheme">@style/Theme.BLAP</item>
+        <item name="postSplashScreenTheme">@style/Theme.CommonGround</item>
     </style>
 </resources>

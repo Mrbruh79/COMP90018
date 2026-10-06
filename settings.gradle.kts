@@ -22,6 +22,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "BLAP"
+rootProject.name = "CommonGround"
 include(":app")
- 

@@ -17,7 +17,7 @@ The initial contract shapes follow the current call sites. They are ready for re
 
 ## Composition and lifetime
 
-`BlapApplication` owns a lazy `AppContainer`. `DefaultAppContainer` is the production composition root and retains only application context.
+`CommonGroundApplication` owns a lazy `AppContainer`. `DefaultAppContainer` is the production composition root and retains only application context.
 
 The container exposes shared location, venue and private-profile services. Identity and notification preferences are created for an explicit account ID, using the existing `LocalDataScope` paths. Neither signed-in account resources nor transports are cached globally.
 

@@ -1,5 +1,5 @@
 <resources>
-    <style name="Theme.BLAP" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.CommonGround" parent="Theme.MaterialComponents.DayNight.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:navigationBarColor">#0D1117</item>
         <item name="android:statusBarColor">@android:color/transparent</item>

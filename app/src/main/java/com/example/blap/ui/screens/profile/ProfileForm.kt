@@ -60,7 +60,7 @@ internal fun ProfileForm(
                 }
             }
             if (isContact) item {
-                ProfileTextField("BLAP username", profile.username) {
+                ProfileTextField("CommonGround username", profile.username) {
                     onChanged(profile.copy(username = it))
                 }
             }
@@ -156,7 +156,7 @@ internal fun ProfileForm(
     if (confirmingDelete && onDelete != null) {
         DeleteConfirmationDialog(
             title = "Delete this contact?",
-            message = "Their saved contact card will be removed from BLAP.",
+            message = "Their saved contact card will be removed from CommonGround.",
             onConfirm = onDelete,
             onDismiss = { confirmingDelete = false },
         )
