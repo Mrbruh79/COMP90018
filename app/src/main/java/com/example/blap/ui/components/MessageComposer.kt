@@ -4,25 +4,29 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
+import com.example.blap.R
 
 @Composable
 internal fun MessageComposer(
     text: String,
     onTextChanged: (String) -> Unit,
     onSend: (String) -> Unit,
-    sendLabel: String = "Send",
+    sendLabel: String? = null,
 ) {
     val send = {
         if (text.isNotBlank()) {
@@ -49,7 +53,15 @@ internal fun MessageComposer(
         )
         Spacer(Modifier.width(9.dp))
         Button(onClick = send, enabled = text.isNotBlank(), modifier = Modifier.height(52.dp)) {
-            Text(sendLabel)
+            if (sendLabel == null) {
+                Icon(
+                    painterResource(R.drawable.ic_send),
+                    contentDescription = "Send",
+                    modifier = Modifier.size(20.dp),
+                )
+            } else {
+                Text(sendLabel)
+            }
         }
     }
 }

@@ -489,7 +489,7 @@ private fun AppNavigationBar(
             selected = state == ChatScreen.SHOWING_MY_CARD,
             onClick = onMyCard,
             icon = { Icon(painterResource(R.drawable.ic_qr), contentDescription = null) },
-            label = { Text("Profile Card") },
+            label = { Text("Profile") },
         )
         NavigationBarItem(
             selected = state == ChatScreen.SETTINGS,

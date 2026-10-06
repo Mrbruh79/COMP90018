@@ -25,12 +25,11 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -102,6 +101,7 @@ internal fun ChatScreen(
     var deletingId by rememberSaveable(conversation.peerId) { mutableStateOf<String?>(null) }
     var showPollDialog by rememberSaveable(conversation.peerId) { mutableStateOf(false) }
     var moreExpanded by remember { mutableStateOf(false) }
+    var attachExpanded by remember { mutableStateOf(false) }
     var confirmingChatDelete by rememberSaveable(conversation.peerId) { mutableStateOf(false) }
     var recording by remember { mutableStateOf(false) }
     var elapsedMs by remember { mutableIntStateOf(0) }
@@ -270,23 +270,35 @@ internal fun ChatScreen(
                 TextButton(onClick = { finishRecording(false) }) { Text("Cancel") }
                 TextButton(onClick = { finishRecording(true) }) { Text("Send") }
             } else {
-                IconButton(onClick = {
-                    if (!microphonePermissionGranted) {
-                        onRequestMicrophonePermission()
-                        return@IconButton
+                Box {
+                    IconButton(onClick = { attachExpanded = true }) {
+                        Icon(
+                            painterResource(R.drawable.ic_add),
+                            contentDescription = "Add to message",
+                            tint = MaterialTheme.colorScheme.primary,
+                        )
                     }
-                    if (recorder.start()) {
-                        elapsedMs = 0
-                        recording = true
+                    DropdownMenu(
+                        expanded = attachExpanded,
+                        onDismissRequest = { attachExpanded = false },
+                    ) {
+                        DropdownMenuItem(text = { Text("Send voice message") }, onClick = {
+                            attachExpanded = false
+                            if (!microphonePermissionGranted) {
+                                onRequestMicrophonePermission()
+                                return@DropdownMenuItem
+                            }
+                            if (recorder.start()) {
+                                elapsedMs = 0
+                                recording = true
+                            }
+                        })
+                        DropdownMenuItem(text = { Text("Create poll") }, onClick = {
+                            attachExpanded = false
+                            showPollDialog = true
+                        })
                     }
-                }) { 
-                    Icon(
-                        imageVector = Icons.Default.Mic,
-                        contentDescription = "Mic",
-                        tint = MaterialTheme.colorScheme.primary
-                    )
                 }
-                TextButton(onClick = { showPollDialog = true }) { Text("Poll") }
                 Box(Modifier.weight(1f)) {
                     MessageComposer(
                         text = if (editingId != null) editingText else draft,
@@ -300,7 +312,7 @@ internal fun ChatScreen(
                             replyingTo = null
                             editingId = null
                         },
-                        sendLabel = if (editingId != null) "Save" else "Send",
+                        sendLabel = if (editingId != null) "Save" else null,
                     )
                 }
             }
