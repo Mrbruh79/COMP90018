@@ -2,6 +2,7 @@ package com.example.blap.event
 
 import android.content.Context
 import androidx.core.content.edit
+import com.example.blap.security.EncryptedPreferences
 import java.nio.charset.StandardCharsets
 import java.security.KeyPair
 import java.security.PrivateKey
@@ -15,7 +16,7 @@ interface EventAdminKeyStore {
 }
 
 class LocalEventAdminKeyStore(context: Context) : EventAdminKeyStore {
-    private val preferences = context.getSharedPreferences("event_admin_keys", Context.MODE_PRIVATE)
+    private val preferences = EncryptedPreferences.open(context, "event_admin_keys")
 
     override fun getOrCreate(userId: String): KeyPair = get(userId) ?: EventCheckInCodec
         .generateAdminKeyPair()

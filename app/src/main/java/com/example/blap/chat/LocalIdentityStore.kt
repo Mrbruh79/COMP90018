@@ -2,6 +2,7 @@ package com.example.blap.chat
 
 import android.content.Context
 import androidx.core.content.edit
+import com.example.blap.security.EncryptedPreferences
 import java.util.UUID
 
 interface IdentityStore {
@@ -20,7 +21,7 @@ interface IdentityStore {
 }
 
 class LocalIdentityStore(context: Context, scope: String = "") : IdentityStore {
-    private val preferences = context.getSharedPreferences("chat_identity$scope", Context.MODE_PRIVATE)
+    private val preferences = EncryptedPreferences.open(context, "chat_identity$scope")
 
     override fun getPeerId(): String {
         val savedId = preferences.getString("peer_id", null)

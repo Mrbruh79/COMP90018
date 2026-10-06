@@ -24,6 +24,9 @@ playServicesCodeScanner = "16.1.0"
 zxingCore = "3.5.4"
 osmdroid = "6.1.20"
 libphonenumber = "9.0.40"
+securityCrypto = "1.1.0-alpha06"
+sqlcipher = "4.19.0"
+sqlite = "2.7.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -54,6 +57,9 @@ play-services-code-scanner = { group = "com.google.android.gms", name = "play-se
 zxing-core = { group = "com.google.zxing", name = "core", version.ref = "zxingCore" }
 osmdroid = { module = "org.osmdroid:osmdroid-android", version.ref = "osmdroid" }
 libphonenumber = { module = "com.googlecode.libphonenumber:libphonenumber", version.ref = "libphonenumber" }
+androidx-security-crypto = { group = "androidx.security", name = "security-crypto", version.ref = "securityCrypto" }
+sqlcipher-android = { group = "net.zetetic", name = "sqlcipher-android", version.ref = "sqlcipher" }
+androidx-sqlite = { group = "androidx.sqlite", name = "sqlite", version.ref = "sqlite" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

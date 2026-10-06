@@ -3,20 +3,30 @@ package com.example.blap.chat
 import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
-import androidx.core.database.sqlite.transaction
+import com.example.blap.security.EncryptedSqlite
+import com.example.blap.security.inTransaction
+import net.zetetic.database.sqlcipher.SQLiteDatabase
+import net.zetetic.database.sqlcipher.SQLiteOpenHelper
 
 /** Compatibility contract while the chat coordinator still uses a single store. */
 interface ChatStore : ContactRepository, GroupRepository, ChatRepository {
     fun close()
 }
 
-class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
+class SqliteChatStore(
+    context: Context,
+    scope: String = "",
+    name: String = "nearby_chat$scope.db",
+) : SQLiteOpenHelper(
     context,
-    "nearby_chat$scope.db",
+    name,
+    EncryptedSqlite.prepareAndPassphrase(context, name),
     null,
     13,
+    0,
+    null,
+    null,
+    false,
 ), ChatStore {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -149,7 +159,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             put("phone_hash", phoneHash)
             put("last_seen", System.currentTimeMillis())
         }
-        writableDatabase.transaction {
+        writableDatabase.inTransaction {
             insertWithOnConflict("peers", null, values, SQLiteDatabase.CONFLICT_IGNORE)
             update("peers", values, "peer_id = ?", arrayOf(peerId))
         }
@@ -283,7 +293,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
             arrayOf(group.id),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else Long.MIN_VALUE }
         if (storedRevision > group.createdAt) return
-        writableDatabase.transaction {
+        writableDatabase.inTransaction {
             val groupValues = ContentValues().apply {
                 put("group_id", group.id)
                 put("name", group.name)
@@ -347,7 +357,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     @Synchronized
     override fun deleteGroup(groupId: String) {
-        writableDatabase.transaction {
+        writableDatabase.inTransaction {
             delete("group_members", "group_id = ?", arrayOf(groupId))
             delete("messages", "peer_id = ?", arrayOf(groupId))
             delete("chat_groups", "group_id = ?", arrayOf(groupId))
@@ -512,7 +522,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
     @Synchronized
     override fun moveConversation(fromPeerId: String, toPeerId: String) {
         if (fromPeerId == toPeerId) return
-        writableDatabase.transaction {
+        writableDatabase.inTransaction {
             execSQL("UPDATE peers SET username = (SELECT username FROM peers WHERE peer_id = ?) " +
                 "WHERE peer_id = ? AND username = '' AND EXISTS (SELECT 1 FROM peers WHERE peer_id = ?)",
                 arrayOf(fromPeerId, toPeerId, fromPeerId))
@@ -538,7 +548,7 @@ class SqliteChatStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     @Synchronized
     override fun deleteConversation(peerId: String) {
-        writableDatabase.transaction {
+        writableDatabase.inTransaction {
             execSQL("INSERT OR IGNORE INTO deleted_message_ids(message_id) SELECT message_id FROM messages WHERE peer_id = ?", arrayOf(peerId))
             delete("messages", "peer_id = ?", arrayOf(peerId))
             insertWithOnConflict("chat_deletions", null, ContentValues().apply {

@@ -2,9 +2,10 @@ package com.example.blap.event
 
 import android.content.ContentValues
 import android.content.Context
-import android.database.sqlite.SQLiteDatabase
-import android.database.sqlite.SQLiteOpenHelper
-import androidx.core.database.sqlite.transaction
+import com.example.blap.security.EncryptedSqlite
+import com.example.blap.security.inTransaction
+import net.zetetic.database.sqlcipher.SQLiteDatabase
+import net.zetetic.database.sqlcipher.SQLiteOpenHelper
 
 interface EventStore {
     /** Saves the minimal offline package for an event whose membership is confirmed online. */
@@ -92,11 +93,20 @@ class InMemoryEventStore : EventStore {
     override fun close() = Unit
 }
 
-class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
+class SqliteEventStore(
+    context: Context,
+    scope: String = "",
+    name: String = "community_events$scope.db",
+) : SQLiteOpenHelper(
     context,
-    "community_events$scope.db",
+    name,
+    EncryptedSqlite.prepareAndPassphrase(context, name),
     null,
     6,
+    0,
+    null,
+    null,
+    false,
 ), EventStore {
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL(
@@ -424,7 +434,7 @@ class SqliteEventStore(context: Context, scope: String = "") : SQLiteOpenHelper(
 
     @Synchronized
     override fun purgeEvent(eventId: String) {
-        writableDatabase.transaction {
+        writableDatabase.inTransaction {
             delete("event_chat_messages", "event_id = ?", arrayOf(eventId))
             delete("event_announcements", "event_id = ?", arrayOf(eventId))
             delete("event_memberships", "event_id = ?", arrayOf(eventId))
