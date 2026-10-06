@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -29,6 +30,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -49,8 +51,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.blap.R
 import com.example.blap.chat.ChatContent
 import com.example.blap.chat.ChatMessage
 import com.example.blap.chat.ChatScreen
@@ -144,7 +148,9 @@ internal fun ChatScreen(
                 .padding(bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            TextButton(onClick = onBack) { Text("Back") }
+            IconButton(onClick = onBack, modifier = Modifier.offset(x = (-12).dp)) {
+                Icon(painterResource(R.drawable.ic_arrow_back), contentDescription = "Back")
+            }
             Box(Modifier.clickable(enabled = conversation.type == ConversationType.DIRECT) {
                 onOpenContactProfile()
             }) { Avatar(conversation.name, conversation.reachable()) }
@@ -154,11 +160,7 @@ internal fun ChatScreen(
                     .weight(1f)
                     .clickable(enabled = conversation.type == ConversationType.DIRECT) { onOpenContactProfile() },
             ) {
-                Text(conversation.name, style = MaterialTheme.typography.titleLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                if (conversation.type == ConversationType.DIRECT) {
-                    Text("Tap to view profile", style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.primary)
-                }
+                Text(conversation.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     when {
                         conversation.type == ConversationType.PRIVATE_GROUP && directConnectionCount > 0 ->
@@ -169,11 +171,17 @@ internal fun ChatScreen(
                         conversation.onlineAccountLinked -> "Online account linked · not nearby"
                         else -> "Not connected nearby · messages may wait"
                     },
+                    style = MaterialTheme.typography.labelSmall,
                     color = if (conversation.connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             Box {
-                TextButton(onClick = { moreExpanded = true }) { Text("More") }
+                IconButton(
+                    onClick = { moreExpanded = true },
+                    modifier = Modifier.offset(x = 12.dp),
+                ) {
+                    Icon(Icons.Default.MoreVert, contentDescription = "More options")
+                }
                 DropdownMenu(expanded = moreExpanded, onDismissRequest = { moreExpanded = false }) {
                     DropdownMenuItem(text = { Text("Delete chat", color = MaterialTheme.colorScheme.error) }, onClick = {
                         moreExpanded = false
