@@ -7,23 +7,15 @@ import org.junit.After
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
-import net.sqlcipher.database.SQLiteDatabase
-import org.junit.Before
 
 @RunWith(AndroidJUnit4::class)
 class SqliteChatStoreTest {
     private val context = InstrumentationRegistry.getInstrumentation().targetContext
     private val stores = mutableListOf<Pair<String, SqliteChatStore>>()
-    private val dummyPassphrase = "test_passphrase".toByteArray()
-
-    @Before
-    fun setup() {
-        SQLiteDatabase.loadLibs(context)
-    }
 
     private fun store(): SqliteChatStore {
         val scope = "_test_${UUID.randomUUID()}"
-        return SqliteChatStore(context, dummyPassphrase, scope).also { stores += scope to it }
+        return SqliteChatStore(context, scope).also { stores += scope to it }
     }
 
     private fun message(id: String, peer: String, time: Long = 1L) =
@@ -45,7 +37,7 @@ class SqliteChatStoreTest {
         store.saveContact(SavedContact("bob", "Bob", "", "", cloudUserId = "bob", username = "bob_user"))
         store.deleteConversation("account:bob")
         store.close()
-        val reopened = SqliteChatStore(context, dummyPassphrase, stores.single().first)
+        val reopened = SqliteChatStore(context, stores.single().first)
         stores[0] = stores.single().first to reopened
         reopened.savePeer("account:bob", "Bob")
         assertFalse(reopened.saveMessage(message("old", "account:bob")))
@@ -99,11 +91,11 @@ class SqliteChatStoreTest {
         val original = store()
         original.savePeer("bob", "Bob")
         original.saveMessage(message("old", "bob"))
-        original.sqlCipherDatabase.execSQL("DROP TABLE chat_deletions")
-        original.sqlCipherDatabase.execSQL("DROP TABLE deleted_message_ids")
-        original.sqlCipherDatabase.version = 11
+        original.writableDatabase.execSQL("DROP TABLE chat_deletions")
+        original.writableDatabase.execSQL("DROP TABLE deleted_message_ids")
+        original.writableDatabase.version = 11
         original.close()
-        val upgraded = SqliteChatStore(context, dummyPassphrase, stores.single().first)
+        val upgraded = SqliteChatStore(context, stores.single().first)
         stores[0] = stores.single().first to upgraded
         assertEquals("old", upgraded.getMessages("bob").single().id)
         upgraded.deleteConversation("bob")
@@ -128,7 +120,7 @@ class SqliteChatStoreTest {
         original.savePeerUsername("account:bob", "bob_user")
         original.savePeer("account:bob", "New display name")
         original.close()
-        val reopened = SqliteChatStore(context, dummyPassphrase, stores.single().first)
+        val reopened = SqliteChatStore(context, stores.single().first)
         stores[0] = stores.single().first to reopened
 
         assertEquals("bob_user", reopened.getConversations().single().username)
@@ -151,14 +143,14 @@ class SqliteChatStoreTest {
         val original = store()
         original.savePeer("bob", "Bob")
         original.saveMessage(message("old", "bob"))
-        original.sqlCipherDatabase.execSQL("ALTER TABLE peers RENAME TO peers_with_username")
-        original.sqlCipherDatabase.execSQL("CREATE TABLE peers(peer_id TEXT PRIMARY KEY, name TEXT NOT NULL, " +
+        original.writableDatabase.execSQL("ALTER TABLE peers RENAME TO peers_with_username")
+        original.writableDatabase.execSQL("CREATE TABLE peers(peer_id TEXT PRIMARY KEY, name TEXT NOT NULL, " +
             "phone_hash TEXT NOT NULL DEFAULT '', last_seen INTEGER NOT NULL)")
-        original.sqlCipherDatabase.execSQL("INSERT INTO peers SELECT peer_id, name, phone_hash, last_seen FROM peers_with_username")
-        original.sqlCipherDatabase.execSQL("DROP TABLE peers_with_username")
-        original.sqlCipherDatabase.version = 12
+        original.writableDatabase.execSQL("INSERT INTO peers SELECT peer_id, name, phone_hash, last_seen FROM peers_with_username")
+        original.writableDatabase.execSQL("DROP TABLE peers_with_username")
+        original.writableDatabase.version = 12
         original.close()
-        val upgraded = SqliteChatStore(context, dummyPassphrase, stores.single().first)
+        val upgraded = SqliteChatStore(context, stores.single().first)
         stores[0] = stores.single().first to upgraded
 
         assertEquals("old", upgraded.getMessages("bob").single().id)
