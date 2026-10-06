@@ -2,6 +2,7 @@ package com.example.blap.chat
 
 import android.content.Context
 import androidx.core.content.edit
+import com.example.blap.security.EncryptedPreferences
 import java.io.ByteArrayOutputStream
 import java.io.DataOutputStream
 import java.security.KeyFactory
@@ -33,7 +34,7 @@ class InMemoryNearbyIdentityStore : NearbyIdentityStore {
 
 /** Keys and remembered devices belong to the signed-in account's local storage scope. */
 class LocalNearbyIdentityStore(context: Context, scope: String) : NearbyIdentityStore {
-    private val preferences = context.getSharedPreferences("nearby_identity$scope", Context.MODE_PRIVATE)
+    private val preferences = EncryptedPreferences.open(context, "nearby_identity$scope")
     @Synchronized override fun keys(): KeyPair {
         val privateKey = preferences.getString("private", null)
         val publicKey = preferences.getString("public", null)
