@@ -1,6 +1,6 @@
-# Shared grading certificate
+# Shared debug certificate
 
-Debug builds use `grading-debug.keystore` from this directory. The key is intentionally included in the submission so team members, CI and the grader sign the app with the same certificate. Its path in `app/build.gradle.kts` is relative to the repository root.
+Debug builds use `shared-debug.keystore` from this directory. The key is included in the repository so local and CI builds use the same certificate. Its path in `app/build.gradle.kts` is relative to the repository root.
 
 The alias is `AndroidDebugKey`. Both development passwords are `android`. This key is for debug builds only. Release builds do not use it, and production signing keys must remain private.
 

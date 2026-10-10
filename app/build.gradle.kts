@@ -22,8 +22,8 @@ android {
 
     signingConfigs {
         getByName("debug") {
-            // Shared development certificate for builds made by the team and grader.
-            storeFile = rootProject.file("signing/grading-debug.keystore")
+            // Shared development certificate for local and CI builds.
+            storeFile = rootProject.file("signing/shared-debug.keystore")
             storePassword = "android"
             keyAlias = "AndroidDebugKey"
             keyPassword = "android"
