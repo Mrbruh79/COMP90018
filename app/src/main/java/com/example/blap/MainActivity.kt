@@ -46,10 +46,16 @@
 
         override fun onCreate(savedInstanceState: Bundle?) {
             super.onCreate(savedInstanceState)
-            AuthManager.ensureSignedIn { success ->                                                 // TODO: handle sign-in failure (e.g. retry or show an error)
-                // placeholder for now
+            AuthManager.ensureSignedIn { success ->
+                if (isFinishing || isDestroyed) return@ensureSignedIn
+
+                if (success) {
+                    requestVenuePermissionAndCheck()
+                } else {
+                    Log.w("VenueDebug", "Authentication failed; venue check skipped.")
+                }
             }
-            requestVenuePermissionAndCheck()
+
             enableEdgeToEdge()
 
             setContent {
@@ -117,4 +123,17 @@
             }
         }
 
+        private var threadListener: com.google.firebase.firestore.ListenerRegistration? = null
+
+        private fun startThreadListenerTest() {
+            threadListener = VenueManager.listenToThreads("testVenue1") { threads ->
+                Log.d("ThreadDebug", "Live update: ${threads.size} threads")
+                threads.forEach { Log.d("ThreadDebug", "  - ${it.title} (replies: ${it.replyCount})") }
+            }
+        }
+
+        override fun onDestroy() {
+            super.onDestroy()
+            threadListener?.remove()
+        }
     }

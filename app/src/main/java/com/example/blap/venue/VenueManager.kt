@@ -6,7 +6,10 @@ import com.example.blap.auth.AuthManager
 import com.google.android.gms.location.CurrentLocationRequest
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.Priority
+import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Query
 import kotlinx.coroutines.tasks.await
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -33,6 +36,7 @@ object VenueManager {
             )
             .await()
 
+    // ------------ GPS CHECK-IN FUNCTIONS ------------ //
     suspend fun findNearbyVenue(context: Context): Venue? {
         if (AuthManager.currentUserId == null) return null
 
@@ -64,5 +68,110 @@ object VenueManager {
                 sin(dLng / 2) * sin(dLng / 2)                                              // used haversine formula to calculates real-world distance between two lat/lng points.
         val c = 2 * atan2(sqrt(a), sqrt(1 - a))
         return earthRadius * c
+    }
+
+    // ------------ THREAD FUNCTIONS ------------ //
+
+    suspend fun postThread(venueId: String, title: String): Boolean {
+        val authorId = AuthManager.currentUserId ?: return false
+        if (title.isBlank()) return false
+
+        val thread = hashMapOf(
+            "title" to title,
+            "authorId" to authorId,
+            "createdAt" to FieldValue.serverTimestamp(),
+            "replyCount" to 0L,
+        )
+
+        return try {
+            firestore.collection("venues")
+                .document(venueId)
+                .collection("threads")
+                .add(thread)
+                .await()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+
+    enum class ThreadSort { NEWEST, OLDEST, MOST_REPLIES }
+
+    fun listenToThreads(
+        venueId: String,
+        sort: ThreadSort = ThreadSort.NEWEST,
+        onUpdate: (List<DiscussionThread>) -> Unit,
+    ): ListenerRegistration {
+        val threadsRef = firestore.collection("venues").document(venueId).collection("threads")
+        val query = when (sort) {
+            ThreadSort.NEWEST -> threadsRef.orderBy("createdAt", Query.Direction.DESCENDING)
+            ThreadSort.OLDEST -> threadsRef.orderBy("createdAt", Query.Direction.ASCENDING)
+            ThreadSort.MOST_REPLIES -> threadsRef.orderBy("replyCount", Query.Direction.DESCENDING)
+        }
+
+        return query.addSnapshotListener { snapshot, error ->
+            if (error != null || snapshot == null) {
+                onUpdate(emptyList())
+                return@addSnapshotListener
+            }
+            val threads = snapshot.documents.mapNotNull { doc ->
+                doc.toObject(DiscussionThread::class.java)?.copy(id = doc.id)
+            }
+            onUpdate(threads)
+        }
+    }
+
+    suspend fun postReply(venueId: String, threadId: String, text: String): Boolean {
+        val authorId = AuthManager.currentUserId ?: return false
+        if (text.isBlank()) return false
+
+        val threadRef = firestore.collection("venues")
+            .document(venueId)
+            .collection("threads")
+            .document(threadId)
+
+        val replyRef = threadRef.collection("replies").document()
+
+        val reply = hashMapOf(
+            "text" to text,
+            "authorId" to authorId,
+            "createdAt" to FieldValue.serverTimestamp(),
+        )
+
+        return try {
+            firestore.runBatch { batch ->
+                batch.set(replyRef, reply)
+                batch.update(threadRef, "replyCount", FieldValue.increment(1))
+            }.await()
+            true
+        } catch (e: Exception) {
+            false
+        }
+    }
+    suspend fun toggleUpvote(venueId: String, threadId: String): Boolean {
+        val userId = AuthManager.currentUserId ?: return false
+
+        val threadRef = firestore.collection("venues")
+            .document(venueId)
+            .collection("threads")
+            .document(threadId)
+
+        val voteRef = threadRef.collection("votes").document(userId)
+
+        return try {
+            firestore.runTransaction { transaction ->
+                val voteDoc = transaction.get(voteRef)
+                if (voteDoc.exists()) {
+                    transaction.delete(voteRef)
+                    transaction.update(threadRef, "upvoteCount", FieldValue.increment(-1))
+                } else {
+                    transaction.set(voteRef, mapOf("votedAt" to FieldValue.serverTimestamp()))
+                    transaction.update(threadRef, "upvoteCount", FieldValue.increment(1))
+                }
+            }.await()
+            true
+        } catch (e: Exception) {
+            false
+        }
     }
 }
